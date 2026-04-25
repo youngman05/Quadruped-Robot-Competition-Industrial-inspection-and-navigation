@@ -56,19 +56,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--min-color-ratio",
         type=float,
-        default=0.015,
+        default=0.04,
         help="Minimum colored ring pixel ratio required to accept a gauge.",
     )
     parser.add_argument(
         "--min-direction-score",
         type=int,
-        default=20,
+        default=100,
         help="Minimum color hit count near needle direction required to accept a gauge.",
+    )
+    parser.add_argument(
+        "--min-zone-pixels",
+        type=int,
+        default=300,
+        help="Minimum pixels required for each yellow/green/red gauge zone.",
     )
     return parser.parse_args()
 
 
-def is_valid_gauge_result(result: dict, min_color_ratio: float, min_direction_score: int):
+def is_valid_gauge_result(
+    result: dict,
+    min_color_ratio: float,
+    min_direction_score: int,
+    min_zone_pixels: int,
+):
     if result is None:
         return False, "no_result"
     if not result.get("circle_detected"):
@@ -86,6 +97,14 @@ def is_valid_gauge_result(result: dict, min_color_ratio: float, min_direction_sc
     color_ratio = float(coverage.get("ratio") or 0.0)
     if color_ratio < min_color_ratio:
         return False, f"low_color_ratio={color_ratio:.4f}"
+
+    zone_counts = coverage.get("counts") or {}
+    weak_zones = [
+        color for color in ("yellow", "green", "red")
+        if int(zone_counts.get(color) or 0) < min_zone_pixels
+    ]
+    if weak_zones:
+        return False, f"weak_color_zones={weak_zones}"
 
     direction_scores = result.get("direction_scores") or {}
     direction_score = int(direction_scores.get(color) or 0)
@@ -142,6 +161,7 @@ def main() -> None:
                 result,
                 min_color_ratio=args.min_color_ratio,
                 min_direction_score=args.min_direction_score,
+                min_zone_pixels=args.min_zone_pixels,
             )
             if not valid:
                 if args.verbose:
