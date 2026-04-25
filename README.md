@@ -70,4 +70,5 @@ python3 scripts/run_gauge_sample.py
 - Jetson 已安装 OpenCV、pyrealsense2、TensorRT。
 - 已迁入一个 OpenCV 仪表盘状态识别原型。
 - YOLO/TensorRT 检测链路待补齐。
+- 预赛已经完成，接下来等狗
 
