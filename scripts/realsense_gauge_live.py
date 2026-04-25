@@ -14,6 +14,7 @@ from pathlib import Path
 import sys
 
 import cv2
+import numpy as np
 import pyrealsense2 as rs
 
 
@@ -82,9 +83,7 @@ def main() -> None:
                 continue
             last_run = now
 
-            image = cv2.cvtColor(
-                cv2.UMat(color_frame.get_data()).get(), cv2.COLOR_RGB2BGR
-            )
+            image = np.asanyarray(color_frame.get_data())
 
             # Reuse the path-based detector to avoid changing the proven module now.
             cv2.imwrite(str(tmp_path), image)
@@ -118,4 +117,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
