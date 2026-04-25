@@ -71,6 +71,18 @@ def parse_args() -> argparse.Namespace:
         default=300,
         help="Minimum pixels required for each yellow/green/red gauge zone.",
     )
+    parser.add_argument(
+        "--max-zone-fraction",
+        type=float,
+        default=0.62,
+        help="Reject detections where one color dominates the ring too much.",
+    )
+    parser.add_argument(
+        "--min-direction-margin",
+        type=float,
+        default=2.0,
+        help="Best direction color score must be this many times the second best.",
+    )
     return parser.parse_args()
 
 
@@ -79,6 +91,8 @@ def is_valid_gauge_result(
     min_color_ratio: float,
     min_direction_score: int,
     min_zone_pixels: int,
+    max_zone_fraction: float,
+    min_direction_margin: float,
 ):
     if result is None:
         return False, "no_result"
@@ -106,10 +120,20 @@ def is_valid_gauge_result(
     if weak_zones:
         return False, f"weak_color_zones={weak_zones}"
 
+    color_total = max(sum(int(v or 0) for v in zone_counts.values()), 1)
+    max_fraction = max(int(zone_counts.get(color) or 0) for color in ("yellow", "green", "red")) / color_total
+    if max_fraction > max_zone_fraction:
+        return False, f"dominant_color_fraction={max_fraction:.3f}"
+
     direction_scores = result.get("direction_scores") or {}
     direction_score = int(direction_scores.get(color) or 0)
     if direction_score < min_direction_score:
         return False, f"low_direction_score={direction_score}"
+
+    sorted_scores = sorted((int(v or 0) for v in direction_scores.values()), reverse=True)
+    second_score = sorted_scores[1] if len(sorted_scores) > 1 else 0
+    if second_score > 0 and direction_score / second_score < min_direction_margin:
+        return False, f"weak_direction_margin={direction_score}/{second_score}"
 
     return True, "ok"
 
@@ -162,6 +186,8 @@ def main() -> None:
                 min_color_ratio=args.min_color_ratio,
                 min_direction_score=args.min_direction_score,
                 min_zone_pixels=args.min_zone_pixels,
+                max_zone_fraction=args.max_zone_fraction,
+                min_direction_margin=args.min_direction_margin,
             )
             if not valid:
                 if args.verbose:
