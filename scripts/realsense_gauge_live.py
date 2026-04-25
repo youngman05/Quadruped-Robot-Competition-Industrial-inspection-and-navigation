@@ -48,6 +48,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional directory for debug images.",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print debug messages for missed or invalid detections.",
+    )
     return parser.parse_args()
 
 
@@ -95,12 +100,21 @@ def main() -> None:
             result = detect_gauge(str(tmp_path), debug=bool(debug_out), debug_out=debug_out)
             ts = time.strftime("%H:%M:%S")
             if result is None:
-                print(f"[{ts}] 未识别到仪表盘")
+                if args.verbose:
+                    print(f"[{ts}] 未识别到仪表盘")
+                count += 1
+                if args.frames > 0 and count >= args.frames:
+                    break
+                continue
+
+            level = result.get("level")
+            status = result.get("status")
+            color = result.get("color")
+            angle = result.get("angle")
+            if not level or not status or level == "未知" or status == "未知" or not color:
+                if args.verbose:
+                    print(f"[{ts}] 识别结果无效: {result}")
             else:
-                level = result["level"]
-                status = result["status"]
-                color = result["color"]
-                angle = result["angle"]
                 print(
                     f"[{ts}] 仪表盘显示{level}，状态{status} "
                     f"(color={color}, angle={angle})"
