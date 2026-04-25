@@ -81,9 +81,9 @@ def find_gauge_circle(image: np.ndarray):
         circles = np.uint16(np.around(circles))
         cx0, cy0 = w / 2, h / 2
         best = min(circles[0], key=lambda c: (c[0]-cx0)**2 + (c[1]-cy0)**2)
-        return int(best[0]), int(best[1]), int(best[2])
+        return int(best[0]), int(best[1]), int(best[2]), True
     r = int(min(h, w) * 0.42)
-    return w // 2, h // 2, r
+    return w // 2, h // 2, r, False
 
 
 def find_needle_angle_hough(image: np.ndarray, cx: int, cy: int, radius: int):
@@ -205,6 +205,26 @@ def angle_to_color_zone(angle: float, cx: int, cy: int, radius: int,
     return best_color if best_n > 0 else None
 
 
+def color_zone_scores(angle: float, cx: int, cy: int, radius: int,
+                      hsv: np.ndarray, sweep_deg: float = 20.0) -> dict:
+    """Return HSV color hit counts near the needle direction."""
+    sample_mask = np.zeros(hsv.shape[:2], dtype=np.uint8)
+    for da in np.linspace(-sweep_deg, sweep_deg, 30):
+        a = math.radians(angle + da)
+        for r_frac in np.linspace(0.65, 0.93, 10):
+            r = radius * r_frac
+            px = int(cx + r * math.cos(a))
+            py = int(cy - r * math.sin(a))
+            if 0 <= px < hsv.shape[1] and 0 <= py < hsv.shape[0]:
+                cv2.circle(sample_mask, (px, py), 4, 255, -1)
+
+    scores = {}
+    for color in COLOR_PRIORITY:
+        m = build_color_mask(hsv, color)
+        scores[color] = cv2.countNonZero(cv2.bitwise_and(m, sample_mask))
+    return scores
+
+
 def fallback_color_ratio(cx: int, cy: int, radius: int,
                           hsv: np.ndarray, angle=None) -> str:
     """
@@ -239,6 +259,27 @@ def fallback_color_ratio(cx: int, cy: int, radius: int,
     return max(counts, key=counts.get)
 
 
+def gauge_color_coverage(cx: int, cy: int, radius: int, hsv: np.ndarray) -> dict:
+    """Count colored pixels in the gauge ring used as confidence evidence."""
+    ring_mask = np.zeros(hsv.shape[:2], dtype=np.uint8)
+    cv2.circle(ring_mask, (cx, cy), int(radius * 0.93), 255, -1)
+    cv2.circle(ring_mask, (cx, cy), int(radius * 0.65), 0, -1)
+
+    ring_area = max(cv2.countNonZero(ring_mask), 1)
+    counts = {}
+    for color in COLOR_PRIORITY:
+        m = build_color_mask(hsv, color)
+        counts[color] = cv2.countNonZero(cv2.bitwise_and(m, ring_mask))
+
+    total = sum(counts.values())
+    return {
+        "counts": counts,
+        "total": total,
+        "ring_area": ring_area,
+        "ratio": total / ring_area,
+    }
+
+
 def detect_gauge(image_path: str, debug: bool = False, debug_out: str = None) -> dict:
     """
     主识别函数
@@ -256,7 +297,8 @@ def detect_gauge(image_path: str, debug: bool = False, debug_out: str = None) ->
 
     img = preprocess(img_orig.copy())
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    cx, cy, radius = find_gauge_circle(img)
+    cx, cy, radius, circle_detected = find_gauge_circle(img)
+    coverage = gauge_color_coverage(cx, cy, radius, hsv)
 
     # ── 指针角度检测（优先霍夫线，备用暗色质心）──
     angle = find_needle_angle_hough(img, cx, cy, radius)
@@ -265,10 +307,14 @@ def detect_gauge(image_path: str, debug: bool = False, debug_out: str = None) ->
 
     # ── 颜色区域判断 ──
     if angle is not None:
-        zone_color = angle_to_color_zone(angle, cx, cy, radius, hsv, sweep_deg=22)
+        direction_scores = color_zone_scores(angle, cx, cy, radius, hsv, sweep_deg=22)
+        zone_color = max(direction_scores, key=direction_scores.get)
+        if direction_scores[zone_color] <= 0:
+            zone_color = None
         if zone_color is None:
             zone_color = fallback_color_ratio(cx, cy, radius, hsv, angle)
     else:
+        direction_scores = {}
         zone_color = fallback_color_ratio(cx, cy, radius, hsv, None)
 
     level, status = STATUS_MAP.get(zone_color, ("未知", "未知"))
@@ -278,6 +324,9 @@ def detect_gauge(image_path: str, debug: bool = False, debug_out: str = None) ->
         "color": zone_color,
         "angle": round(angle, 1) if angle is not None else None,
         "circle": (cx, cy, radius),
+        "circle_detected": circle_detected,
+        "color_coverage": coverage,
+        "direction_scores": direction_scores,
     }
 
     # ── 调试可视化 ──

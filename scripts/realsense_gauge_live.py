@@ -53,7 +53,46 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print debug messages for missed or invalid detections.",
     )
+    parser.add_argument(
+        "--min-color-ratio",
+        type=float,
+        default=0.015,
+        help="Minimum colored ring pixel ratio required to accept a gauge.",
+    )
+    parser.add_argument(
+        "--min-direction-score",
+        type=int,
+        default=20,
+        help="Minimum color hit count near needle direction required to accept a gauge.",
+    )
     return parser.parse_args()
+
+
+def is_valid_gauge_result(result: dict, min_color_ratio: float, min_direction_score: int):
+    if result is None:
+        return False, "no_result"
+    if not result.get("circle_detected"):
+        return False, "no_hough_circle"
+    if result.get("angle") is None:
+        return False, "no_needle_angle"
+
+    level = result.get("level")
+    status = result.get("status")
+    color = result.get("color")
+    if not level or not status or level == "未知" or status == "未知" or not color:
+        return False, "unknown_state"
+
+    coverage = result.get("color_coverage") or {}
+    color_ratio = float(coverage.get("ratio") or 0.0)
+    if color_ratio < min_color_ratio:
+        return False, f"low_color_ratio={color_ratio:.4f}"
+
+    direction_scores = result.get("direction_scores") or {}
+    direction_score = int(direction_scores.get(color) or 0)
+    if direction_score < min_direction_score:
+        return False, f"low_direction_score={direction_score}"
+
+    return True, "ok"
 
 
 def main() -> None:
@@ -99,9 +138,14 @@ def main() -> None:
 
             result = detect_gauge(str(tmp_path), debug=bool(debug_out), debug_out=debug_out)
             ts = time.strftime("%H:%M:%S")
-            if result is None:
+            valid, reason = is_valid_gauge_result(
+                result,
+                min_color_ratio=args.min_color_ratio,
+                min_direction_score=args.min_direction_score,
+            )
+            if not valid:
                 if args.verbose:
-                    print(f"[{ts}] 未识别到仪表盘")
+                    print(f"[{ts}] 未识别到有效仪表盘: {reason}")
                 count += 1
                 if args.frames > 0 and count >= args.frames:
                     break
@@ -111,14 +155,10 @@ def main() -> None:
             status = result.get("status")
             color = result.get("color")
             angle = result.get("angle")
-            if not level or not status or level == "未知" or status == "未知" or not color:
-                if args.verbose:
-                    print(f"[{ts}] 识别结果无效: {result}")
-            else:
-                print(
-                    f"[{ts}] 仪表盘显示{level}，状态{status} "
-                    f"(color={color}, angle={angle})"
-                )
+            print(
+                f"[{ts}] 仪表盘显示{level}，状态{status} "
+                f"(color={color}, angle={angle})"
+            )
 
             count += 1
             if args.frames > 0 and count >= args.frames:
