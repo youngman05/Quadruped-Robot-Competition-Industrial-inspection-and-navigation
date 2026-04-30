@@ -19,6 +19,64 @@ class GaugeValidationConfig:
     min_direction_margin: float = 2.0
 
 
+class GaugeStabilityTracker:
+    """Track consecutive valid gauge states before marking output stable."""
+
+    def __init__(self, required_count: int = 3) -> None:
+        self.required_count = max(1, int(required_count))
+        self._candidate_key: Optional[Tuple[str, str, str]] = None
+        self._candidate_count = 0
+
+    def update(self, result: Optional[Dict[str, Any]], valid: bool) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "stable_detected": False,
+            "stable_reason": "invalid_frame",
+            "stable_count": 0,
+            "stable_required_count": self.required_count,
+            "stable_level": None,
+            "stable_status": None,
+            "stable_color": None,
+            "stable_angle": None,
+        }
+
+        if not valid or not result:
+            self._candidate_key = None
+            self._candidate_count = 0
+            return payload
+
+        color = result.get("color")
+        level = result.get("level")
+        status = result.get("status")
+        if color not in VALID_COLORS or not level or not status:
+            self._candidate_key = None
+            self._candidate_count = 0
+            payload["stable_reason"] = "unknown_state"
+            return payload
+
+        key = (str(color), str(level), str(status))
+        if key == self._candidate_key:
+            self._candidate_count += 1
+        else:
+            self._candidate_key = key
+            self._candidate_count = 1
+
+        stable = self._candidate_count >= self.required_count
+        payload.update(
+            {
+                "stable_detected": stable,
+                "stable_reason": "stable"
+                if stable
+                else f"warming_up={self._candidate_count}/{self.required_count}",
+                "stable_count": self._candidate_count,
+                "stable_level": level if stable else None,
+                "stable_status": status if stable else None,
+                "stable_color": color if stable else None,
+                "stable_angle": result.get("angle") if stable else None,
+            }
+        )
+        return payload
+
+
 def is_valid_gauge_result(
     result: Optional[Dict[str, Any]],
     config: GaugeValidationConfig,
@@ -78,6 +136,7 @@ def make_status_payload(
     frame_id: str,
     stamp_sec: int,
     stamp_nanosec: int,
+    stability: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         "header": {
@@ -97,7 +156,18 @@ def make_status_payload(
         "color_coverage_ratio": 0.0,
         "zone_counts": {},
         "direction_scores": {},
+        "stable_detected": False,
+        "stable_reason": "not_evaluated",
+        "stable_count": 0,
+        "stable_required_count": 0,
+        "stable_level": None,
+        "stable_status": None,
+        "stable_color": None,
+        "stable_angle": None,
     }
+
+    if stability:
+        payload.update(stability)
 
     if not result:
         return payload

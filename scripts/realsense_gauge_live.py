@@ -23,6 +23,7 @@ GAUGE_DIR = ROOT / "src" / "cv" / "gauge_detector"
 sys.path.insert(0, str(GAUGE_DIR))
 
 from gauge_detector import detect_gauge  # noqa: E402
+from live_validation import GaugeValidationConfig, is_valid_gauge_result  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -86,62 +87,18 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def is_valid_gauge_result(
-    result: dict,
-    min_color_ratio: float,
-    min_direction_score: int,
-    min_zone_pixels: int,
-    max_zone_fraction: float,
-    min_direction_margin: float,
-):
-    if result is None:
-        return False, "no_result"
-    if not result.get("circle_detected"):
-        return False, "no_hough_circle"
-    if result.get("angle") is None:
-        return False, "no_needle_angle"
-
-    level = result.get("level")
-    status = result.get("status")
-    color = result.get("color")
-    if not level or not status or level == "未知" or status == "未知" or not color:
-        return False, "unknown_state"
-
-    coverage = result.get("color_coverage") or {}
-    color_ratio = float(coverage.get("ratio") or 0.0)
-    if color_ratio < min_color_ratio:
-        return False, f"low_color_ratio={color_ratio:.4f}"
-
-    zone_counts = coverage.get("counts") or {}
-    weak_zones = [
-        color for color in ("yellow", "green", "red")
-        if int(zone_counts.get(color) or 0) < min_zone_pixels
-    ]
-    if weak_zones:
-        return False, f"weak_color_zones={weak_zones}"
-
-    color_total = max(sum(int(v or 0) for v in zone_counts.values()), 1)
-    max_fraction = max(int(zone_counts.get(color) or 0) for color in ("yellow", "green", "red")) / color_total
-    if max_fraction > max_zone_fraction:
-        return False, f"dominant_color_fraction={max_fraction:.3f}"
-
-    direction_scores = result.get("direction_scores") or {}
-    direction_score = int(direction_scores.get(color) or 0)
-    if direction_score < min_direction_score:
-        return False, f"low_direction_score={direction_score}"
-
-    sorted_scores = sorted((int(v or 0) for v in direction_scores.values()), reverse=True)
-    second_score = sorted_scores[1] if len(sorted_scores) > 1 else 0
-    if second_score > 0 and direction_score / second_score < min_direction_margin:
-        return False, f"weak_direction_margin={direction_score}/{second_score}"
-
-    return True, "ok"
-
-
 def main() -> None:
     args = parse_args()
     if args.debug_dir:
         args.debug_dir.mkdir(parents=True, exist_ok=True)
+
+    validation_config = GaugeValidationConfig(
+        min_color_ratio=args.min_color_ratio,
+        min_direction_score=args.min_direction_score,
+        min_zone_pixels=args.min_zone_pixels,
+        max_zone_fraction=args.max_zone_fraction,
+        min_direction_margin=args.min_direction_margin,
+    )
 
     pipeline = rs.pipeline()
     config = rs.config()
@@ -181,14 +138,7 @@ def main() -> None:
 
             result = detect_gauge(str(tmp_path), debug=bool(debug_out), debug_out=debug_out)
             ts = time.strftime("%H:%M:%S")
-            valid, reason = is_valid_gauge_result(
-                result,
-                min_color_ratio=args.min_color_ratio,
-                min_direction_score=args.min_direction_score,
-                min_zone_pixels=args.min_zone_pixels,
-                max_zone_fraction=args.max_zone_fraction,
-                min_direction_margin=args.min_direction_margin,
-            )
+            valid, reason = is_valid_gauge_result(result, validation_config)
             if not valid:
                 if args.verbose:
                     print(f"[{ts}] 未识别到有效仪表盘: {reason}")

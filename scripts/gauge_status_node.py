@@ -23,6 +23,7 @@ sys.path.insert(0, str(GAUGE_DIR))
 
 from gauge_detector import detect_gauge  # noqa: E402
 from live_validation import (  # noqa: E402
+    GaugeStabilityTracker,
     GaugeValidationConfig,
     is_valid_gauge_result,
     make_status_payload,
@@ -50,6 +51,7 @@ class GaugeStatusNode(Node):
         self.declare_parameter("min_zone_pixels", 300)
         self.declare_parameter("max_zone_fraction", 0.62)
         self.declare_parameter("min_direction_margin", 2.0)
+        self.declare_parameter("stable_frame_count", 3)
 
         self._width = int(self.get_parameter("width").value)
         self._height = int(self.get_parameter("height").value)
@@ -71,6 +73,9 @@ class GaugeStatusNode(Node):
             min_zone_pixels=int(self.get_parameter("min_zone_pixels").value),
             max_zone_fraction=float(self.get_parameter("max_zone_fraction").value),
             min_direction_margin=float(self.get_parameter("min_direction_margin").value),
+        )
+        self._stability_tracker = GaugeStabilityTracker(
+            required_count=int(self.get_parameter("stable_frame_count").value)
         )
 
         self._status_pub = self.create_publisher(String, status_topic, 10)
@@ -121,6 +126,7 @@ class GaugeStatusNode(Node):
             self._publish_status(None, False, "processing_exception")
 
     def _publish_status(self, result, valid: bool, reason: str) -> None:
+        stability = self._stability_tracker.update(result, valid)
         if not valid and not self._publish_invalid:
             return
         if not valid and self._verbose_invalid:
@@ -134,6 +140,7 @@ class GaugeStatusNode(Node):
             frame_id=self._frame_id,
             stamp_sec=stamp.sec,
             stamp_nanosec=stamp.nanosec,
+            stability=stability,
         )
 
         status_msg = String()
