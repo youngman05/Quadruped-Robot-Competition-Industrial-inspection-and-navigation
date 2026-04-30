@@ -68,13 +68,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--min-zone-pixels",
         type=int,
-        default=800,
+        default=300,
         help="Minimum pixels required for each yellow/green/red gauge zone.",
     )
     parser.add_argument(
         "--max-zone-fraction",
         type=float,
-        default=0.55,
+        default=0.62,
         help="Reject detections where one color dominates the ring too much.",
     )
     parser.add_argument(
