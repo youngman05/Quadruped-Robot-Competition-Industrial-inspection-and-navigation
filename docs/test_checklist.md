@@ -1,5 +1,32 @@
 # Test Checklist
 
+## Gauge ROS2 Node Read-Only Check
+
+- [ ] ROS2 Foxy environment is sourced.
+- [ ] D455 is connected and visible.
+- [ ] `scripts/gauge_status_node.py` starts without crashing.
+- [ ] `/gauge/status` publishes JSON status messages.
+- [ ] `/gauge/detected` publishes `std_msgs/msg/Bool`.
+- [ ] No gauge in view does not produce a valid detection.
+- [ ] A valid gauge in view produces stable `detected=true` output.
+
+Useful commands:
+
+```bash
+cd ~/quadruped-robot-competition
+source /opt/ros/foxy/setup.bash
+python3 scripts/gauge_status_node.py
+```
+
+In another terminal:
+
+```bash
+source /opt/ros/foxy/setup.bash
+ros2 topic list | grep gauge
+timeout 5s ros2 topic echo /gauge/status
+timeout 5s ros2 topic echo /gauge/detected
+```
+
 ## 上电前
 
 - [ ] 电池电量充足。
@@ -49,4 +76,3 @@ bash scripts/check_jetson_env.sh
 - [ ] 保存日志。
 - [ ] 记录失败原因分类：识别/定位/导航/抓取/环境。
 - [ ] 形成下一次修改任务。
-
