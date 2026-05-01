@@ -1,5 +1,84 @@
 # Quadruped Robot Competition
 
+## 2026-04-30 最新进展
+
+- Lite3_ROS 只读状态链路已打通，Jetson 能收到 Lite3 的 `/imu/data`、`/joint_states`、`/leg_odom`、`/leg_odom2`、超声波距离等状态 topic。
+- D455 OpenCV 仪表识别已封装为 ROS2 只读节点：`scripts/gauge_status_node.py`。
+- 节点发布：
+  - `/gauge/status`：`std_msgs/msg/String`，内容是 JSON 字符串。
+  - `/gauge/detected`：`std_msgs/msg/Bool`。
+- 当前 `/gauge/status` 同时包含单帧识别结果和连续帧稳定判定结果。
+- 目前没有向 Lite3 发布 `/cmd_vel` 运动控制命令。
+
+## D455 仪表 ROS2 节点
+
+在 Jetson 上启动：
+
+```bash
+cd ~/quadruped-robot-competition
+source /opt/ros/foxy/setup.bash
+python3 scripts/gauge_status_node.py
+```
+
+启动成功时应看到类似输出：
+
+```text
+D455 started: Intel RealSense D455, serial=...
+Publishing gauge status on /gauge/status
+```
+
+另开一个终端查看 topic：
+
+```bash
+source /opt/ros/foxy/setup.bash
+ros2 topic list | grep gauge
+ros2 topic echo /gauge/status
+```
+
+如果只想输出通过校验的有效帧：
+
+```bash
+python3 scripts/gauge_status_node.py --ros-args -p publish_invalid:=false
+```
+
+`/gauge/status` 里重点看这些字段：
+
+```text
+detected
+reason
+color
+level
+angle
+color_coverage_ratio
+direction_scores
+stable_detected
+stable_reason
+stable_count
+stable_color
+stable_level
+stable_status
+```
+
+判断规则：
+
+- `detected: false` 表示这一帧不可信，即使 `color` 有值也不要直接作为最终结果。
+- `reason: low_color_ratio` 通常表示画面中有效彩色仪表区域太少。
+- `reason: weak_color_zones` 通常表示三色区域识别不完整或置信度不足。
+- `detected: true` 只表示这一帧通过当前校验。
+- `stable_detected: true` 表示连续多帧都稳定识别为同一状态。
+- 任务管理模块应优先使用 `stable_color`、`stable_level`、`stable_status`，不要直接用单帧 `color` 做最终决策。
+
+## 安全边界
+
+当前阶段以只读感知和状态订阅为主。没有现场安全确认前，不要发布非零 `/cmd_vel`。
+
+后续如需测试运动控制，必须先确认：
+
+- 有人现场看护机器人。
+- 急停或手动接管可用。
+- 机器人处在空旷安全区域。
+- 只读状态 topic 正常。
+
 2026 中国高校智能机器人创意大赛足式机器人挑战赛四足大型组项目仓库。
 
 本仓库用于管理比赛的软件系统、部署脚本、测试流程和技术文档。目标平台是 NVIDIA Jetson Xavier NX，主要传感器是 Intel RealSense D455。
@@ -71,4 +150,3 @@ python3 scripts/run_gauge_sample.py
 - 已迁入一个 OpenCV 仪表盘状态识别原型。
 - YOLO/TensorRT 检测链路待补齐。
 - 预赛已经完成，接下来等狗
-

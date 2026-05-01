@@ -1,5 +1,91 @@
 # Contributing Workflow
 
+## 2026-04-30 当前协作补充
+
+当前开发流程仍然是：
+
+1. Windows 本地仓库先改代码和文档。
+2. 确认没问题后提交并推送到 GitHub `main`。
+3. Jetson 从 GitHub 或 bundle 同步最新代码。
+4. Jetson 负责运行、验证和实机测试。
+
+注意：Jetson 目前访问 GitHub 私有仓库时可能因为认证失败无法直接 `git pull`。如果出现：
+
+```text
+fatal: could not read Username for 'https://github.com': No such device or address
+```
+
+可以临时使用 bundle 同步，但最终仍建议给 Jetson 配好 GitHub 凭据。
+
+## D455 Gauge ROS2 Node 测试流程
+
+本项目当前已有 D455 仪表识别 ROS2 只读节点：
+
+```bash
+scripts/gauge_status_node.py
+```
+
+提交相关视觉或 ROS2 修改后，至少执行：
+
+```bash
+python -m py_compile scripts/gauge_status_node.py src/cv/gauge_detector/live_validation.py scripts/realsense_gauge_live.py
+git diff --check
+```
+
+Jetson 上运行：
+
+```bash
+cd ~/quadruped-robot-competition
+source /opt/ros/foxy/setup.bash
+python3 scripts/gauge_status_node.py
+```
+
+另开终端验证：
+
+```bash
+source /opt/ros/foxy/setup.bash
+ros2 topic list | grep gauge
+ros2 topic echo /gauge/status
+```
+
+`/gauge/status` 当前是逐帧 raw 输出。下游逻辑不要直接把任意一帧的 `color` 当作最终状态，应该优先看：
+
+```text
+detected
+reason
+color
+level
+color_coverage_ratio
+direction_scores
+stable_detected
+stable_reason
+stable_count
+stable_color
+stable_level
+stable_status
+```
+
+其中 `detected` 是单帧可信度结果，`stable_detected` 是连续多帧稳定结果。任务决策必须优先使用 `stable_color`、`stable_level`、`stable_status`，不要直接使用单帧 `color`。
+
+默认连续稳定帧数为 3，可通过 ROS2 参数调整：
+
+```bash
+python3 scripts/gauge_status_node.py --ros-args -p stable_frame_count:=5
+```
+
+## Robot Safety Rule
+
+没有现场安全确认前，不要发布非零 `/cmd_vel`。
+
+测试 Lite3 运动控制前必须确认：
+
+- 有人现场看护。
+- 急停或手动接管可用。
+- 场地空旷。
+- 只读状态 topic 正常。
+
+第一条控制命令只能是零速度，用来确认链路和安全边界。
+
 本文件规定四足机器人比赛项目的协作流程。目标是保证主分支稳定、Jetson 环境干净、实机测试可复现。
 
 ## 角色分工
@@ -121,4 +207,3 @@ git pull --ff-only
 - 主分支不会被破坏。
 
 推荐通过 GitHub Pull Request 合并，不建议直接 push 到 `main`。
-
