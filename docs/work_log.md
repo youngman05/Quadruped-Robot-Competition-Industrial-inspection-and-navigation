@@ -1,5 +1,32 @@
 # Work Log
 
+## 2026-05-02
+
+### Documentation sync
+
+Completed:
+
+- Updated `README.md` to document the current `/gauge/status` JSON interface.
+- Updated `CONTRIBUTING.md` to clarify the gauge node test workflow and task-decision rule.
+- Documented that `detected` is a single-frame validity signal.
+- Documented that task logic should use stable fields:
+  - `stable_detected`
+  - `stable_color`
+  - `stable_level`
+  - `stable_status`
+- Documented `stable_frame_count` ROS2 parameter usage.
+
+Git:
+
+```text
+158a9b6 Update gauge status documentation
+```
+
+Current repository state:
+
+- `main` is aligned with `origin/main`.
+- No local uncommitted code changes at the time this log entry was created.
+
 ## 2026-05-01
 
 ### Gauge ROS2 status stabilization
@@ -79,4 +106,3 @@ Safety note:
 
 - Do not publish non-zero `/cmd_vel` before onsite safety confirmation.
 - Current gauge node remains read-only and does not control robot motion.
-
