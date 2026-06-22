@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quadruped-robot-competition"
+version = "0.1.0"
+description = "2026 中国高校智能机器人创意大赛 — 足式机器人挑战赛（四足大组）"
+requires-python = ">=3.8"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+packages = [
+    "cv",
+    "cv.realsense_camera",
+    "cv.gauge_detector",
+]

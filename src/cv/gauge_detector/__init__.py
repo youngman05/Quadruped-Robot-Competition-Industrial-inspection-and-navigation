@@ -1,0 +1,2 @@
+"""OpenCV gauge state detector."""
+
