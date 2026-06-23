@@ -23,7 +23,6 @@ GAUGE_DIR = ROOT / "src" / "cv" / "gauge_detector"
 sys.path.insert(0, str(GAUGE_DIR))
 
 from gauge_detector import detect_gauge  # noqa: E402
-from live_validation import GaugeValidationConfig, is_valid_gauge_result  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -52,7 +51,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--verbose",
         action="store_true",
-        help="Print debug messages for missed or invalid detections.",
+        help="Print extra debug messages.",
+    )
+    parser.add_argument(
+        "--quiet-invalid",
+        action="store_true",
+        help="Do not print invalid/no-gauge recognition messages.",
+    )
+    parser.add_argument(
+        "--no-window",
+        action="store_true",
+        help="Do not open the live camera preview window.",
+    )
+    parser.add_argument(
+        "--window-name",
+        default="D455 Gauge Recognition",
+        help="OpenCV preview window name.",
     )
     parser.add_argument(
         "--min-color-ratio",
@@ -87,18 +101,111 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def draw_status_overlay(image: np.ndarray, valid: bool, result: dict, reason: str, ts: str) -> np.ndarray:
+    """Draw the latest recognition status on the live camera frame."""
+    frame = image.copy()
+    h, w = frame.shape[:2]
+    cv2.rectangle(frame, (0, 0), (w, 86), (0, 0, 0), thickness=-1)
+
+    if valid and result:
+        level = result.get("level")
+        status = result.get("status")
+        color_name = result.get("color")
+        angle = result.get("angle")
+        status_color = (0, 220, 0) if status == "正常" else (0, 0, 255)
+        line1 = f"{ts}  VALID  level={level}  status={status}"
+        line2 = f"color={color_name}  angle={angle}"
+    else:
+        status_color = (0, 200, 255)
+        line1 = f"{ts}  INVALID"
+        line2 = f"reason={reason}"
+
+    cv2.putText(frame, line1, (12, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2, cv2.LINE_AA)
+    cv2.putText(frame, line2, (12, 62), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (230, 230, 230), 2, cv2.LINE_AA)
+    cv2.putText(
+        frame,
+        "Press q to quit",
+        (12, h - 18),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+    return frame
+
+
+def is_valid_gauge_result(
+    result: dict,
+    min_color_ratio: float,
+    min_direction_score: int,
+    min_zone_pixels: int,
+    max_zone_fraction: float,
+    min_direction_margin: float,
+):
+    if result is None:
+        return False, "no_result"
+    if result.get("angle") is None:
+        return False, "no_needle_angle"
+
+    level = result.get("level")
+    status = result.get("status")
+    color = result.get("color")
+    if not level or not status or level == "未知" or status == "未知" or not color:
+        return False, "unknown_state"
+
+    # Compatibility mode for the original Task 1 detector. That detector returns
+    # circle/color/angle/status, but not the newer live-validation confidence
+    # fields used by the ROS2 version.
+    if "circle_detected" not in result:
+        if result.get("circle") and color in {"yellow", "green", "red"}:
+            return True, "ok_legacy_detector"
+        return False, "no_circle"
+
+    if not result.get("circle_detected"):
+        return False, "no_hough_circle"
+
+    coverage = result.get("color_coverage") or {}
+    if not coverage:
+        return True, "ok_no_confidence_fields"
+
+    color_ratio = float(coverage.get("ratio") or 0.0)
+    if color_ratio < min_color_ratio:
+        return False, f"low_color_ratio={color_ratio:.4f}"
+
+    zone_counts = coverage.get("counts") or {}
+    weak_zones = [
+        color for color in ("yellow", "green", "red")
+        if int(zone_counts.get(color) or 0) < min_zone_pixels
+    ]
+    if weak_zones:
+        return False, f"weak_color_zones={weak_zones}"
+
+    color_total = max(sum(int(v or 0) for v in zone_counts.values()), 1)
+    max_fraction = max(int(zone_counts.get(color) or 0) for color in ("yellow", "green", "red")) / color_total
+    if max_fraction > max_zone_fraction:
+        return False, f"dominant_color_fraction={max_fraction:.3f}"
+
+    direction_scores = result.get("direction_scores") or {}
+    if not direction_scores:
+        return True, "ok_no_direction_scores"
+
+    direction_score = int(direction_scores.get(color) or 0)
+    if direction_score < min_direction_score:
+        return False, f"low_direction_score={direction_score}"
+
+    sorted_scores = sorted((int(v or 0) for v in direction_scores.values()), reverse=True)
+    second_score = sorted_scores[1] if len(sorted_scores) > 1 else 0
+    if second_score > 0 and direction_score / second_score < min_direction_margin:
+        return False, f"weak_direction_margin={direction_score}/{second_score}"
+
+    return True, "ok"
+
+
 def main() -> None:
     args = parse_args()
     if args.debug_dir:
         args.debug_dir.mkdir(parents=True, exist_ok=True)
-
-    validation_config = GaugeValidationConfig(
-        min_color_ratio=args.min_color_ratio,
-        min_direction_score=args.min_direction_score,
-        min_zone_pixels=args.min_zone_pixels,
-        max_zone_fraction=args.max_zone_fraction,
-        min_direction_margin=args.min_direction_margin,
-    )
 
     pipeline = rs.pipeline()
     config = rs.config()
@@ -110,10 +217,24 @@ def main() -> None:
     serial = device.get_info(rs.camera_info.serial_number)
     print(f"D455 started: {device_name}, serial={serial}")
     print("把仪表盘放到相机前，尽量居中、占画面主要区域。按 Ctrl+C 结束。")
+    if not args.no_window:
+        print("实时图像窗口已启用。按图像窗口中的 q 键可退出。")
+        try:
+            cv2.startWindowThread()
+        except cv2.error:
+            pass
+        cv2.namedWindow(args.window_name, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(args.window_name, args.width, args.height)
+        cv2.moveWindow(args.window_name, 80, 80)
 
     count = 0
     tmp_path = Path(tempfile.gettempdir()) / "d455_gauge_frame.jpg"
     last_run = 0.0
+    window_enabled = not args.no_window
+    latest_valid = False
+    latest_result = None
+    latest_reason = "waiting_for_first_detection"
+    latest_ts = time.strftime("%H:%M:%S")
 
     try:
         while True:
@@ -122,47 +243,73 @@ def main() -> None:
             if not color_frame:
                 continue
 
-            now = time.monotonic()
-            if now - last_run < args.interval:
-                continue
-            last_run = now
-
             image = np.asanyarray(color_frame.get_data())
+            now = time.monotonic()
 
-            # Reuse the path-based detector to avoid changing the proven module now.
-            cv2.imwrite(str(tmp_path), image)
+            if now - last_run >= args.interval:
+                last_run = now
 
-            debug_out = None
-            if args.debug_dir:
-                debug_out = str(args.debug_dir / f"gauge_live_{count:04d}_debug.jpg")
+                # Reuse the path-based detector to avoid changing the proven module now.
+                cv2.imwrite(str(tmp_path), image)
 
-            result = detect_gauge(str(tmp_path), debug=bool(debug_out), debug_out=debug_out)
-            ts = time.strftime("%H:%M:%S")
-            valid, reason = is_valid_gauge_result(result, validation_config)
-            if not valid:
-                if args.verbose:
-                    print(f"[{ts}] 未识别到有效仪表盘: {reason}")
+                debug_out = None
+                if args.debug_dir:
+                    debug_out = str(args.debug_dir / f"gauge_live_{count:04d}_debug.jpg")
+
+                result = detect_gauge(str(tmp_path), debug=bool(debug_out), debug_out=debug_out)
+                ts = time.strftime("%H:%M:%S")
+                valid, reason = is_valid_gauge_result(
+                    result,
+                    min_color_ratio=args.min_color_ratio,
+                    min_direction_score=args.min_direction_score,
+                    min_zone_pixels=args.min_zone_pixels,
+                    max_zone_fraction=args.max_zone_fraction,
+                    min_direction_margin=args.min_direction_margin,
+                )
+                latest_valid = valid
+                latest_result = result
+                latest_reason = reason
+                latest_ts = ts
+
+                if not valid:
+                    if not args.quiet_invalid:
+                        print(f"[{ts}] 未识别到有效仪表盘: {reason}", flush=True)
+                else:
+                    level = result.get("level")
+                    status = result.get("status")
+                    color = result.get("color")
+                    angle = result.get("angle")
+                    print(
+                        f"[{ts}] 仪表盘显示{level}，状态{status} "
+                        f"(color={color}, angle={angle})",
+                        flush=True,
+                    )
+
                 count += 1
                 if args.frames > 0 and count >= args.frames:
-                    break
-                continue
+                    if not window_enabled:
+                        break
 
-            level = result.get("level")
-            status = result.get("status")
-            color = result.get("color")
-            angle = result.get("angle")
-            print(
-                f"[{ts}] 仪表盘显示{level}，状态{status} "
-                f"(color={color}, angle={angle})"
-            )
+            if window_enabled:
+                preview = draw_status_overlay(
+                    image, latest_valid, latest_result, latest_reason, latest_ts
+                )
+                try:
+                    cv2.imshow(args.window_name, preview)
+                    if cv2.waitKey(1) & 0xFF == ord("q"):
+                        break
+                except cv2.error as exc:
+                    print(f"OpenCV 图像窗口不可用，已自动关闭窗口显示: {exc}")
+                    window_enabled = False
 
-            count += 1
-            if args.frames > 0 and count >= args.frames:
+            if args.frames > 0 and count >= args.frames and not window_enabled:
                 break
     except KeyboardInterrupt:
         print("\n已停止识别")
     finally:
         pipeline.stop()
+        if window_enabled:
+            cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":

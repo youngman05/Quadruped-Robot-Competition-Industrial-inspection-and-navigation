@@ -45,6 +45,12 @@ cd quadruped-robot-competition
 bash scripts/check_jetson_env.sh
 ```
 
+安装本仓库 Python 包的 editable 入口，供 `cv.realsense_camera` 等 `src/` 下模块导入：
+
+```bash
+python3 -m pip install -e .
+```
+
 ## D455 测试
 
 ```bash
@@ -72,4 +78,3 @@ python3 scripts/run_gauge_sample.py
 - Jetson 上的改动必须同步回 Git。
 - 模型权重和数据集不要直接提交到仓库。
 - 比赛正式推理建议使用 TensorRT engine，而不是长期跑 `.pt`。
-

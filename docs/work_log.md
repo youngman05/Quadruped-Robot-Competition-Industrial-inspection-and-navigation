@@ -1,5 +1,61 @@
 # Work Log
 
+## 2026-06-23
+
+### Selective import from `feature/camera-imu-cuvslam`
+
+Completed:
+
+- Imported useful content from the GitHub branch without merging unrelated Git history.
+- Kept the D455 camera wrapper work already present in this working branch:
+  - `src/cv/realsense_camera/`
+  - `scripts/realsense_viewer.py`
+  - package metadata for editable install.
+- Added YOLOv8 instance segmentation workspace:
+  - `InstanceSegmentation/README.md`
+  - `InstanceSegmentation/scripts/camera_detect.py`
+  - `InstanceSegmentation/scripts/image_detect.py`
+  - `InstanceSegmentation/scripts/video_detect.py`
+  - `InstanceSegmentation/scripts/train.py`
+  - `InstanceSegmentation/configs/dataset.yaml`
+  - `InstanceSegmentation/notebooks/quickstart.ipynb`
+- Added `configs/yolo/classes.yaml`.
+- Kept binary `.pt` model weights out of Git; the scripts can auto-download official Ultralytics weights or use local weights under `InstanceSegmentation/models/`.
+- Updated README and system design docs.
+
+Important correction:
+
+- The source feature branch claimed D455 IMU validation was complete.
+- Current Jetson testing shows D455 IR/depth streams work, but accel/gyro streaming is blocked by Linux IIO permissions.
+- Mainline documentation therefore records IMU as pending udev/root-permission fix and re-test, not complete.
+
+## 2026-05-02
+
+### Documentation sync
+
+Completed:
+
+- Updated `README.md` to document the current `/gauge/status` JSON interface.
+- Updated `CONTRIBUTING.md` to clarify the gauge node test workflow and task-decision rule.
+- Documented that `detected` is a single-frame validity signal.
+- Documented that task logic should use stable fields:
+  - `stable_detected`
+  - `stable_color`
+  - `stable_level`
+  - `stable_status`
+- Documented `stable_frame_count` ROS2 parameter usage.
+
+Git:
+
+```text
+158a9b6 Update gauge status documentation
+```
+
+Current repository state:
+
+- `main` is aligned with `origin/main`.
+- No local uncommitted code changes at the time this log entry was created.
+
 ## 2026-05-01
 
 ### Gauge ROS2 status stabilization
@@ -79,4 +135,3 @@ Safety note:
 
 - Do not publish non-zero `/cmd_vel` before onsite safety confirmation.
 - Current gauge node remains read-only and does not control robot motion.
-
