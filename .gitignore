@@ -38,6 +38,12 @@ models/*.onnx
 models/*.engine
 models/*.trt
 models/*.weights
+InstanceSegmentation/**/*.pt
+InstanceSegmentation/**/*.pth
+InstanceSegmentation/**/*.onnx
+InstanceSegmentation/**/*.engine
+InstanceSegmentation/**/*.trt
+InstanceSegmentation/**/*.weights
 
 # Media
 *.mp4
@@ -51,4 +57,3 @@ build/
 install/
 log/
 dist/
-

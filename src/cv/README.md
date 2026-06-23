@@ -32,5 +32,5 @@ timeout 5s ros2 topic echo /gauge/detected
 当前包含：
 
 - `gauge_detector`: OpenCV 仪表盘状态识别原型。
-- `realsense_camera`: D455 采集封装，待实现。
+- `realsense_camera`: D455 RGB-D / 红外双目 / BMI055 IMU 采集封装，支持仪表识别和 cuVSLAM 预设。
 - `yolo_detector`: YOLO/TensorRT 检测封装，待实现。
