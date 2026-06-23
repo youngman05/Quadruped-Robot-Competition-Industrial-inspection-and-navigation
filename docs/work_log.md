@@ -1,5 +1,27 @@
 # Work Log
 
+## 2026-06-23
+
+### D455 Camera API + cuVSLAM Preparation
+
+Completed:
+
+- **D455 Python wrapper** (`src/cv/realsense_camera/`):
+  - `RealsenseCamera` class with context manager, auto-alignment, warmup.
+  - IMU support: `get_imu_data()`, `get_imu_samples()`, `get_imu_batch()`.
+  - Infrared stereo: `get_infrared_frames()` for cuVSLAM input.
+  - Projector control: `set_projector(on/off)`.
+  - Factory presets: `for_cuvslam()`, `for_gauge()`.
+  - Depth filter presets: light / balanced / max.
+  - Tested: all 7 tests passed (IR, IMU, projector, combined, gauge).
+- **D455 IMU verified**: BMI055 6-DoF (Accel 100/200/400 Hz, Gyro 200/400 Hz), confirmed via API.
+- **cuVSLAM research**: NVIDIA GPU-accelerated VSLAM confirmed compatible with D455 (IR stereo + IMU).
+- **Instance segmentation workspace**: YOLOv8-seg real-time segmentation with D455 support.
+  - `scripts/camera_detect.py` with custom mask rendering.
+  - `notebooks/quickstart.ipynb` migrated to segmentation.
+- **Project packaging**: `setup.py develop` removes `sys.path.insert` hack; direct `from cv.realsense_camera import ...` now works.
+- **Docs updated**: system_design (cuVSLAM, CV), slam/README (cuVSLAM deployment), pyrealsense2 API reference (IMU + IR sections).
+
 ## 2026-05-01
 
 ### Gauge ROS2 status stabilization

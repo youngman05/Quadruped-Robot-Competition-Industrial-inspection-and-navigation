@@ -20,15 +20,17 @@ D455 RGB-D Camera
 
 ### CV
 
-- 从 D455 获取 RGB-D 图像。
-- 检测仪表盘、A/B/C/D 字母、红色/绿色长条。
-- 对仪表盘 ROI 判断偏低、正常、偏高。
-- 使用深度图输出目标距离或三维坐标。
+- 从 D455 获取 RGB-D 图像（封装 API：`src/cv/realsense_camera/`）。
+- **实时实例分割**：YOLOv8-seg 模型（`InstanceSegmentation/`），用于检测比赛场地中的物体。
+- **仪表盘检测**：OpenCV 识别模拟表盘指针角度和颜色区域（`src/cv/gauge_detector/`）。
+- 检测 A/B/C/D 字母、红色/绿色长条。
+- 使用深度图输出目标距离或三维坐标（`get_distance()` / `deproject()`）。
 
 第一阶段建议使用混合方案：
 
 ```text
-YOLO 检测仪表盘 ROI -> OpenCV 判断指针落区
+YOLOv8 实例分割检测物体 ROI -> OpenCV 判断仪表指针落区
+                                  -> 深度图计算三维坐标
 ```
 
 ### SLAM/VIO

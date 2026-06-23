@@ -1,14 +1,42 @@
 # Quadruped Robot Competition
 
-## 2026-04-30 最新进展
+## 2026-06-23 最新进展
 
+- **D455 相机 Python 封装完成**：`src/cv/realsense_camera/` — 一行 `with RealsenseCamera()` 即可用。
+  - 支持 RGB、深度、红外双目 (infra1/2)、BMI055 IMU (Accel + Gyro)。
+  - cuVSLAM 工厂预设 `RealsenseCamera.for_cuvslam()`，一键配置。
+  - 投影仪开关控制、深度对齐、后处理滤波器链。
+- **SLAM 方案确定为 NVIDIA cuVSLAM**：GPU 加速，Jetson 原生，D455 红外双目 + IMU 直接输入。
+- **实例分割工作空间**：`InstanceSegmentation/` — YOLOv8-seg 实时分割，支持 D455 相机。
 - Lite3_ROS 只读状态链路已打通，Jetson 能收到 Lite3 的 `/imu/data`、`/joint_states`、`/leg_odom`、`/leg_odom2`、超声波距离等状态 topic。
 - D455 OpenCV 仪表识别已封装为 ROS2 只读节点：`scripts/gauge_status_node.py`。
-- 节点发布：
-  - `/gauge/status`：`std_msgs/msg/String`，内容是 JSON 字符串。
-  - `/gauge/detected`：`std_msgs/msg/Bool`。
 - 当前 `/gauge/status` 同时包含单帧识别结果和连续帧稳定判定结果。
 - 目前没有向 Lite3 发布 `/cmd_vel` 运动控制命令。
+
+## D455 相机 API
+
+封装模块位于 `src/cv/realsense_camera/`，支持 GPU 直读 + 仪表检测两种模式：
+
+```python
+from cv.realsense_camera import RealsenseCamera
+
+# cuVSLAM 模式：红外双目 + IMU
+with RealsenseCamera.for_cuvslam() as cam:
+    left_ir, right_ir = cam.get_infrared_frames()
+    imu = cam.get_imu_data()
+
+# 仪表检测模式：彩色图即可
+with RealsenseCamera.for_gauge() as cam:
+    color = cam.get_color_image()
+```
+
+首次部署需注册包：
+
+```bash
+python3 setup.py develop
+```
+
+随后在任何脚本中 `from cv.realsense_camera import ...` 即可。
 
 ## D455 仪表 ROS2 节点
 
@@ -102,17 +130,19 @@ stable_status
 
 ```text
 docs/                 项目设计、部署、测试文档
-scripts/              环境检查、相机测试、演示脚本
-src/cv/               视觉识别模块
-src/slam/             VIO/SLAM 模块
+scripts/              环境检查、D455 预览、仪表检测脚本
+src/cv/
+  realsense_camera/   D455 相机 Python API（含 IMU + 红外 + cuVSLAM 预设）
+  gauge_detector/     OpenCV 仪表盘状态识别
+  yolo_detector/      YOLO/TensorRT 检测（待实现）
+src/slam/             VIO/SLAM 模块（cuVSLAM 方案）
 src/navigation/       导航模块
 src/task_manager/     比赛流程调度模块
 src/speech/           中文播报模块
 src/arm_control/      机械臂/夹爪控制模块
+InstanceSegmentation/ YOLOv8 实例分割工作空间（训练 + 实时推理）
 configs/              相机、YOLO、导航配置
-data/                 数据说明，不直接提交大数据集
-models/               模型说明，不直接提交大模型
-tests/                自动化和集成测试
+setup.py              项目包注册（python setup.py develop）
 ```
 
 ## 开发原则
@@ -149,10 +179,23 @@ python3 scripts/realsense_smoke_test.py
 python3 scripts/run_gauge_sample.py
 ```
 
+安装实例分割依赖并测试：
+
+```bash
+cd InstanceSegmentation
+pip install -r requirements.txt
+python scripts/camera_detect.py --d455
+```
+
 ## 当前状态
 
-- Jetson 已验证可访问 D455。
-- Jetson 已安装 OpenCV、pyrealsense2、TensorRT。
-- 已迁入一个 OpenCV 仪表盘状态识别原型。
-- YOLO/TensorRT 检测链路待补齐。
-- 预赛已经完成，接下来等狗
+- ✅ D455 相机 Python API 封装完成（RGB / 深度 / 红外 / IMU / 对齐 / 滤波）。
+- ✅ D455 BMI055 IMU 验证完成（Accel 100/200/400 Hz，Gyro 200/400 Hz）。
+- ✅ cuVSLAM 方案调研完成，硬件兼容确认（D455 红外双目 + IMU 直接输入）。
+- ✅ YOLOv8 实例分割工作空间搭建完成，支持 D455 实时推理。
+- ✅ Jetson 环境脚本 + 冒烟测试。
+- ✅ OpenCV 仪表盘识别 96.7% 合成测试准确率。
+- ✅ ROS2 仪表状态节点 (发布 `/gauge/status` + `/gauge/detected`)。
+- ⏳ YOLO 检测链路 / TensorRT 部署待补齐。
+- ⏳ cuVSLAM 实机部署（Jetson 上 `ros-humble-isaac-ros-visual-slam`）。
+- ⏳ 等狗到位进行实机联调。
