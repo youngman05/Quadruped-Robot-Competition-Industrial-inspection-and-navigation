@@ -7,7 +7,12 @@
   - cuVSLAM 工厂预设 `RealsenseCamera.for_cuvslam()`，一键配置。
   - 投影仪开关控制、深度对齐、后处理滤波器链。
 - **SLAM 方案确定为 NVIDIA cuVSLAM**：GPU 加速，Jetson 原生，D455 红外双目 + IMU 直接输入。
-- **实例分割工作空间**：`InstanceSegmentation/` — YOLOv8-seg 实时分割，支持 D455 相机。
+- **实例分割工作空间**：`InstanceSegmentation/` — 三个项目，三个训练好的模型。
+  - 红绿色块：red / green（Mask mAP 0.975，97 张图）
+  - 路障：obstacle（Mask mAP 0.995，41 张图）
+  - **三合一模型**：red / green / obstacle（Mask mAP 0.964，163 张图）
+  - SAM 辅助标注工具：`sam_click_label.py`（鼠标点一下 AI 自动画 mask）
+  - 双模型同时检测：`camera_multi_detect.py`
 - Lite3_ROS 只读状态链路已打通，Jetson 能收到 Lite3 的 `/imu/data`、`/joint_states`、`/leg_odom`、`/leg_odom2`、超声波距离等状态 topic。
 - D455 OpenCV 仪表识别已封装为 ROS2 只读节点：`scripts/gauge_status_node.py`。
 - 当前 `/gauge/status` 同时包含单帧识别结果和连续帧稳定判定结果。
