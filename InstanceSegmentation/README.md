@@ -1,173 +1,133 @@
 # YOLOv8 实例分割工作空间
 
-基于 [Ultralytics YOLOv8](https://github.com/ultralytics/ultralytics) 的**实例分割**工作空间，支持模型训练、图片/视频推理和实时摄像头检测。
+基于 [Ultralytics YOLOv8](https://github.com/ultralytics/ultralytics) 的实例分割工作空间。
+检测 = box + 像素级 mask。
 
-实例分割 = 目标检测 (bounding box) + 像素级 mask，可以精确分割出每个物体的轮廓。
+---
 
-## 环境要求
+## 项目
 
-- Python >= 3.8
-- NVIDIA GPU + CUDA（可选，CPU 也可运行）
+| 项目 | 路径 | 类别 | Mask mAP50 | 训练集 |
+|------|------|------|:---:|:---:|
+| 红绿色块 | `projects/red_green/` | red, green | 0.975 | 97 |
+| 路障 | `projects/obstacle/` | obstacle | 0.995 | 41 |
+| **三合一** | `projects/combined/` | red, green, obstacle | **0.964** | 163 |
 
-## 快速开始
+每个项目包含独立的 `datasets/`、`configs/`、`model/`，脚本共用。
 
-### 1. 安装依赖
+---
 
-```bash
-pip install -r requirements.txt
-```
-
-### 2. 验证 GPU（可选）
-
-```bash
-python -c "import torch; print('CUDA 可用' if torch.cuda.is_available() else 'CUDA 不可用，将使用 CPU')"
-```
-
-### 3. 实时摄像头实例分割
+## 快速运行
 
 ```bash
-# 普通 USB 摄像头
-python scripts/camera_detect.py --model yolov8n-seg.pt
+# 三合一模型（推荐）
+python scripts/camera_detect.py --d455 --model projects/combined/model/best.pt
 
-# Intel RealSense D455 相机
-python scripts/camera_detect.py --d455 --model yolov8n-seg.pt
+# 双模型同时检测（两个模型各跑各的）
+python scripts/camera_multi_detect.py
 
-# CPU 模式
-python scripts/camera_detect.py --model yolov8n-seg.pt --device cpu
+# 普通摄像头
+python scripts/camera_detect.py --model projects/combined/model/best.pt
 ```
 
-首次运行会自动下载 `yolov8n-seg.pt` 模型。按 `Q` 退出。
-
-输出动画包含：
-- 半透明彩色 mask（像素级分割区域）
-- mask 轮廓线
-- bounding box + 类别名 + 置信度
-- 每个实例的 mask 面积 (px)
-- 实时 FPS
-
-### 4. 图片实例分割
-
-```bash
-# 单张图片
-python scripts/image_detect.py --model yolov8n-seg.pt --source path/to/image.jpg
-
-# 整个目录
-python scripts/image_detect.py --model yolov8n-seg.pt --source path/to/dir/
-```
-
-输出 mask 面积和置信度。
-
-### 5. 视频实例分割
-
-```bash
-python scripts/video_detect.py --model yolov8n-seg.pt --source path/to/video.mp4
-```
-
-### 6. 启动 Jupyter Notebook
-
-```bash
-jupyter notebook notebooks/quickstart.ipynb
-```
+---
 
 ## 目录结构
 
 ```
-识别/
-├── datasets/              # 标注数据存放
-│   ├── images/            # 图片 (train/val/test 子目录)
-│   └── labels/            # YOLO 格式标签 (train/val/test 子目录)
-├── models/                # 训练好的模型权重 (.pt 文件)
-├── outputs/               # 推理输出结果
-├── configs/               # 配置文件
-│   └── dataset.yaml       # 数据集配置模板
-├── scripts/               # 脚本
-│   ├── camera_detect.py   # 实时摄像头实例分割（支持 D455）
-│   ├── image_detect.py    # 图片实例分割
-│   ├── video_detect.py    # 视频实例分割
-│   └── train.py           # 模型训练
-├── notebooks/             # Jupyter Notebooks
-│   └── quickstart.ipynb   # 快速入门
-├── requirements.txt       # Python 依赖
-└── README.md              # 本文件
+InstanceSegmentation/
+├── projects/
+│   ├── red_green/
+│   │   ├── model/best.pt        ← Mask mAP 0.975
+│   │   ├── configs/dataset.yaml
+│   │   └── datasets/            # images + labels (train/val/test)
+│   ├── obstacle/
+│   │   ├── model/best.pt        ← Mask mAP 0.995
+│   │   ├── configs/dataset.yaml
+│   │   └── datasets/
+│   └── combined/
+│       ├── model/best.pt        ← Mask mAP 0.964 (三合一)
+│       ├── configs/dataset.yaml  (nc=3: red, green, obstacle)
+│       └── datasets/
+├── scripts/
+│   ├── camera_detect.py         # 单模型实时检测（支持 D455）
+│   ├── camera_multi_detect.py   # 双模型同时检测
+│   ├── image_detect.py          # 图片推理
+│   ├── video_detect.py          # 视频推理
+│   ├── train.py                 # 模型训练
+│   ├── labelme2yolo.py          # labelme JSON → YOLO seg
+│   └── sam_click_label.py       # SAM 辅助标注（点一下 AI 画 mask）
+├── notebooks/quickstart.ipynb
+└── requirements.txt
 ```
 
-## 训练自定义模型
+---
 
-### 1. 准备数据集
+## 完整工作流
 
-使用 [LabelImg](https://github.com/HumanSignal/labelImg) 标注数据：
+### 1. 标注
+
+**SAM 辅助标注**（推荐）：
+```bash
+python scripts/sam_click_label.py projects/obstacle/datasets/images/train obstacle
+```
+鼠标点击物体 → SAM 自动生成 mask → 回车确认 → S 保存为 labelme JSON → D 下一张。
+
+**手动标注**：
+```bash
+labelme
+```
+画多边形标注，JSON 和图片放同一目录。
+
+### 2. 转换格式
 
 ```bash
-labelImg
+python scripts/labelme2yolo.py --src projects/<project>/datasets/images/train --split train --classes "class1,class2"
 ```
 
-标注完成后，将图片和标签分别放入 `datasets/images/` 和 `datasets/labels/` 下对应的 `train`/`val` 目录。
-
-### 2. 修改配置文件
-
-编辑 `configs/dataset.yaml`，设置正确的类别数和类别名称。
-
-### 3. 开始训练
+### 3. 训练
 
 ```bash
-# 基本训练
-python scripts/train.py --data configs/dataset.yaml
-
-# 自定义参数
-python scripts/train.py \
-    --data configs/dataset.yaml \
-    --model yolov8s.pt \
-    --epochs 200 \
-    --batch 16 \
-    --imgsz 640
+python scripts/train.py --data projects/<project>/configs/dataset.yaml --epochs 100 --batch 4
 ```
 
-可选预训练模型（检测版 vs 分割版）：
-
-| 检测模型 | 分割模型 | 尺寸 | 速度 | 说明 |
-|----------|----------|------|------|------|
-| `yolov8n.pt` | `yolov8n-seg.pt` | Nano | 最快 | 实时首选 |
-| `yolov8s.pt` | `yolov8s-seg.pt` | Small | 快 | |
-| `yolov8m.pt` | `yolov8m-seg.pt` | Medium | 中 | |
-| `yolov8l.pt` | `yolov8l-seg.pt` | Large | 慢 | |
-| `yolov8x.pt` | `yolov8x-seg.pt` | XLarge | 最慢 | 最高精度 |
-
-> 分割模型（`-seg.pt`）输出像素级 mask，检测模型只有 bounding box。
-
-## 常用命令速查
+### 4. 实时检测
 
 ```bash
-# D455 实时实例分割（自定义训练模型）
-python scripts/camera_detect.py --d455 --model models/best.pt --conf 0.6
-
-# 普通摄像头实时分割
-python scripts/camera_detect.py --model yolov8n-seg.pt --conf 0.6
-
-# 批量图片推理
-python scripts/image_detect.py --model models/best.pt --source datasets/images/test/
-
-# 视频推理并显示
-python scripts/video_detect.py --model models/best.pt --source test.mp4 --show
-
-# CPU 推理（无 GPU 时）
-python scripts/image_detect.py --model yolov8n-seg.pt --source img.jpg --device cpu
-
-# 标注工具
-labelImg
+python scripts/camera_detect.py --d455 --model projects/<project>/model/best.pt
 ```
+
+---
+
+## 新增数据到已有项目
+
+如果后续补标了新数据（如 `comp_dataset/`）：
+
+```bash
+# 1. 转格式
+python scripts/labelme2yolo.py --src comp_dataset --split train --classes "red,green,obstacle"
+
+# 2. 手动拷到 projects/combined/datasets/ 对应位置
+
+# 3. 重新训练
+python scripts/train.py --data projects/combined/configs/dataset.yaml --epochs 100 --batch 4
+```
+
+---
 
 ## 模型导出
 
 ```bash
 # ONNX
-python -c "from ultralytics import YOLO; YOLO('models/best.pt').export(format='onnx')"
+python -c "from ultralytics import YOLO; YOLO('projects/combined/model/best.pt').export(format='onnx')"
 
-# TensorRT (NVIDIA 加速)
-python -c "from ultralytics import YOLO; YOLO('models/best.pt').export(format='engine')"
+# TensorRT（Jetson 部署）
+python -c "from ultralytics import YOLO; YOLO('projects/combined/model/best.pt').export(format='engine')"
 ```
 
-## 参考资源
+## 参考
 
-- [Ultralytics 中文文档](https://docs.ultralytics.com/zh/)
-- [YOLO 官方 GitHub](https://github.com/ultralytics/ultralytics)
-- [LabelImg 标注工具](https://github.com/HumanSignal/labelImg)
+- [Ultralytics 文档](https://docs.ultralytics.com/zh/)
+- [YOLOv8 实例分割](https://docs.ultralytics.com/tasks/segment/)
+- [labelme](https://github.com/wkentaro/labelme)
+- [SAM](https://github.com/facebookresearch/segment-anything)

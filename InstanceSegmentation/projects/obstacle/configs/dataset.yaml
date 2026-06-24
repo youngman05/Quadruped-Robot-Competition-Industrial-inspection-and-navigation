@@ -1,0 +1,20 @@
+# 路障实例分割 — YOLO 数据集配置
+#
+# 使用说明：
+#   1. 用 labelme 标注路障图片（多边形），JSON 和图片一起放在 datasets/images/train/
+#   2. 运行转换: python scripts/labelme2yolo.py --src projects/obstacle/datasets/images/train --split train --classes "obstacle"
+#   3. 修改下方 nc 和 names
+#   4. 训练: python scripts/train.py --data projects/obstacle/configs/dataset.yaml
+
+path: C:/Users/tom/Desktop/quadruped-robot-competition-main/InstanceSegmentation/projects/obstacle/datasets
+
+train: images/train
+val: images/val
+test: images/test
+
+# 类别数量（标注时确定）
+nc: 1
+
+# 类别名称
+names:
+  0: obstacle

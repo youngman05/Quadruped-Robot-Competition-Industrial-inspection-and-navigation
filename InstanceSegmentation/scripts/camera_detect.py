@@ -40,12 +40,13 @@ def parse_args():
     return parser.parse_args()
 
 
-def draw_segmentation(frame, results, alpha=0.45):
-    """在帧上绘制实例分割结果：彩色半透明 mask + 轮廓 + box + 标签。
+def draw_segmentation(frame, results, depth_img=None, alpha=0.45):
+    """在帧上绘制实例分割结果：彩色半透明 mask + 轮廓 + box + 标签 + 距离。
 
     Args:
         frame: 原始 BGR 图像 (H, W, 3)
-        results: YOLO 推理结果 (ultralytics.engine.results.Results)
+        results: YOLO 推理结果
+        depth_img: 对齐后的深度图 (H, W) uint16 mm，None 则不显示距离
         alpha: mask 透明度
 
     Returns:
@@ -54,47 +55,55 @@ def draw_segmentation(frame, results, alpha=0.45):
     annotated = frame.copy()
 
     if results[0].masks is None:
-        # 没有分割结果，退回用 ultralytics 默认绘制
         return results[0].plot()
 
-    # 生成随机 colormap（每类固定颜色）
-    rng = np.random.default_rng(42)  # 固定种子，颜色稳定
-    colors = rng.integers(0, 255, (80, 3), dtype=np.uint8)  # COCO 80 类
+    rng = np.random.default_rng(42)
+    colors = rng.integers(0, 255, (80, 3), dtype=np.uint8)
 
     overlay = annotated.copy()
-    masks = results[0].masks.data.cpu().numpy().astype(np.bool_)  # (N, H, W)
+    masks = results[0].masks.data.cpu().numpy().astype(np.bool_)
     boxes = results[0].boxes
 
     for i, mask in enumerate(masks):
         cls_id = int(boxes.cls[i]) if boxes.cls is not None else 0
-        conf = float(boxes.conf[i]) if boxes.conf is not None else 0.0
         color = colors[cls_id % 80].tolist()
-
-        # 1. 半透明彩色 mask
         overlay[mask] = color
-
-        # 2. mask 轮廓
         contours, _ = cv2.findContours(
             mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
         cv2.drawContours(annotated, contours, -1, color, 2)
 
-    # 混合 overlay
     cv2.addWeighted(overlay, alpha, annotated, 1 - alpha, 0, annotated)
 
-    # 3. 画 box + 标签
     for i, mask in enumerate(masks):
         cls_id = int(boxes.cls[i]) if boxes.cls is not None else 0
         conf = float(boxes.conf[i]) if boxes.conf is not None else 0.0
         label = results[0].names.get(cls_id, f"cls{cls_id}")
-        area_px = int(mask.sum())
 
         color = colors[cls_id % 80].tolist()
         xyxy = boxes.xyxy[i].cpu().numpy()
         x1, y1, x2, y2 = map(int, xyxy)
 
+        # 计算 mask 中心 → 查深度
+        ys, xs = np.where(mask)
+        if len(xs) > 0:
+            cx, cy = int(xs.mean()), int(ys.mean())
+        else:
+            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+
+        # 画中心点
+        cv2.circle(annotated, (cx, cy), 4, (255, 255, 255), -1)
+        cv2.circle(annotated, (cx, cy), 6, color, 2)
+
+        # 标签文字
+        text_parts = [f"{label} {conf:.2f}"]
+        if depth_img is not None and 0 <= cy < depth_img.shape[0] and 0 <= cx < depth_img.shape[1]:
+            d_mm = depth_img[cy, cx]
+            if d_mm > 0:
+                text_parts.append(f"| {d_mm/1000:.2f}m")
+        text = " ".join(text_parts)
+
         cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
-        text = f"{label} {conf:.2f} | {area_px}px"
         (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
         cv2.rectangle(annotated, (x1, y1 - th - 6), (x1 + tw + 4, y1), color, -1)
         cv2.putText(annotated, text, (x1 + 2, y1 - 4),
@@ -114,7 +123,7 @@ def open_d455():
         print("       python setup.py develop")
         return None, 0, 0
 
-    cam = RealsenseCamera(width=640, height=480, enable_depth=False)
+    cam = RealsenseCamera(width=640, height=480, enable_depth=True, align_depth=True)
     cam.start()
     print(f"[信息] D455 已启动: {cam.device_name} (serial={cam.serial})")
     return cam, cam.width, cam.height
@@ -151,10 +160,12 @@ def main():
     try:
         while True:
             # 取帧
+            depth_img = None
             if use_d455:
-                frame = d455_cam.get_color_image()
-                if frame is None:
+                color_img, depth_img = d455_cam.get_frames()
+                if color_img is None:
                     continue
+                frame = color_img
             else:
                 ret, frame = cap.read()
                 if not ret:
@@ -168,7 +179,7 @@ def main():
                            device=args.device, verbose=False)
 
             # 绘制分割结果
-            annotated = draw_segmentation(frame, results, alpha=args.alpha)
+            annotated = draw_segmentation(frame, results, depth_img=depth_img, alpha=args.alpha)
 
             # FPS
             curr_time = time.perf_counter()
