@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs and runtime files
+logs/
+*.log
+*.bag
+*.db3
+*.mcap
+rosbag*/
+
+# Data and generated outputs
+data/raw/
+data/labeled/
+data/processed/
+outputs/
+test_output/
+runs/
+
+# Models
+models/*.pt
+models/*.pth
+models/*.onnx
+models/*.engine
+models/*.trt
+models/*.weights
+InstanceSegmentation/**/*.pt
+InstanceSegmentation/**/*.pth
+InstanceSegmentation/**/*.onnx
+InstanceSegmentation/**/*.engine
+InstanceSegmentation/**/*.trt
+InstanceSegmentation/**/*.weights
+
+# Media
+*.mp4
+*.avi
+*.wmv
+*.mpeg
+*.mov
+
+# Build
+build/
+install/
+log/
+dist/
