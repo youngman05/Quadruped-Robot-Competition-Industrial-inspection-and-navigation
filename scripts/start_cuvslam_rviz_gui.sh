@@ -13,8 +13,17 @@ WAIT_SECONDS="${WAIT_SECONDS:-90}"
 DEBUG_DUMP="${DEBUG_DUMP:-0}"
 ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
 RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"
+CUVSLAM_CAMERA_PROFILE="${CUVSLAM_CAMERA_PROFILE:-640x360x60}"
+CUVSLAM_IMG_JITTER_THRESHOLD_MS="${CUVSLAM_IMG_JITTER_THRESHOLD_MS:-35.0}"
+ENABLE_SLAM_VISUALIZATION="${ENABLE_SLAM_VISUALIZATION:-true}"
+ENABLE_LANDMARKS_VIEW="${ENABLE_LANDMARKS_VIEW:-true}"
+ENABLE_OBSERVATIONS_VIEW="${ENABLE_OBSERVATIONS_VIEW:-true}"
+RVIZ_HEAVY_DISPLAYS="${RVIZ_HEAVY_DISPLAYS:-0}"
+LOOP_METRICS_INTERVAL="${LOOP_METRICS_INTERVAL:-2.0}"
+LOOP_METRICS_PATH_DUMP_INTERVAL="${LOOP_METRICS_PATH_DUMP_INTERVAL:-15.0}"
 SKIP_INPUT_TEST=0
 SKIP_RVIZ=0
+LOOP_RECORDER_STARTED=0
 
 usage() {
   cat <<'USAGE'
@@ -37,6 +46,14 @@ Environment overrides:
   DEBUG_DUMP          Set to 1 to enable cuVSLAM debug dump. Default: 0
   ROS_DOMAIN_ID       ROS 2 DDS domain shared with host Foxy. Default: 0
   RMW_IMPLEMENTATION  ROS 2 middleware implementation. Default: rmw_fastrtps_cpp
+  CUVSLAM_CAMERA_PROFILE       RealSense IR profile. Default: 640x360x60
+  CUVSLAM_IMG_JITTER_THRESHOLD_MS  cuVSLAM image jitter threshold. Default: 35.0
+  ENABLE_SLAM_VISUALIZATION    Publish SLAM visualization topics. Default: true
+  ENABLE_LANDMARKS_VIEW        Publish landmarks view. Default: true
+  ENABLE_OBSERVATIONS_VIEW     Publish observations cloud. Default: true
+  RVIZ_HEAVY_DISPLAYS          Set to 1 to enable IR images and heavy clouds in RViz. Default: 0
+  LOOP_METRICS_INTERVAL        Seconds between closure-metric summaries. Default: 2.0
+  LOOP_METRICS_PATH_DUMP_INTERVAL Seconds between path CSV dumps. Default: 15.0
 
 Run this from a Jetson desktop terminal, VNC, or NoMachine session.
 Plain SSH without X11/VNC will not show RViz.
@@ -78,6 +95,20 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"
 }
 
+py_bool() {
+  case "${1,,}" in
+    1|true|yes|on) echo "True" ;;
+    *) echo "False" ;;
+  esac
+}
+
+rviz_bool() {
+  case "${1,,}" in
+    1|true|yes|on) echo "true" ;;
+    *) echo "false" ;;
+  esac
+}
+
 run_in_container() {
   docker exec "$CONTAINER_NAME" bash -lc \
     "source /opt/ros/humble/setup.bash && source /workspaces/isaac_ros-dev/install/setup.bash && $*"
@@ -100,7 +131,7 @@ wait_for_topic() {
 }
 
 write_rviz_config() {
-  cat >"$RVIZ_CONFIG" <<'RVIZ'
+  cat >"$RVIZ_CONFIG" <<RVIZ
 Panels:
   - Class: rviz_common/Displays
     Help Height: 78
@@ -168,7 +199,7 @@ Visualization Manager:
       Position Tolerance: 0.1
       Shape: Arrow
       Topic:
-        Depth: 10
+        Depth: 100
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
@@ -183,7 +214,7 @@ Visualization Manager:
       Position Tolerance: 0.1
       Shape: Arrow
       Topic:
-        Depth: 10
+        Depth: 100
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
@@ -205,7 +236,7 @@ Visualization Manager:
       Pose Style: None
       Radius: 0.03
       Topic:
-        Depth: 10
+        Depth: 100
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
@@ -227,7 +258,7 @@ Visualization Manager:
       Pose Style: None
       Radius: 0.03
       Topic:
-        Depth: 10
+        Depth: 100
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
@@ -244,7 +275,7 @@ Visualization Manager:
       Color: 255; 255; 255
       Color Transformer: FlatColor
       Decay Time: 0
-      Enabled: true
+      Enabled: $RVIZ_HEAVY_ENABLED
       Invert Rainbow: false
       Max Color: 255; 255; 255
       Max Intensity: 4096
@@ -257,14 +288,14 @@ Visualization Manager:
       Size (m): 0.03
       Style: Points
       Topic:
-        Depth: 5
+        Depth: 50
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /visual_slam/vis/landmarks_cloud
       Use Fixed Frame: true
       Use rainbow: true
-      Value: true
+      Value: $RVIZ_HEAVY_ENABLED
     - Class: rviz_default_plugins/PointCloud2
       Alpha: 1
       Autocompute Intensity Bounds: true
@@ -276,7 +307,7 @@ Visualization Manager:
       Color: 255; 220; 60
       Color Transformer: FlatColor
       Decay Time: 0
-      Enabled: true
+      Enabled: $RVIZ_HEAVY_ENABLED
       Invert Rainbow: false
       Max Color: 255; 255; 255
       Max Intensity: 4096
@@ -289,14 +320,14 @@ Visualization Manager:
       Size (m): 0.04
       Style: Points
       Topic:
-        Depth: 5
+        Depth: 50
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /visual_slam/vis/observations_cloud
       Use Fixed Frame: true
       Use rainbow: true
-      Value: true
+      Value: $RVIZ_HEAVY_ENABLED
     - Class: rviz_default_plugins/PointCloud2
       Alpha: 1
       Autocompute Intensity Bounds: true
@@ -321,7 +352,7 @@ Visualization Manager:
       Size (m): 0.06
       Style: Points
       Topic:
-        Depth: 5
+        Depth: 50
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
@@ -342,7 +373,7 @@ Visualization Manager:
       Shaft Radius: 0.02
       Shape: Axes
       Topic:
-        Depth: 5
+        Depth: 50
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
@@ -352,7 +383,7 @@ Visualization Manager:
       Enabled: true
       Name: Pose Graph Edges
       Topic:
-        Depth: 5
+        Depth: 50
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
@@ -362,7 +393,7 @@ Visualization Manager:
       Enabled: true
       Name: Pose Graph Edges 2
       Topic:
-        Depth: 5
+        Depth: 50
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
@@ -372,7 +403,7 @@ Visualization Manager:
       Enabled: true
       Name: Velocity Marker
       Topic:
-        Depth: 5
+        Depth: 50
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
@@ -382,40 +413,40 @@ Visualization Manager:
       Enabled: true
       Name: Gravity Marker
       Topic:
-        Depth: 5
+        Depth: 50
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /visual_slam/vis/gravity
       Value: true
     - Class: rviz_default_plugins/Image
-      Enabled: true
+      Enabled: $RVIZ_HEAVY_ENABLED
       Max Value: 255
       Median window: 5
       Min Value: 0
       Name: Infra Left
       Normalize Range: true
       Topic:
-        Depth: 5
+        Depth: 20
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Best Effort
         Value: /camera/infra1/image_rect_raw
-      Value: true
+      Value: $RVIZ_HEAVY_ENABLED
     - Class: rviz_default_plugins/Image
-      Enabled: true
+      Enabled: $RVIZ_HEAVY_ENABLED
       Max Value: 255
       Median window: 5
       Min Value: 0
       Name: Infra Right
       Normalize Range: true
       Topic:
-        Depth: 5
+        Depth: 20
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Best Effort
         Value: /camera/infra2/image_rect_raw
-      Value: true
+      Value: $RVIZ_HEAVY_ENABLED
   Enabled: true
   Global Options:
     Background Color: 36; 36; 38
@@ -454,6 +485,87 @@ Window Geometry:
 RVIZ
 }
 
+write_cuvslam_launch() {
+  local enable_slam_py enable_landmarks_py enable_observations_py debug_py
+  enable_slam_py="$(py_bool "$ENABLE_SLAM_VISUALIZATION")"
+  enable_landmarks_py="$(py_bool "$ENABLE_LANDMARKS_VIEW")"
+  enable_observations_py="$(py_bool "$ENABLE_OBSERVATIONS_VIEW")"
+  debug_py="$(py_bool "$DEBUG_DUMP")"
+
+  cat >"$CUVSLAM_LAUNCH" <<PY
+# Generated by scripts/start_cuvslam_rviz_gui.sh.
+import launch
+from launch_ros.actions import ComposableNodeContainer, Node
+from launch_ros.descriptions import ComposableNode
+
+
+def generate_launch_description():
+    realsense_camera_node = Node(
+        name='camera',
+        namespace='camera',
+        package='realsense2_camera',
+        executable='realsense2_camera_node',
+        parameters=[{
+            'enable_infra1': True,
+            'enable_infra2': True,
+            'enable_color': False,
+            'enable_depth': False,
+            'depth_module.emitter_enabled': 0,
+            'depth_module.profile': '${CUVSLAM_CAMERA_PROFILE}',
+            'enable_gyro': True,
+            'enable_accel': True,
+            'gyro_fps': 200,
+            'accel_fps': 200,
+            'unite_imu_method': 2,
+        }],
+    )
+
+    visual_slam_node = ComposableNode(
+        name='visual_slam_node',
+        package='isaac_ros_visual_slam',
+        plugin='nvidia::isaac_ros::visual_slam::VisualSlamNode',
+        parameters=[{
+            'denoise_input_images': False,
+            'rectified_images': True,
+            'enable_debug_mode': ${debug_py},
+            'debug_dump_path': '/logs/debug_dump',
+            'enable_slam_visualization': ${enable_slam_py},
+            'enable_landmarks_view': ${enable_landmarks_py},
+            'enable_observations_view': ${enable_observations_py},
+            'map_frame': 'map',
+            'odom_frame': 'odom',
+            'base_frame': 'camera_link',
+            'input_imu_frame': 'camera_gyro_optical_frame',
+            'enable_imu_fusion': True,
+            'gyro_noise_density': 0.000244,
+            'gyro_random_walk': 0.000019393,
+            'accel_noise_density': 0.001862,
+            'accel_random_walk': 0.003,
+            'calibration_frequency': 200.0,
+            'img_jitter_threshold_ms': ${CUVSLAM_IMG_JITTER_THRESHOLD_MS},
+        }],
+        remappings=[
+            ('stereo_camera/left/image', 'camera/infra1/image_rect_raw'),
+            ('stereo_camera/left/camera_info', 'camera/infra1/camera_info'),
+            ('stereo_camera/right/image', 'camera/infra2/image_rect_raw'),
+            ('stereo_camera/right/camera_info', 'camera/infra2/camera_info'),
+            ('visual_slam/imu', 'camera/imu'),
+        ],
+    )
+
+    visual_slam_launch_container = ComposableNodeContainer(
+        name='visual_slam_launch_container',
+        namespace='',
+        package='rclcpp_components',
+        executable='component_container',
+        composable_node_descriptions=[visual_slam_node],
+        output='screen',
+    )
+
+    return launch.LaunchDescription([visual_slam_launch_container, realsense_camera_node])
+PY
+}
+
 need_cmd docker
 need_cmd date
 
@@ -486,23 +598,53 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 CONTAINER_NAME="${CONTAINER_NAME:-cuvslam_gui_$STAMP}"
 LOG_DIR="$LOG_ROOT/$STAMP"
 RVIZ_CONFIG="$LOG_DIR/cuvslam.rviz"
+CUVSLAM_LAUNCH="$LOG_DIR/cuvslam_realsense_tuned.launch.py"
+RVIZ_HEAVY_ENABLED="$(rviz_bool "$RVIZ_HEAVY_DISPLAYS")"
 mkdir -p "$LOG_DIR"
 write_rviz_config
+write_cuvslam_launch
 
-CUVSLAM_LAUNCH_ARGS="enable_slam_visualization:=true enable_landmarks_view:=true enable_observations_view:=true enable_localization_n_mapping:=true"
 if [[ "$DEBUG_DUMP" == "1" ]]; then
   mkdir -p "$LOG_DIR/debug_dump"
-  CUVSLAM_LAUNCH_ARGS="$CUVSLAM_LAUNCH_ARGS enable_debug_mode:=true debug_dump_path:=/logs/debug_dump"
 fi
+
+RECORDER_SRC="$PROJECT_DIR/scripts/cuvslam_loop_metrics_recorder.py"
+if [[ -f "$RECORDER_SRC" ]]; then
+  cp "$RECORDER_SRC" "$LOG_DIR/cuvslam_loop_metrics_recorder.py"
+else
+  die "Loop metrics recorder not found: $RECORDER_SRC"
+fi
+
+start_loop_metrics_recorder() {
+  echo "Starting loop metrics recorder..."
+  docker exec -d "$CONTAINER_NAME" bash -lc \
+    "source /opt/ros/humble/setup.bash && source /workspaces/isaac_ros-dev/install/setup.bash && python3 /logs/cuvslam_loop_metrics_recorder.py --interval '$LOOP_METRICS_INTERVAL' --path-dump-interval '$LOOP_METRICS_PATH_DUMP_INTERVAL' >/logs/loop_metrics_recorder.log 2>&1"
+  LOOP_RECORDER_STARTED=1
+  echo "Loop metrics live summary: $LOG_DIR/loop_metrics_latest.txt"
+}
+
+stop_loop_metrics_recorder() {
+  if [[ "$LOOP_RECORDER_STARTED" -eq 1 ]]; then
+    docker exec "$CONTAINER_NAME" bash -lc \
+      'if [[ -f /tmp/cuvslam_loop_metrics_recorder.pid ]]; then kill -INT "$(cat /tmp/cuvslam_loop_metrics_recorder.pid)" 2>/dev/null || true; sleep 2; fi' \
+      >/dev/null 2>&1 || true
+  fi
+}
 
 cleanup() {
   local code=$?
   echo
+  stop_loop_metrics_recorder
   echo "Stopping container: $CONTAINER_NAME"
   docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
   if command -v xhost >/dev/null 2>&1; then
     xhost -local:root >/dev/null 2>&1 || true
     xhost -local:docker >/dev/null 2>&1 || true
+  fi
+  if [[ -f "$LOG_DIR/loop_metrics_latest.txt" ]]; then
+    echo
+    echo "Latest loop metrics:"
+    cat "$LOG_DIR/loop_metrics_latest.txt"
   fi
   echo "Logs kept at: $LOG_DIR"
   exit "$code"
@@ -513,6 +655,11 @@ echo "Starting cuVSLAM container: $CONTAINER_NAME"
 echo "Logs: $LOG_DIR"
 echo "ROS_DOMAIN_ID=$ROS_DOMAIN_ID"
 echo "RMW_IMPLEMENTATION=$RMW_IMPLEMENTATION"
+echo "CUVSLAM_CAMERA_PROFILE=$CUVSLAM_CAMERA_PROFILE"
+echo "CUVSLAM_IMG_JITTER_THRESHOLD_MS=$CUVSLAM_IMG_JITTER_THRESHOLD_MS"
+echo "ENABLE_LANDMARKS_VIEW=$ENABLE_LANDMARKS_VIEW"
+echo "ENABLE_OBSERVATIONS_VIEW=$ENABLE_OBSERVATIONS_VIEW"
+echo "RVIZ_HEAVY_DISPLAYS=$RVIZ_HEAVY_DISPLAYS"
 cd "$ISAAC_WS"
 docker run -d --name "$CONTAINER_NAME" \
   --runtime nvidia \
@@ -524,7 +671,6 @@ docker run -d --name "$CONTAINER_NAME" \
   -e NVIDIA_DRIVER_CAPABILITIES=all \
   -e ROS_DOMAIN_ID="$ROS_DOMAIN_ID" \
   -e RMW_IMPLEMENTATION="$RMW_IMPLEMENTATION" \
-  -e CUVSLAM_LAUNCH_ARGS="$CUVSLAM_LAUNCH_ARGS" \
   -v /tmp/.X11-unix:/tmp/.X11-unix \
   -v /dev:/dev \
   -v /tmp:/tmp \
@@ -534,11 +680,12 @@ docker run -d --name "$CONTAINER_NAME" \
   -v "$LOG_DIR":/logs \
   -w /workspaces/isaac_ros-dev \
   "$IMAGE" \
-  bash -lc 'source /opt/ros/humble/setup.bash && source install/setup.bash && stdbuf -oL -eL ros2 launch isaac_ros_visual_slam isaac_ros_visual_slam_realsense.launch.py ${CUVSLAM_LAUNCH_ARGS} 2>&1 | tee /logs/launch.log' >/dev/null
+  bash -lc 'source /opt/ros/humble/setup.bash && source install/setup.bash && stdbuf -oL -eL ros2 launch /logs/cuvslam_realsense_tuned.launch.py 2>&1 | tee /logs/launch.log' >/dev/null
 
 echo "Waiting for cuVSLAM topics..."
 wait_for_topic "/visual_slam/status" || die "Timed out waiting for /visual_slam/status. See $LOG_DIR/launch.log"
 wait_for_topic "/visual_slam/tracking/odometry" || die "Timed out waiting for /visual_slam/tracking/odometry. See $LOG_DIR/launch.log"
+start_loop_metrics_recorder
 
 echo "cuVSLAM is publishing. One status sample:"
 run_in_container "timeout 8 ros2 topic echo /visual_slam/status --once" | tee "$LOG_DIR/status_once.txt" || true
@@ -601,6 +748,11 @@ Watch:
   - Terminal launch log below
   - $LOG_DIR/launch.log
   - $LOG_DIR/rviz.log
+  - $LOG_DIR/loop_metrics_latest.txt
+  - $LOG_DIR/loop_metrics_latest.json
+  - $LOG_DIR/odometry_samples.csv
+  - $LOG_DIR/slam_path_latest.csv
+  - $LOG_DIR/vo_path_latest.csv
 
 Expected RViz content:
   - Fixed Frame: map
@@ -621,10 +773,15 @@ Expected RViz content:
   - /camera/infra2/image_rect_raw
 
 Suggested teacher demo:
-  1. Show /visual_slam/status and confirm vo_state stays 1.
-  2. Move the robot/camera in a large loop and watch odometry, VO path, and SLAM path.
-  3. Return close to the starting area and watch loop_closure_cloud plus pose_graph nodes/edges.
-  4. Keep terminal logs visible for image delta warnings and tracking-lost messages.
+  1. Wait until "Loop metrics live summary" appears before moving.
+  2. Put the robot/camera at the chosen start point and keep it still for 3-5 seconds.
+  3. Move through a large loop, then return physically close to the start point.
+  4. Keep it still for 5 seconds at the end point, then press Ctrl+C in this terminal.
+  5. Judge loop accuracy from $LOG_DIR/loop_metrics_latest.txt:
+     - closure_error_m < 0.2: good
+     - 0.2 <= closure_error_m < 0.5: usable but mention drift
+     - closure_error_m >= 0.5: poor loop closure for a 20 m demo
+  6. Also check launch.log for "Visual tracking is lost" and frame delta warnings.
 
 Safety:
   - This script does not publish /cmd_vel.
