@@ -10,14 +10,16 @@ setup(
     # ROS2 节点入口 — ros2 run quadruped_robot_competition <name>
     entry_points={
         "console_scripts": [
-            # 仪表检测节点（已实现）
-            "gauge_status = quadruped_robot_competition.nodes.gauge_status:main",
-            # YOLO 检测节点（已实现，需 pip install ultralytics torch）
-            "yolo_detect = quadruped_robot_competition.nodes.yolo_detect:main",
-            # 比赛状态机
-            "task_manager = quadruped_robot_competition.nodes.task_manager:main",
-            # 语音播报（待实现）
-            # "speech = quadruped_robot_competition.nodes.speech:main",
+            # ── 感知层 ──────────────────────────
+            "gauge_status_publisher = nodes.perception.gauge_status:main",
+            "yolo_detect_publisher = nodes.perception.yolo_detect_publisher:main",
+            # ── 决策层 ──────────────────────────
+            "task_manager = nodes.decision.task_manager:main",
+            # "speech_publisher = nodes.decision.speech:main",
+            # ── 导航层 ──────────────────────────
+            "depth_publisher = nodes.navigation.depth_publisher:main",
+            "cuvslam_bridge = nodes.navigation.cuvslam_bridge:main",
+            "initial_pose_publisher = nodes.navigation.initial_pose_publisher:main",
         ],
     },
 )

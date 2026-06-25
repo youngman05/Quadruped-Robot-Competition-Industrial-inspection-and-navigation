@@ -16,7 +16,7 @@
     ┌──────────────────────────────────────────────┐
     │  感知层 (Perception)                         │
     │  ├── gauge_status_node    ← D455 仪表检测     │
-    │  └── yolo_detect_node     ← YOLO 实例分割     │
+    │  └── yolo_detect_publisher ← YOLO 实例分割     │
     │                                              │
     │  定位层 (Localization)                       │
     │  └── cuVSLAM (Docker 容器)  ← 视觉惯性里程计  │
@@ -36,9 +36,11 @@ from pathlib import Path
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    IncludeLaunchDescription,
     LogInfo,
 )
 from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -54,6 +56,7 @@ def generate_launch_description() -> LaunchDescription:
     enable_yolo = LaunchConfiguration("enable_yolo", default="false")        # 需先装 ultralytics torch
     enable_task_manager = LaunchConfiguration("enable_task_manager", default="false")  # 待实现
     enable_speech = LaunchConfiguration("enable_speech", default="false")    # 待实现
+    enable_navigation = LaunchConfiguration("enable_navigation", default="false")  # Nav2 导航栈
     enable_placeholders = LaunchConfiguration("enable_placeholders", default="false")
 
     # ── 声明参数 ─────────────────────────────────────
@@ -77,6 +80,10 @@ def generate_launch_description() -> LaunchDescription:
         "enable_placeholders", default_value="false",
         description="同时启动所有占位节点（测试架构用）"
     )
+    declare_enable_navigation = DeclareLaunchArgument(
+        "enable_navigation", default_value="false",
+        description="启动 Nav2 导航栈（需先生成 PGM 地图 + 启动 cuVSLAM Docker）"
+    )
 
     # ═══════════════════════════════════════════════════
     # 感知层 — Perception
@@ -85,8 +92,8 @@ def generate_launch_description() -> LaunchDescription:
     # ── 仪表检测节点 ✅ 已实现 ──────────────────────
     gauge_node = Node(
         package="quadruped_robot_competition",
-        executable="gauge_status",
-        name="gauge_status_node",
+        executable="gauge_status_publisher",
+        name="gauge_status_publisher_node",
         parameters=[str(PARAMS_FILE)],
         output="screen",
         condition=IfCondition(enable_gauge),
@@ -95,8 +102,8 @@ def generate_launch_description() -> LaunchDescription:
     # ── YOLO 检测节点 ⏳ 待实现 ────────────────────
     yolo_node = Node(
         package="quadruped_robot_competition",
-        executable="yolo_detect",
-        name="yolo_detect_node",
+        executable="yolo_detect_publisher",
+        name="yolo_detect_publisher_node",
         parameters=[str(PARAMS_FILE)],
         output="screen",
         condition=IfCondition(
@@ -154,6 +161,18 @@ def generate_launch_description() -> LaunchDescription:
         ),
     )
 
+    # ═══════════════════════════════════════════════════
+    # 执行层 — Execution
+    # ═══════════════════════════════════════════════════
+
+    # ── Nav2 导航栈 🆕 ──────────────────────────────
+    navigation_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            str(PROJECT_ROOT / "launch" / "navigation.launch.py")
+        ),
+        condition=IfCondition(enable_navigation),
+    )
+
     # ── 启动说明 ────────────────────────────────────
     startup_info = LogInfo(
         msg=[
@@ -161,10 +180,11 @@ def generate_launch_description() -> LaunchDescription:
             "╔══════════════════════════════════════╗\n",
             "║  四足机器人竞赛系统启动中...        ║\n",
             "╠══════════════════════════════════════╣\n",
-            "║ gauge_status_node  : ", enable_gauge, "  ║\n",
-            "║ yolo_detect_node   : ", enable_yolo, "  ║\n",
+            "║ gauge_status_pub   : ", enable_gauge, "  ║\n",
+            "║ yolo_detect_pub    : ", enable_yolo, "  ║\n",
             "║ task_manager_node  : ", enable_task_manager, "  ║\n",
             "║ speech_node        : ", enable_speech, "  ║\n",
+            "║ navigation         : ", enable_navigation, "  ║\n",
             "╚══════════════════════════════════════╝\n",
         ]
     )
@@ -176,6 +196,7 @@ def generate_launch_description() -> LaunchDescription:
         declare_enable_task_manager,
         declare_enable_speech,
         declare_enable_placeholders,
+        declare_enable_navigation,
         # 启动说明
         startup_info,
         # 感知层
@@ -184,4 +205,6 @@ def generate_launch_description() -> LaunchDescription:
         # 决策层
         task_manager_node,
         speech_node,
+        # 执行层 — 导航
+        navigation_launch,
     ])

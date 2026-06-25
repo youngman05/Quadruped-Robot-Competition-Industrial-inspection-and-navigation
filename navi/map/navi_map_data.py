@@ -14,11 +14,11 @@ annotations from the figures where the PDF does not provide exact dimensions.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Tuple
 
 
-Point = tuple[float, float]
-Rect = tuple[float, float, float, float]  # x, y, width, height
+Point = Tuple[float, float]
+Rect = Tuple[float, float, float, float]  # x, y, width, height
 Confidence = Literal["dimensioned", "inferred", "estimated"]
 
 
@@ -453,10 +453,11 @@ ROBOT_START_POSE = {
 # ═══════════════════════════════════════════════════════════════════
 
 # 这些区域在 PGM 地图中标记为 occupied (0)，狗不可进入
+# 障碍区地面是可通行的，只有锥桶本身是障碍物，
+# 故 obstacle 区域不应标记为墙。
 WALL_REGION_IDS = {
     "inspection_upper",
     "inspection_lower",
-    "obstacle",
 }
 
 

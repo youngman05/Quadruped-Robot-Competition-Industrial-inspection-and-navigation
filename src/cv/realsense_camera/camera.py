@@ -150,6 +150,20 @@ class RealsenseCamera:
             enable_infrared=False, enable_imu=False,
         )
 
+    @classmethod
+    def for_yolo(
+        cls,
+        width: int = 640,
+        height: int = 480,
+    ) -> "RealsenseCamera":
+        """Create a camera configured for YOLO detection (color + depth aligned)."""
+        return cls(
+            width=width, height=height,
+            enable_color=True, enable_depth=True,
+            enable_infrared=False, enable_imu=False,
+            align_depth=True,
+        )
+
     # ------------------------------------------------------------------
     # Initialization
     # ------------------------------------------------------------------
@@ -452,37 +466,58 @@ class RealsenseCamera:
 
     def get_frames(
         self, timeout_ms: int = 5000
-    ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+    ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
         """Get aligned color + depth images.
 
         Returns:
-            (color, depth). color: (H,W,3) uint8 BGR. depth: (H,W) uint16 mm.
+            (color, depth). Either may be None if the stream is disabled.
+            color: (H,W,3) uint8 BGR, or None.
+            depth: (H,W) uint16 mm, or None.
         """
         frames = self.wait_for_frames(timeout_ms)
 
         if self._align is not None:
             frames = self._align.process(frames)
 
-        color_frame = frames.get_color_frame()
-        if not color_frame:
-            raise RuntimeError("No color frame received")
+        color_img: Optional[np.ndarray] = None
+        if self._enable_color:
+            color_frame = frames.get_color_frame()
+            if color_frame is not None:
+                color_img = np.asanyarray(color_frame.get_data())
 
-        color_img = np.asanyarray(color_frame.get_data())
         depth_img: Optional[np.ndarray] = None
         if self._enable_depth:
             df = frames.get_depth_frame()
-            if df:
+            if df is not None:
                 depth_img = np.asanyarray(df.get_data())
 
         return color_img, depth_img
 
     def get_color_image(self, timeout_ms: int = 5000) -> np.ndarray:
-        color, _ = self.get_frames(timeout_ms)
-        return color
+        """Get color image only. Requires enable_color=True."""
+        if not self._enable_color:
+            raise RuntimeError("Color stream not enabled. Set enable_color=True.")
+        frames = self.wait_for_frames(timeout_ms)
+        color_frame = frames.get_color_frame()
+        if color_frame is None:
+            raise RuntimeError("No color frame received")
+        return np.asanyarray(color_frame.get_data())
 
     def get_depth_image(self, timeout_ms: int = 5000) -> Optional[np.ndarray]:
-        _, depth = self.get_frames(timeout_ms)
-        return depth
+        """Get depth image only. Requires enable_depth=True.
+
+        Returns (H,W) uint16 mm depth array, or None if no frame available.
+        This method works independently — it does not require color stream.
+        """
+        if not self._enable_depth:
+            return None
+        frames = self.wait_for_frames(timeout_ms)
+        if self._align is not None:
+            frames = self._align.process(frames)
+        df = frames.get_depth_frame()
+        if df is None:
+            return None
+        return np.asanyarray(df.get_data())
 
     # ------------------------------------------------------------------
     # Frame acquisition — Infrared stereo (cuVSLAM input)
