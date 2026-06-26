@@ -47,28 +47,32 @@ def _deg_to_quat(yaw_deg: float) -> tuple[float, float, float, float]:
     return (0.0, 0.0, math.sin(half), math.cos(half))
 
 
-# ── Named waypoints (mm coords, yaw_deg in mm frame) ───────
+# yaw=None 表示不管朝向, Nav2 只导航到位置不强制转方向.
+# 观察位的朝向从 navi_map_data.OBSERVATION_POSITIONS 取值(唯一来源).
 
 _RAW_WAYPOINTS: dict[str, dict] = {
-    "start":                   {"x_mm": 5350, "y_mm": 5250, "yaw_deg": 180, "label": "出发区"},
-    "pos1_middle":             {"x_mm": 1500, "y_mm": 2750, "yaw_deg": -90, "label": "观察位① 仰头看上柜底面"},
-    "pos1_middle_turned":      {"x_mm": 1500, "y_mm": 2750, "yaw_deg":  90, "label": "观察位① 180°转身看下柜顶面"},
-    "pos2a_upper_right":       {"x_mm": 2200, "y_mm": 1500, "yaw_deg": 180, "label": "观察位②a 看上柜右侧面"},
-    "pos2b_lower_right":       {"x_mm": 2200, "y_mm": 4000, "yaw_deg": 180, "label": "观察位②b 看下柜右侧面"},
-    "grab_area":               {"x_mm": 4250, "y_mm": 4000, "yaw_deg": 180, "label": "抓取区"},
-    "placement_A":             {"x_mm": 3250, "y_mm": 250,  "yaw_deg": 0,   "label": "A放置区"},
-    "placement_B":             {"x_mm": 3750, "y_mm": 250,  "yaw_deg": 0,   "label": "B放置区"},
-    "placement_C":             {"x_mm": 4250, "y_mm": 250,  "yaw_deg": 0,   "label": "C放置区"},
-    "placement_D":             {"x_mm": 4750, "y_mm": 250,  "yaw_deg": 0,   "label": "D放置区"},
-    "obstacle_entry":          {"x_mm": 3000, "y_mm": 5000, "yaw_deg": 180, "label": "障碍区入口"},
-    "obstacle_exit":           {"x_mm": 1500, "y_mm": 2750, "yaw_deg": -90, "label": "障碍区出口→观察位①"},
+    "start":                   {"x_mm": 5350, "y_mm": 5250, "yaw_deg": None, "label": "出发区"},
+    "pos1_middle":             {"x_mm": 1500, "y_mm": 2750, "yaw_deg": -90,  "label": "观察位① 仰头看上柜底面"},
+    "pos1_middle_turned":      {"x_mm": 1500, "y_mm": 2750, "yaw_deg":  90,  "label": "观察位① 转身看下柜顶面"},
+    "pos2a_upper_right":       {"x_mm": 2200, "y_mm": 1500, "yaw_deg": 180,  "label": "观察位②a 看上柜右侧面"},
+    "pos2b_lower_right":       {"x_mm": 2200, "y_mm": 4000, "yaw_deg": 180,  "label": "观察位②b 看下柜右侧面"},
+    "grab_area":               {"x_mm": 4250, "y_mm": 4000, "yaw_deg": None, "label": "抓取区"},
+    "placement_A":             {"x_mm": 3250, "y_mm": 250,  "yaw_deg": None, "label": "A放置区"},
+    "placement_B":             {"x_mm": 3750, "y_mm": 250,  "yaw_deg": None, "label": "B放置区"},
+    "placement_C":             {"x_mm": 4250, "y_mm": 250,  "yaw_deg": None, "label": "C放置区"},
+    "placement_D":             {"x_mm": 4750, "y_mm": 250,  "yaw_deg": None, "label": "D放置区"},
+    "obstacle_entry":          {"x_mm": 3000, "y_mm": 5000, "yaw_deg": None, "label": "障碍区入口"},
+    "obstacle_exit":           {"x_mm": 1500, "y_mm": 2750, "yaw_deg": None, "label": "障碍区出口→观察位①"},
 }
 
 # Build ROS-coordinate waypoint dict
 WAYPOINTS: dict[str, dict] = {}
 for name, wp in _RAW_WAYPOINTS.items():
     ros_x, ros_y = _mm_to_ros(wp["x_mm"], wp["y_mm"])
-    qx, qy, qz, qw = _deg_to_quat(wp["yaw_deg"])
+    if wp["yaw_deg"] is not None:
+        qx, qy, qz, qw = _deg_to_quat(wp["yaw_deg"])
+    else:
+        qx, qy, qz, qw = 0.0, 0.0, 0.0, 1.0  # identity: 不管朝向
     WAYPOINTS[name] = {
         "x": ros_x,
         "y": ros_y,
@@ -76,6 +80,7 @@ for name, wp in _RAW_WAYPOINTS.items():
         "qy": qy,
         "qz": qz,
         "qw": qw,
+        "yaw_set": wp["yaw_deg"] is not None,  # True=到位后转朝向, False=只到位置
         "label": wp["label"],
     }
 

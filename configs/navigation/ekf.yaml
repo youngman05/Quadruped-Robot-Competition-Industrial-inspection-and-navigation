@@ -1,0 +1,95 @@
+# ==============================================================================
+#  EKF 定位融合 — robot_localization
+#
+#  输入:  /leg_odom2        (腿里程计, 来自 Lite3_ROS transfer)
+#         /imu/data         (IMU, 来自 Lite3_ROS transfer)
+#         /visual_slam/tracking/odometry  (cuVSLAM 视觉里程计, Docker)
+#
+#  输出:  /odom              (融合后, 给 Nav2)
+#         TF: odom → base_link
+#
+#  策略: 腿里程计高频稳定但会漂移, cuVSLAM 无漂移但可能丢,
+#        IMU 提供高频角速度, EKF 取三者之长互补。
+# ==============================================================================
+
+ekf_filter_node:
+  ros__parameters:
+
+    # ── 基本设置 ──────────────────────────────
+    frequency: 50.0                   # EKF 更新频率 (Hz)
+    sensor_timeout: 0.2               # 传感器超时 (秒), 超时后不信任该路
+    two_d_mode: true                  # 地面机器人 — 只估计 x, y, yaw
+
+    map_frame: map                    # 全局参考帧
+    odom_frame: odom                  # 里程计帧
+    base_link_frame: base_link        # 机器人本体帧
+    world_frame: odom                 # 世界帧 (和 odom 一致, 因为 cuVSLAM 无全局锚点)
+
+    publish_tf: true                  # 发布 odom → base_link 的 TF
+    publish_acceleration: false
+    smooth_lagged_data: true
+    history_length: 2.0               # 传感器数据缓存时长 (秒)
+
+    # ── 腿里程计 (/leg_odom2) ────────────────
+    #      nav_msgs/Odometry
+    #      长期漂移, 但 100% 在线, 地面变化时可信
+    odom0: /leg_odom2
+    odom0_config:
+      # x   y   z    roll pitch yaw
+      # |   |   |     |    |    |
+      [true, true, false, false,false,true,   # pose
+       true, true, false, false,false,true,   # twist
+       false,false,false,false,false,false,   # accel
+       ]
+    odom0_differential: false
+    odom0_relative: false
+    odom0_queue_size: 10
+
+    # ── cuVSLAM (/visual_slam/tracking/odometry) ──
+    #      nav_msgs/Odometry
+    #      视觉里程计, 无漂移但可能因光照/特征不足而短暂丢失
+    odom1: /visual_slam/tracking/odometry
+    odom1_config:
+      [true, true, false, false,false,true,   # pose
+       false,false,false,false,false,false,   # twist (不信任视觉的速度估计)
+       false,false,false,false,false,false,   # accel
+       ]
+    odom1_differential: false
+    odom1_relative: false
+    odom1_queue_size: 10
+
+    # ── IMU (/imu/data) ──────────────────────
+    #      sensor_msgs/Imu
+    #      高频, 角速度准确, 用于捕捉快速转向
+    imu0: /imu/data
+    imu0_config:
+      [false,false,false,                 # pose (无)
+       false,false,false,                 # twist (无)
+       true, true, true,                  # accel (x, y, z)
+       true, true, true,                  # angular_vel (yaw 最有用)
+       false,false,false]
+    imu0_differential: false
+    imu0_relative: false
+    imu0_queue_size: 50
+    imu0_remove_gravitational_acceleration: true
+
+    # ── 过程噪声 (调优关键) ────────────────
+    #      值越小 → 越信任模型(平滑但延迟大)
+    #      值越大 → 越信任传感器(响应快但可能抖)
+    process_noise_covariance:
+      [0.05, 0.0,  0.0,  0.0,  0.0,  0.0,    # x
+       0.0,  0.05, 0.0,  0.0,  0.0,  0.0,    # y
+       0.0,  0.0,  0.06, 0.0,  0.0,  0.0,    # z
+       0.0,  0.0,  0.0,  0.06, 0.0,  0.0,    # roll
+       0.0,  0.0,  0.0,  0.0,  0.06, 0.0,    # pitch
+       0.0,  0.0,  0.0,  0.0,  0.0,  0.08]   # yaw
+
+    # ── 初始估计的不确定性 ──────────────────
+    #      比赛开始时从已知起点出发, 不确定性低
+    initial_estimate_covariance:
+      [0.01, 0.0,  0.0,  0.0,  0.0,  0.0,
+       0.0,  0.01, 0.0,  0.0,  0.0,  0.0,
+       0.0,  0.0,  0.01, 0.0,  0.0,  0.0,
+       0.0,  0.0,  0.0,  0.01, 0.0,  0.0,
+       0.0,  0.0,  0.0,  0.0,  0.01, 0.0,
+       0.0,  0.0,  0.0,  0.0,  0.0,  0.05]

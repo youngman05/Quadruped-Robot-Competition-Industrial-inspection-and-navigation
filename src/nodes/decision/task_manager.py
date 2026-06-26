@@ -13,8 +13,9 @@
     /task/status           std_msgs/String  完整状态 (JSON)
 
 状态机:
-    START -> PASS_OBSTACLE -> INSPECT_GAUGES -> REPORT_STATUS
-          -> FIND_RED_BAR -> GRASP_BAR -> PLACE_TO_ABNORMAL_ZONE -> FINISH
+    START -> PASS_OBSTACLE -> INSPECT_GAUGES(4步,看一个报一个)
+          -> FIND_RED_BAR -> GRASP_BAR -> PLACE_TO_ABNORMAL_ZONE
+          (折返直到所有异常处理完) -> FINISH
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 
+from nav2_msgs.srv import LoadMap
 from nodes.navigation.navigation_client import (
     NavigationClient,
     WAYPOINTS,
@@ -43,11 +45,10 @@ class Phase(Enum):
     """比赛阶段枚举。"""
     START = auto()                  # 初始化，等待各子系统就绪
     PASS_OBSTACLE = auto()          # 越障 / 巡航到目标区域
-    INSPECT_GAUGES = auto()         # 检测仪表 + 识别字母/颜色条
-    REPORT_STATUS = auto()          # 中文语音播报结果
+    INSPECT_GAUGES = auto()         # 4个子步骤，看一个报一个
     FIND_RED_BAR = auto()           # 寻找红色条
     GRASP_BAR = auto()              # 抓取红色条
-    PLACE_TO_ABNORMAL_ZONE = auto() # 放入异常区域
+    PLACE_TO_ABNORMAL_ZONE = auto() # 放入异常区域，可能多次折返
     FINISH = auto()                 # 比赛结束
     ABORT = auto()                  # 异常中止
 
@@ -56,8 +57,7 @@ class Phase(Enum):
         _labels = {
             Phase.START: "初始化",
             Phase.PASS_OBSTACLE: "越障巡航",
-            Phase.INSPECT_GAUGES: "仪表检测",
-            Phase.REPORT_STATUS: "语音播报",
+            Phase.INSPECT_GAUGES: "仪表检测(含播报)",
             Phase.FIND_RED_BAR: "寻找红条",
             Phase.GRASP_BAR: "抓取红条",
             Phase.PLACE_TO_ABNORMAL_ZONE: "放置异常区",
@@ -119,11 +119,11 @@ class TaskManagerNode(Node):
             "find_red_bar", "grasp_bar", "place_to_abnormal_zone", "finish",
         ])
         self.declare_parameter("timeout_per_phase", 120.0)   # 每阶段超时 (秒)
-        self.declare_parameter("report_duration", 5.0)        # 语音播报最短时长
         self.declare_parameter("tick_rate", 10.0)             # 状态机主循环频率 (Hz)
         self.declare_parameter("require_stable_gauge", True)  # 是否必须稳定检测
         self.declare_parameter("auto_advance", False)         # 调试: 自动推进阶段
 
+        self.declare_parameter("phase2_map_yaml", "navi/map/competition_field_phase2.yaml")
         self.declare_parameter("gauge_topic", "/gauge/status")
         self.declare_parameter("yolo_topic", "/yolo/detections")
         self.declare_parameter("slam_status_topic", "/visual_slam/status")
@@ -132,7 +132,6 @@ class TaskManagerNode(Node):
 
         # ── 读取参数 ──────────────────────────────
         self._timeout_per_phase = float(self.get_parameter("timeout_per_phase").value)
-        self._report_duration = float(self.get_parameter("report_duration").value)
         self._tick_rate = float(self.get_parameter("tick_rate").value)
         self._require_stable = bool(self.get_parameter("require_stable_gauge").value)
         self._auto_advance = bool(self.get_parameter("auto_advance").value)
@@ -169,10 +168,13 @@ class TaskManagerNode(Node):
         self._slam_ok: bool = False                  # SLAM 定位是否正常
         self._abnormal_zones: List[str] = []           # 所有异常区域字母 (可能有1~4个)
         self._abnormal_handled: int = 0                # 已完成抓取放置的异常数
-        self._report_start_time: float = 0.0
         self._phase_seq_idx: int = 0                  # 在 PHASE_SEQUENCE 中的位置
 
         # ── 导航客户端 ────────────────────────────
+        # ── 地图切换客户端 ────────────────────────
+        self._phase2_yaml = str(self.get_parameter("phase2_map_yaml").value)
+        self._map_client = self.create_client(LoadMap, "/map_server/load_map")
+
         self._nav = NavigationClient(self)
         # 4 个观察子步骤: 位置 + 朝向 + 说明
         self._inspection_steps = [
@@ -212,9 +214,6 @@ class TaskManagerNode(Node):
         elif self._phase == Phase.INSPECT_GAUGES:
             self._tick_inspect_gauges(elapsed)
 
-        elif self._phase == Phase.REPORT_STATUS:
-            self._tick_report_status(elapsed)
-
         elif self._phase == Phase.FIND_RED_BAR:
             self._tick_find_red_bar(elapsed)
 
@@ -244,22 +243,44 @@ class TaskManagerNode(Node):
             self._advance_to_next_phase()
 
     def _tick_pass_obstacle(self, elapsed: float) -> None:
-        """PASS_OBSTACLE: 巡航穿越障碍区到达第一观察位。"""
+        """PASS_OBSTACLE: 两步走 — 先穿障碍区到底，再到安全区观察位。"""
         if self._handle_timeout(elapsed):
             return
 
-        # 发送导航目标 (只发一次)
-        if not self._nav.goal_sent and not self._nav.is_done():
-            self._nav.navigate_to_waypoint("pos1_middle")
+        # 子步骤定义
+        if not hasattr(self, "_obstacle_step"):
+            self._obstacle_step = 0  # 0=穿越障碍区, 1=安全区到观察位
 
-        # 导航完成 → 推进
-        if self._nav.is_done():
-            if self._nav.succeeded():
-                self.get_logger().info("已到达观察位①，进入仪表检测阶段")
-                self._advance_to_next_phase()
-            else:
-                self.get_logger().warn("越障导航失败，重试...")
-                self._nav.reset()
+        # ── 子步骤 0: start → obstacle_entry → obstacle_exit ──
+        if self._obstacle_step == 0:
+            if not self._nav.goal_sent and not self._nav.is_done():
+                self.get_logger().info("[越障 1/2] 穿越障碍区...")
+                self._nav.navigate_to_waypoint("obstacle_exit")
+
+            if self._nav.is_done():
+                if self._nav.succeeded():
+                    self.get_logger().info("已穿过障碍区，切换地图+进入安全区域")
+                    self._switch_to_phase2_map()
+                    self._obstacle_step = 1
+                    self._nav.reset()
+                else:
+                    self.get_logger().warn("越障导航失败，重试...")
+                    self._nav.reset()
+
+        # ── 子步骤 1: 安全区内 → 第一个观察位 ──
+        elif self._obstacle_step == 1:
+            if not self._nav.goal_sent and not self._nav.is_done():
+                self.get_logger().info("[越障 2/2] 安全区 → 观察位①...")
+                self._nav.navigate_to_waypoint("pos1_middle")
+
+            if self._nav.is_done():
+                if self._nav.succeeded():
+                    self.get_logger().info("已到达观察位①，进入仪表检测")
+                    del self._obstacle_step
+                    self._advance_to_next_phase()
+                else:
+                    self.get_logger().warn("安全区导航失败，重试...")
+                    self._nav.reset()
 
     def _tick_inspect_gauges(self, elapsed: float) -> None:
         """INSPECT_GAUGES: 4 个子步骤，看一个报一个。"""
@@ -333,16 +354,6 @@ class TaskManagerNode(Node):
             self.get_logger().info(
                 f"观察子步骤完成 → {self._inspection_step}/4"
             )
-
-    def _tick_report_status(self, elapsed: float) -> None:
-        """REPORT_STATUS: 语音播报结果。"""
-        if self._handle_timeout(elapsed):
-            return
-
-        # 等待播报完成（最短播报时长）
-        if elapsed >= self._report_duration:
-            self.get_logger().info("语音播报完成，进入寻找红条阶段")
-            self._advance_to_next_phase()
 
     def _tick_find_red_bar(self, elapsed: float) -> None:
         """FIND_RED_BAR: 导航到抓取区，寻找并定位红色条。"""
@@ -447,6 +458,21 @@ class TaskManagerNode(Node):
             )
 
         self._publish_full_status()
+
+    def _switch_to_phase2_map(self) -> None:
+        """越障完成后切换地图: 障碍区封堵, 后续不走回头路."""
+        if not self._map_client.wait_for_service(timeout_sec=3.0):
+            self.get_logger().warn("map_server 不可用, 跳过地图切换")
+            return
+        req = LoadMap.Request()
+        req.map_url = self._phase2_yaml
+        future = self._map_client.call_async(req)
+        future.add_done_callback(
+            lambda f: self.get_logger().info(
+                "地图已切换 → Phase 2 (障碍区封堵)"
+            ) if f.result().result == LoadMap.Response().RESULT_SUCCESS
+            else self.get_logger().error("地图切换失败")
+        )
 
     def _advance_to_next_phase(self) -> None:
         """推进到下一个阶段。"""

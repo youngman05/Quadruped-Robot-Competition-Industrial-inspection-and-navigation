@@ -39,7 +39,7 @@ from launch_ros.actions import Node, SetParameter
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PARAMS = PROJECT_ROOT / "configs" / "navigation" / "nav2_params.yaml"
-DEFAULT_MAP = PROJECT_ROOT / "navi" / "map" / "competition_field.yaml"
+DEFAULT_MAP = PROJECT_ROOT / "navi" / "map" / "competition_field_phase1.yaml"
 
 
 def generate_launch_description() -> LaunchDescription:
