@@ -30,11 +30,7 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 
-from nav2_msgs.srv import LoadMap
-from nodes.navigation.navigation_client import (
-    NavigationClient,
-    WAYPOINTS,
-)
+from navigation.navigator import Navigator
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -123,7 +119,6 @@ class TaskManagerNode(Node):
         self.declare_parameter("require_stable_gauge", True)  # 是否必须稳定检测
         self.declare_parameter("auto_advance", False)         # 调试: 自动推进阶段
 
-        self.declare_parameter("phase2_map_yaml", "navi/map/competition_field_phase2.yaml")
         self.declare_parameter("gauge_topic", "/gauge/status")
         self.declare_parameter("yolo_topic", "/yolo/detections")
         self.declare_parameter("slam_status_topic", "/visual_slam/status")
@@ -170,12 +165,8 @@ class TaskManagerNode(Node):
         self._abnormal_handled: int = 0                # 已完成抓取放置的异常数
         self._phase_seq_idx: int = 0                  # 在 PHASE_SEQUENCE 中的位置
 
-        # ── 导航客户端 ────────────────────────────
-        # ── 地图切换客户端 ────────────────────────
-        self._phase2_yaml = str(self.get_parameter("phase2_map_yaml").value)
-        self._map_client = self.create_client(LoadMap, "/map_server/load_map")
-
-        self._nav = NavigationClient(self)
+        # ── 导航客户端 (轻量 A* + 纯追踪) ─────
+        self._nav = Navigator(self)
         # 4 个观察子步骤: 位置 + 朝向 + 说明
         self._inspection_steps = [
             {"waypoint": "pos1_middle",        "desc": "仰头看上柜底面 (上区仪表)"},
@@ -461,18 +452,8 @@ class TaskManagerNode(Node):
 
     def _switch_to_phase2_map(self) -> None:
         """越障完成后切换地图: 障碍区封堵, 后续不走回头路."""
-        if not self._map_client.wait_for_service(timeout_sec=3.0):
-            self.get_logger().warn("map_server 不可用, 跳过地图切换")
-            return
-        req = LoadMap.Request()
-        req.map_url = self._phase2_yaml
-        future = self._map_client.call_async(req)
-        future.add_done_callback(
-            lambda f: self.get_logger().info(
-                "地图已切换 → Phase 2 (障碍区封堵)"
-            ) if f.result().result == LoadMap.Response().RESULT_SUCCESS
-            else self.get_logger().error("地图切换失败")
-        )
+        self._nav.switch_phase2_map()
+        self.get_logger().info("地图已切换 → Phase 2 (障碍区封堵)")
 
     def _advance_to_next_phase(self) -> None:
         """推进到下一个阶段。"""

@@ -18,8 +18,8 @@ setup(
             # "speech_publisher = nodes.decision.speech:main",
             # ── 导航层 ──────────────────────────
             "depth_publisher = nodes.navigation.depth_publisher:main",
-            "cuvslam_bridge = nodes.navigation.cuvslam_bridge:main",
             "initial_pose_publisher = nodes.navigation.initial_pose_publisher:main",
+            "lightweight_navigator = nodes.navigation.lightweight_navigator_node:main",
         ],
     },
 )

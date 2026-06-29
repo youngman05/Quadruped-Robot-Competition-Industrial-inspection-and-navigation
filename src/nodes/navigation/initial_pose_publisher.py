@@ -1,16 +1,14 @@
 """
-Initial Pose Publisher — tells Nav2 where the robot starts in the map frame.
+Initial Pose Publisher — publishes the static map→odom TF transform.
 
 ROS2 Node: initial_pose_publisher
 
-Publishes (once, latched):
-  /initialpose   — geometry_msgs/PoseWithCovarianceStamped
-  TF: map → odom  — static identity (map = odom at startup)
+Publishes:
+  TF: map → odom  — static transform aligning cuVSLAM odometry origin
+                    with the known robot start position on the competition field.
 
-The robot's known start pose in map coordinates comes from
-navi_map_data.ROBOT_START_POSE.  This node translates the mm-coordinate
-start pose to ROS and publishes it so Nav2 can align the map with
-the cuVSLAM odometry origin.
+The lightweight navigator applies this same offset internally, so this
+node provides the TF tree for any other consumers that need it.
 """
 
 import sys
@@ -19,7 +17,7 @@ from pathlib import Path
 
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import PoseWithCovarianceStamped, TransformStamped
+from geometry_msgs.msg import TransformStamped
 from tf2_ros import StaticTransformBroadcaster
 
 
@@ -59,10 +57,6 @@ class InitialPosePublisher(Node):
         self._map_frame = self.get_parameter("map_frame").value
         self._odom_frame = self.get_parameter("odom_frame").value
 
-        # publishers
-        self._pose_pub = self.create_publisher(
-            PoseWithCovarianceStamped, "/initialpose", 10
-        )
         self._tf_broadcaster = StaticTransformBroadcaster(self)
 
         # compute start pose
@@ -75,26 +69,7 @@ class InitialPosePublisher(Node):
             f"({ROBOT_START_POSE['note']})"
         )
 
-        # Build the initialpose message
-        self._initial_pose = PoseWithCovarianceStamped()
-        self._initial_pose.header.frame_id = self._map_frame
-        self._initial_pose.pose.pose.position.x = ros_x
-        self._initial_pose.pose.pose.position.y = ros_y
-        self._initial_pose.pose.pose.position.z = 0.0
-        self._initial_pose.pose.pose.orientation.x = qx
-        self._initial_pose.pose.pose.orientation.y = qy
-        self._initial_pose.pose.pose.orientation.z = qz
-        self._initial_pose.pose.pose.orientation.w = qw
-
-        # Covariance: fairly low uncertainty at known start position
-        cov = [0.0] * 36
-        cov[0] = cov[7] = 0.01   # x, y: 10cm stddev
-        cov[35] = 0.05            # yaw: ~12° stddev
-        self._initial_pose.pose.covariance = cov
-
         # Build the map → odom static transform
-        # map = odom at startup; cuVSLAM starts at (0,0) in odom,
-        # so we transform odom origin to the start pose in map.
         self._map_to_odom = TransformStamped()
         self._map_to_odom.header.frame_id = self._map_frame
         self._map_to_odom.child_frame_id = self._odom_frame
@@ -106,26 +81,20 @@ class InitialPosePublisher(Node):
         self._map_to_odom.transform.rotation.z = qz
         self._map_to_odom.transform.rotation.w = qw
 
-        # Publish once, then periodically
-        self._publish_once()
+        # Publish TF periodically
+        self._publish_tf_once()
         self._timer = self.create_timer(1.0 / publish_rate, self._publish_callback)
 
-    def _publish_once(self):
+    def _publish_tf_once(self):
         stamp = self.get_clock().now().to_msg()
-        self._initial_pose.header.stamp = stamp
-        self._pose_pub.publish(self._initial_pose)
-
         self._map_to_odom.header.stamp = stamp
         self._tf_broadcaster.sendTransform(self._map_to_odom)
-
-        self.get_logger().info("Initial pose + map→odom TF published")
+        self.get_logger().info("map→odom TF published")
 
     def _publish_callback(self):
-        """Re-publish periodically (keeps latched topic alive)."""
+        """Re-publish map→odom TF periodically."""
         stamp = self.get_clock().now().to_msg()
-        self._initial_pose.header.stamp = stamp
         self._map_to_odom.header.stamp = stamp
-        self._pose_pub.publish(self._initial_pose)
         self._tf_broadcaster.sendTransform(self._map_to_odom)
 
 

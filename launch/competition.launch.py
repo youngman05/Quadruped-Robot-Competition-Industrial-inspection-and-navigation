@@ -34,13 +34,8 @@
 from pathlib import Path
 
 from launch import LaunchDescription
-from launch.actions import (
-    DeclareLaunchArgument,
-    IncludeLaunchDescription,
-    LogInfo,
-)
+from launch.actions import DeclareLaunchArgument, LogInfo
 from launch.conditions import IfCondition
-from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -56,7 +51,7 @@ def generate_launch_description() -> LaunchDescription:
     enable_yolo = LaunchConfiguration("enable_yolo", default="false")        # 需先装 ultralytics torch
     enable_task_manager = LaunchConfiguration("enable_task_manager", default="false")  # 待实现
     enable_speech = LaunchConfiguration("enable_speech", default="false")    # 待实现
-    enable_navigation = LaunchConfiguration("enable_navigation", default="false")  # Nav2 导航栈
+    enable_navigation = LaunchConfiguration("enable_navigation", default="false")  # 轻量导航
     enable_placeholders = LaunchConfiguration("enable_placeholders", default="false")
 
     # ── 声明参数 ─────────────────────────────────────
@@ -82,7 +77,7 @@ def generate_launch_description() -> LaunchDescription:
     )
     declare_enable_navigation = DeclareLaunchArgument(
         "enable_navigation", default_value="false",
-        description="启动 Nav2 导航栈（需先生成 PGM 地图 + 启动 cuVSLAM Docker）"
+        description="启动轻量导航 (A* + 纯追踪 + 深度避障)"
     )
 
     # ═══════════════════════════════════════════════════
@@ -165,11 +160,43 @@ def generate_launch_description() -> LaunchDescription:
     # 执行层 — Execution
     # ═══════════════════════════════════════════════════
 
-    # ── Nav2 导航栈 🆕 ──────────────────────────────
-    navigation_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            str(PROJECT_ROOT / "launch" / "navigation.launch.py")
-        ),
+    # ── 轻量导航: initial_pose + TF + depth_publisher ──
+    initial_pose_node = Node(
+        package="quadruped_robot_competition",
+        executable="initial_pose_publisher",
+        name="initial_pose_publisher_node",
+        output="screen",
+        condition=IfCondition(enable_navigation),
+    )
+
+    base_to_camera_tf = Node(
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        name="base_to_camera_tf",
+        arguments=["0", "0", "0.3", "0", "0", "0", "base_link", "camera_link"],
+        output="screen",
+        condition=IfCondition(enable_navigation),
+    )
+
+    # Depth publisher reads Docker relay files → /camera/depth/image_raw
+    depth_pub_node = Node(
+        package="quadruped_robot_competition",
+        executable="depth_publisher",
+        name="d455_depth_publisher",
+        output="screen",
+        condition=IfCondition(enable_navigation),
+    )
+
+    # Depth → PointCloud2 (standard ROS2 node from depth_image_proc)
+    point_cloud_xyz = Node(
+        package="depth_image_proc",
+        executable="point_cloud_xyz_node",
+        name="point_cloud_xyz_node",
+        remappings=[
+            ("image_rect", "/camera/depth/image_raw"),
+            ("camera_info", "/camera/depth/camera_info"),
+            ("points", "/camera/depth/points"),
+        ],
         condition=IfCondition(enable_navigation),
     )
 
@@ -177,15 +204,15 @@ def generate_launch_description() -> LaunchDescription:
     startup_info = LogInfo(
         msg=[
             "\n",
-            "╔══════════════════════════════════════╗\n",
-            "║  四足机器人竞赛系统启动中...        ║\n",
-            "╠══════════════════════════════════════╣\n",
-            "║ gauge_status_pub   : ", enable_gauge, "  ║\n",
-            "║ yolo_detect_pub    : ", enable_yolo, "  ║\n",
-            "║ task_manager_node  : ", enable_task_manager, "  ║\n",
-            "║ speech_node        : ", enable_speech, "  ║\n",
-            "║ navigation         : ", enable_navigation, "  ║\n",
-            "╚══════════════════════════════════════╝\n",
+            "╔════════════════════════════════════════╗\n",
+            "║   四足机器人竞赛系统 (轻量版) 启动中   ║\n",
+            "╠════════════════════════════════════════╣\n",
+            "║ gauge_status     : ", enable_gauge, "  ║\n",
+            "║ yolo_detect      : ", enable_yolo, "  ║\n",
+            "║ task_manager     : ", enable_task_manager, "  ║\n",
+            "║ speech           : ", enable_speech, "  ║\n",
+            "║ navigation (A*)  : ", enable_navigation, "  ║\n",
+            "╚════════════════════════════════════════╝\n",
         ]
     )
 
@@ -205,6 +232,9 @@ def generate_launch_description() -> LaunchDescription:
         # 决策层
         task_manager_node,
         speech_node,
-        # 执行层 — 导航
-        navigation_launch,
+        # 导航层 (轻量: initial_pose + TF + depth + pointcloud)
+        initial_pose_node,
+        base_to_camera_tf,
+        depth_pub_node,
+        point_cloud_xyz,
     ])
