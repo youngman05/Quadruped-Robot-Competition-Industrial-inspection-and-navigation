@@ -184,9 +184,12 @@ class Navigator:
         from nav_msgs.msg import Odometry
         from geometry_msgs.msg import Twist
         from sensor_msgs.msg import PointCloud2
+        from rclpy.qos import QoSProfile, ReliabilityPolicy
+
+        _best_effort = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
 
         self._odom_sub = node.create_subscription(
-            Odometry, "/odom", self._odom_callback, 10,
+            Odometry, "/odom", self._odom_callback, _best_effort,
         )
         self._cmd_vel_pub = node.create_publisher(Twist, "/cmd_vel", 10)
         # Optional: subscribe to point cloud for obstacle detection

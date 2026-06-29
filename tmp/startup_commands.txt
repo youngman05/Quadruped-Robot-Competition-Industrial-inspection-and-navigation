@@ -1,0 +1,27 @@
+# ═══ 终端1: 启动 Docker ═══
+bash ~/Desktop/start_docker.sh
+# 输入密码，等 docker ps | grep cuvslam 有输出后跑终端2
+
+
+# ═══ 终端2: 一键启动全部 ═══
+CN=$(docker ps --format '{{.Names}}' | grep cuvslam) && \
+docker cp ~/quadruped-robot-competition/scripts/camera_relay_docker.py $CN:/tmp/ && \
+docker cp ~/quadruped-robot-competition/scripts/depth_relay_docker.py $CN:/tmp/ && \
+docker exec $CN pkill -f camera_relay 2>/dev/null; docker exec $CN pkill -f depth_relay 2>/dev/null; sleep 1 && \
+docker exec -d $CN bash -c "source /opt/ros/humble/setup.bash; source /workspaces/isaac_ros-dev/install/setup.bash; mkdir -p /workspaces/isaac_ros-dev/camera_frames; python3 /tmp/camera_relay_docker.py > /tmp/cam.log 2>&1" && \
+sleep 3 && echo "Camera: $(docker exec $CN tail -1 /tmp/cam.log 2>/dev/null)" && \
+docker exec -d $CN bash -c "source /opt/ros/humble/setup.bash; source /workspaces/isaac_ros-dev/install/setup.bash; python3 /tmp/depth_relay_docker.py > /tmp/dep.log 2>&1" && \
+sleep 3 && echo "Depth: $(docker exec $CN tail -1 /tmp/dep.log 2>/dev/null)" && \
+source /opt/ros/foxy/setup.bash && \
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp ROS_DOMAIN_ID=0 PYTHONPATH=/opt/ros/foxy/lib/python3.8/site-packages && \
+export FASTRTPS_DEFAULT_PROFILES_FILE=~/quadruped-robot-competition/configs/ros/fastrtps_no_shm.xml && \
+pkill -f final_bridge 2>/dev/null; sleep 1 && \
+nohup python3 ~/quadruped-robot-competition/scripts/final_bridge.py > /tmp/fb.log 2>&1 & \
+sleep 10 && echo "Bridge: $(tail -1 /tmp/fb.log)" && \
+source ~/quadruped-robot-competition/install/setup.bash && \
+export FASTRTPS_DEFAULT_PROFILES_FILE=~/quadruped-robot-competition/configs/ros/fastrtps_no_shm.xml && \
+ros2 launch quadruped_robot_competition competition.launch.py enable_task_manager:=true enable_navigation:=true & \
+sleep 10 && \
+source /opt/ros/foxy/setup.bash && export RMW_IMPLEMENTATION=rmw_fastrtps_cpp ROS_DOMAIN_ID=0 FASTRTPS_DEFAULT_PROFILES_FILE=~/quadruped-robot-competition/configs/ros/fastrtps_no_shm.xml && \
+echo "=== NODES ===" && ros2 node list 2>/dev/null | grep -v '/camera\|/visual\|/launch\|/transform\|/depth_relay' && \
+echo "=== /ODOM ===" && timeout 4 ros2 topic hz /odom 2>&1 | head -3

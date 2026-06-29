@@ -149,8 +149,10 @@ class TaskManagerNode(Node):
         self._yolo_sub = self.create_subscription(
             String, yolo_topic, self._on_yolo_detections, 10,
         )
+        from rclpy.qos import QoSProfile, ReliabilityPolicy
+        _best_effort = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
         self._slam_sub = self.create_subscription(
-            String, slam_status_topic, self._on_slam_status, 10,
+            String, slam_status_topic, self._on_slam_status, _best_effort,
         )
 
         # ── 内部状态 ──────────────────────────────
@@ -228,8 +230,9 @@ class TaskManagerNode(Node):
         if self._auto_advance and elapsed > 0.5:
             self._advance_to_next_phase()
 
-        # 正式条件: SLAM 就绪 + 至少收到过一次 gauge/yolo 数据
-        if self._slam_ok and elapsed > 1.0:
+        # 用 odom 数据到达判断定位就绪 (DDS QoS 兼容性更好)
+        slam_ready = self._slam_ok or self._nav._has_odom
+        if slam_ready and elapsed > 1.0:
             self.get_logger().info("各子系统就绪，进入越障巡航阶段")
             self._advance_to_next_phase()
 
