@@ -60,8 +60,9 @@ _RAW_WAYPOINTS: dict[str, dict] = {
     "placement_B":             {"x_mm": 3750, "y_mm": 250,  "yaw_deg": 0,   "label": "B放置区"},
     "placement_C":             {"x_mm": 4250, "y_mm": 250,  "yaw_deg": 0,   "label": "C放置区"},
     "placement_D":             {"x_mm": 4750, "y_mm": 250,  "yaw_deg": 0,   "label": "D放置区"},
-    "obstacle_entry":          {"x_mm": 3000, "y_mm": 5000, "yaw_deg": 180, "label": "障碍区入口"},
-    "obstacle_exit":           {"x_mm": 1500, "y_mm": 2750, "yaw_deg": -90, "label": "障碍区出口→观察位①"},
+    # 穿越障碍区时不设固定入口 — A* + D455 实时避障自己找路
+    # x=500mm (ROS 0.5m) 在安全走廊中部, 避开障碍区 (x≥1000mm)
+    "obstacle_cross_target":   {"x_mm": 500,  "y_mm": 5250, "yaw_deg": None, "label": "穿越障碍区 → 安全走廊"},
 }
 
 # Build ROS-coordinate waypoint dict

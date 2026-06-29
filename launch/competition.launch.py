@@ -36,6 +36,7 @@ from pathlib import Path
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    ExecuteProcess,
     IncludeLaunchDescription,
     LogInfo,
 )
@@ -89,26 +90,27 @@ def generate_launch_description() -> LaunchDescription:
     # 感知层 — Perception
     # ═══════════════════════════════════════════════════
 
-    # ── 仪表检测节点 ✅ 已实现 ──────────────────────
-    gauge_node = Node(
-        package="quadruped_robot_competition",
-        executable="gauge_status_publisher",
-        name="gauge_status_publisher_node",
-        parameters=[str(PARAMS_FILE)],
+    _SRC = str(PROJECT_ROOT / "src")
+    _Foxy_PY = "/opt/ros/foxy/lib/python3.8/site-packages"
+
+    # ── 仪表检测节点 (读 Docker relay jpg) ──────────
+    gauge_node = ExecuteProcess(
+        cmd=["python3", str(PROJECT_ROOT / "src/nodes/perception/gauge_status.py")],
+        name="gauge_status_publisher",
         output="screen",
+        env={"PYTHONPATH": f"{_Foxy_PY}:{_SRC}",
+             "RMW_IMPLEMENTATION": "rmw_fastrtps_cpp", "ROS_DOMAIN_ID": "0"},
         condition=IfCondition(enable_gauge),
     )
 
-    # ── YOLO 检测节点 ⏳ 待实现 ────────────────────
-    yolo_node = Node(
-        package="quadruped_robot_competition",
-        executable="yolo_detect_publisher",
-        name="yolo_detect_publisher_node",
-        parameters=[str(PARAMS_FILE)],
+    # ── YOLO 检测节点 (读 Docker relay jpg) ─────────
+    yolo_node = ExecuteProcess(
+        cmd=["python3", str(PROJECT_ROOT / "src/nodes/perception/yolo_detect_publisher.py")],
+        name="yolo_detect_publisher",
         output="screen",
-        condition=IfCondition(
-            [enable_yolo, " or ", enable_placeholders]
-        ),
+        env={"PYTHONPATH": f"{_Foxy_PY}:{_SRC}",
+             "RMW_IMPLEMENTATION": "rmw_fastrtps_cpp", "ROS_DOMAIN_ID": "0"},
+        condition=IfCondition([enable_yolo, " or ", enable_placeholders]),
     )
 
     # ═══════════════════════════════════════════════════
@@ -138,27 +140,23 @@ def generate_launch_description() -> LaunchDescription:
     # ═══════════════════════════════════════════════════
 
     # ── 任务管理器 ⏳ 待实现 ────────────────────────
-    task_manager_node = Node(
-        package="quadruped_robot_competition",
-        executable="task_manager",
-        name="task_manager_node",
-        parameters=[str(PARAMS_FILE)],
+    task_manager_node = ExecuteProcess(
+        cmd=["python3", str(PROJECT_ROOT / "src/nodes/decision/task_manager.py")],
+        name="task_manager",
         output="screen",
-        condition=IfCondition(
-            [enable_task_manager, " or ", enable_placeholders]
-        ),
+        env={"PYTHONPATH": f"{_Foxy_PY}:{_SRC}",
+             "RMW_IMPLEMENTATION": "rmw_fastrtps_cpp", "ROS_DOMAIN_ID": "0"},
+        condition=IfCondition([enable_task_manager, " or ", enable_placeholders]),
     )
 
-    # ── 语音播报 ⏳ 待实现 ──────────────────────────
-    speech_node = Node(
-        package="quadruped_robot_competition",
-        executable="speech",
-        name="speech_node",
-        parameters=[str(PARAMS_FILE)],
+    # ── 语音播报 (占位) ────────────────────────────
+    speech_node = ExecuteProcess(
+        cmd=["python3", str(PROJECT_ROOT / "src/nodes/decision/speech.py")],
+        name="speech",
         output="screen",
-        condition=IfCondition(
-            [enable_speech, " or ", enable_placeholders]
-        ),
+        env={"PYTHONPATH": f"{_Foxy_PY}:{_SRC}",
+             "RMW_IMPLEMENTATION": "rmw_fastrtps_cpp", "ROS_DOMAIN_ID": "0"},
+        condition=IfCondition([enable_speech, " or ", enable_placeholders]),
     )
 
     # ═══════════════════════════════════════════════════

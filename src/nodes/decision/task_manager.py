@@ -255,7 +255,7 @@ class TaskManagerNode(Node):
         if self._obstacle_step == 0:
             if not self._nav.goal_sent and not self._nav.is_done():
                 self.get_logger().info("[越障 1/2] 穿越障碍区...")
-                self._nav.navigate_to_waypoint("obstacle_exit")
+                self._nav.navigate_to_waypoint("obstacle_cross_target")
 
             if self._nav.is_done():
                 if self._nav.succeeded():

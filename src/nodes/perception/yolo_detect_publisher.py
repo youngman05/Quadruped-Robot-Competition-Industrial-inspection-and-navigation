@@ -131,36 +131,8 @@ class YoloDetectNode(Node):
             )
             raise
 
-        # ── 打开相机 ──────────────────────────────
-        self._cam = None
-        self._cap = None  # USB fallback
-
-        if self._use_d455:
-            try:
-                from cv.realsense_camera import RealsenseCamera
-                self._cam = RealsenseCamera(
-                    width=self._width,
-                    height=self._height,
-                    enable_depth=self._enable_depth,
-                    align_depth=True,
-                )
-                self._cam.start()
-                self.get_logger().info(
-                    f"D455 started: {self._cam.device_name} (serial={self._cam.serial})"
-                )
-            except Exception as exc:
-                self.get_logger().warn(f"D455 failed ({exc}), falling back to USB camera")
-                self._use_d455 = False
-
-        if not self._use_d455:
-            import cv2
-            self._cap = cv2.VideoCapture(self._camera_id)
-            if not self._cap.isOpened():
-                raise RuntimeError(f"Cannot open camera id={self._camera_id}")
-            actual_w = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            actual_h = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            self._width, self._height = actual_w, actual_h
-            self.get_logger().info(f"USB camera opened: {self._width}x{self._height}")
+        # ── 相机帧来自 Docker camera relay 共享文件 ──
+        self.get_logger().info("Reading frames from Docker relay")
 
         # ── 发布者 ────────────────────────────────
         self._detections_pub = self.create_publisher(String, detections_topic, 10)
@@ -185,17 +157,14 @@ class YoloDetectNode(Node):
     # ────────────────────────────────────────────────
     def _process_frame(self) -> None:
         try:
-            # 1. 取帧
+            import cv2
+            from pathlib import Path
+            # 1. 取帧 — 从 Docker camera relay 共享文件
             depth_img = None
-            if self._use_d455 and self._cam:
-                color_img, depth_img = self._cam.get_frames()
-                if color_img is None:
-                    return
-                frame = color_img
-            elif self._cap:
-                import cv2
-                ret, frame = self._cap.read()
-                if not ret or frame is None:
+            relay_jpg = Path.home() / "workspaces/isaac_ros-dev/camera_frames/latest_color.jpg"
+            if relay_jpg.exists():
+                frame = cv2.imread(str(relay_jpg))
+                if frame is None:
                     return
             else:
                 return
@@ -374,13 +343,6 @@ class YoloDetectNode(Node):
     # ────────────────────────────────────────────────
     def destroy_node(self) -> bool:
         self.get_logger().info("Shutting down...")
-        if self._cam:
-            try:
-                self._cam.stop()
-            except Exception:
-                pass
-        if self._cap:
-            self._cap.release()
         return super().destroy_node()
 
 

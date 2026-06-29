@@ -8,7 +8,6 @@ import tempfile
 from pathlib import Path
 import sys
 
-import cv2
 import rclpy
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
@@ -28,12 +27,6 @@ from live_validation import (  # noqa: E402
     make_status_payload,
 )
 
-# ── Camera wrapper ─────────────────────────────────
-_SRC = ROOT / "src"
-if str(_SRC) not in sys.path:
-    sys.path.insert(0, str(_SRC))
-
-from cv.realsense_camera import RealsenseCamera  # noqa: E402
 
 
 class GaugeStatusNode(Node):
@@ -89,36 +82,23 @@ class GaugeStatusNode(Node):
         self._tmp_path = Path(tempfile.gettempdir()) / "d455_gauge_ros_frame.jpg"
         self._frame_count = 0
 
-        # 使用 RealsenseCamera 封装替代裸 pyrealsense2 管线
-        self._camera = RealsenseCamera.for_gauge(width=self._width, height=self._height)
-        self._camera.start(warmup_frames=30)
-        self.get_logger().info(
-            f"D455 started: {self._camera.device_name}, serial={self._camera.serial}"
-        )
-        self.get_logger().info(f"Publishing gauge status on {status_topic}")
+        # 相机帧来自 Docker camera relay 的共享文件, 不再直接打开 D455
+        self.get_logger().info(f"Reading frames from Docker relay. Publishing on {status_topic}")
 
         self._timer = self.create_timer(self._interval_sec, self._process_frame)
 
     def destroy_node(self) -> bool:
-        try:
-            self._camera.stop()
-        except Exception as exc:  # noqa: BLE001
-            self.get_logger().warning(f"Failed to stop D455 camera cleanly: {exc}")
-        # 清理临时图片
-        try:
-            self._tmp_path.unlink(missing_ok=True)
-        except Exception:
-            pass
         return super().destroy_node()
 
     def _process_frame(self) -> None:
         try:
-            image = self._camera.get_color_image()
-            if image is None:
+            # 从 Docker camera relay 共享文件读取最新帧
+            relay_jpg = Path.home() / "workspaces/isaac_ros-dev/camera_frames/latest_color.jpg"
+            if not relay_jpg.exists():
                 self._publish_status(None, False, "no_color_frame")
                 return
-
-            cv2.imwrite(str(self._tmp_path), image)
+            # 直接用作 detect_gauge 的输入路径
+            self._tmp_path = relay_jpg
 
             debug_out = None
             if self._debug_dir:

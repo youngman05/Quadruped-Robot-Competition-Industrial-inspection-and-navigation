@@ -16,11 +16,11 @@
 
 **导航系统回答三个问题：**
 
-| 问题 | 谁来解决 | 怎么做 |
-|------|---------|--------|
-| 世界长什么样？ | 两张 PGM 地图 | Phase1 可穿障碍区 / Phase2 封堵 |
-| 我在哪？ | EKF 融合 | 腿里程计 + IMU + cuVSLAM 视觉 |
-| 怎么走到目标？ | Nav2 + A\* + D455 | 全局路径 + 实时避障 |
+| 问题           | 谁来解决          | 怎么做                          |
+| -------------- | ----------------- | ------------------------------- |
+| 世界长什么样？ | 两张 PGM 地图     | Phase1 可穿障碍区 / Phase2 封堵 |
+| 我在哪？       | cuVSLAM           | D455 红外双目 + IMU 视觉里程计   |
+| 怎么走到目标？ | Nav2 + A\* + D455 | 全局路径 + 实时避障             |
 
 ---
 
@@ -33,10 +33,10 @@
 └──────────────────────────┬─────────────────────────────────┘
                            │ map_server 加载 phase1
 ┌─ 节点层 ─────────────────┼─────────────────────────────────┐
-│  定位: 腿里程计+IMU+cuVSLAM → EKF → /odom + TF            │
+│  定位: cuVSLAM → cuvslam_bridge → /odom + TF               │
 │  感知: depth_publisher → pointcloud → Nav2 local_costmap   │
 │  规划: Nav2 (A* planner + RPP controller)                  │
-│  桥接: cuvslam_bridge (状态翻译)                            │
+│  对齐: initial_pose_publisher (map→odom TF)                │
 │  对齐: initial_pose_publisher (map→odom TF)                │
 │                           │                                │
 │  输出: /cmd_vel → Lite3_ROS → UDP → 狗运动主机             │
@@ -67,9 +67,10 @@
 ### A\* 算法 — "怎么绕开墙最快到目标"
 
 > 你在迷宫里找路。朝大致方向走，遇死胡同退一步换方向。A\* 同时评两条信息：
+>
 > - **已经走了多远** (g)
 > - **离目标还有多远** (h)
-> 两者加起来最小的方向优先。
+>   两者加起来最小的方向优先。
 
 四足能原地转向 → 不需要 Hybrid-A\*（汽车模型），A\* 足够。
 
@@ -87,17 +88,15 @@
 - **RegulatedPurePursuit** — 控制器，追前方 0.5m 路径点
 - **TEB** — 可选高级控制器（需编译），同时优化轨迹+速度+避障
 
-### EKF 定位融合 — "三个人认路比一个人准"
+### cuVSLAM 定位 — "看路就知道自己走了多远"
 
 ```
-腿里程计 → 高频稳定,但打滑会漂移
-cuVSLAM  → 无漂移,但光线差会丢
-IMU      → 高频角速度,方向准
-
-       三者 → EKF (50Hz) → /odom
+D455 红外双目 + IMU → cuVSLAM (Docker) → /visual_slam/tracking/odometry
+                                                    │
+                                         cuvslam_bridge → /odom + TF
 ```
 
-谁弱另一路顶上去，不会因为单点故障全崩。
+纯视觉里程计，不依赖腿里程计。比赛场地 5×6m，光照可控，漂移可接受。
 
 ---
 
@@ -123,7 +122,7 @@ navi/                                    ← 导航模块根
 ```
 src/nodes/navigation/
 ├── depth_publisher.py                   ← D455 深度 → PointCloud2
-├── cuvslam_bridge.py                    ← cuVSLAM 状态翻译 (60行)
+├── cuvslam_bridge.py                    ← cuVSLAM → /odom + TF + 状态翻译
 ├── initial_pose_publisher.py            ← 初始位姿 + map→odom TF
 └── navigation_client.py                 ← 导航 API (navi/ 的副本)
 ```
@@ -132,7 +131,6 @@ src/nodes/navigation/
 
 ```
 configs/navigation/nav2_params.yaml      ← Nav2 全局参数
-configs/navigation/ekf.yaml              ← EKF 三路融合
 launch/navigation.launch.py              ← 一键启动导航栈
 launch/competition.launch.py             ← 比赛总启动
 src/nodes/decision/task_manager.py       ← 状态机(地图切换+导航+折返)
@@ -158,9 +156,9 @@ ROS: 原点=左下角, +x右 +y上, 单位m
 
 yaw 约定（mm 坐标系, 0°=面朝右）：
 
-| yaw | 含义 | yaw | 含义 |
-|-----|------|-----|------|
-| 0° | 面朝右 | 180° | 面朝左 |
+| yaw  | 含义   | yaw   | 含义   |
+| ---- | ------ | ----- | ------ |
+| 0°  | 面朝右 | 180° | 面朝左 |
 | 90° | 面朝下 | -90° | 面朝上 |
 
 ---
@@ -186,10 +184,10 @@ ROBOT_START_POSE = (5350, 5250)mm, yaw=180°
 
 读 `navi_map_data` → 输出两张地图：
 
-| 地图 | 障碍区 | 抓取区 | 放置区(A/B/C/D) | 检测区 |
-|------|:--:|:--:|:--:|:--:|
-| Phase1 (越障) | ⬜ 可通行 | ⬛ 膨胀墙 15cm | ⬛ 严格墙 | ⬛ 墙 |
-| Phase2 (任务) | ⬛ **封堵** | ⬛ 膨胀墙 15cm | ⬛ 严格墙 | ⬛ 墙 |
+| 地图          |      障碍区      |     抓取区     | 放置区(A/B/C/D) | 检测区 |
+| ------------- | :--------------: | :------------: | :-------------: | :----: |
+| Phase1 (越障) |    ⬜ 可通行    | ⬛ 膨胀墙 15cm |    ⬛ 严格墙    | ⬛ 墙 |
+| Phase2 (任务) | ⬛**封堵** | ⬛ 膨胀墙 15cm |    ⬛ 严格墙    | ⬛ 墙 |
 
 膨胀墙：区域向内缩 15cm 作为墙体，外围边缘狗可站立，机械臂伸入。放置区不膨胀——狗完全不入内。两张 YAML 告诉 map_server 分辨率(0.025m/px)和原点。
 
@@ -201,21 +199,17 @@ ROBOT_START_POSE = (5350, 5250)mm, yaw=180°
 
 cuVSLAM 从 (0,0,0) 起步。这个 TF 告诉 Nav2："cuVSLAM 原点 = 地图上出发区的位置和朝向"。同时发 `/initialpose` 话题。**不删除**——没有它 Nav2 不知道狗在地图上的位置。
 
-**`cuvslam_bridge`** (`src/nodes/navigation/cuvslam_bridge.py`) — 60 行
+**`cuvslam_bridge`** (`src/nodes/navigation/cuvslam_bridge.py`)
 
-只做一件事：翻译 cuVSLAM 状态。`/visual_slam/status` → `/slam/status` (ok/lost)。不发布 `/odom` 或 TF——EKF 已接管。
-
-**`ekf.yaml`** — EKF 三路融合
+订阅 cuVSLAM Docker 的 `/visual_slam/tracking/odometry` 和 `/visual_slam/status`，转为 Nav2 可用的格式：
 
 ```
-/leg_odom2 + /imu/data + /visual_slam/tracking/odometry
-        │
-   ekf_node (50Hz)
-        │
-   /odom + TF: odom→base_link
+/visual_slam/tracking/odometry  →  /odom (child_frame_id=base_link)
+                                 →  TF: odom → base_link
+/visual_slam/status             →  /slam/status (ok/lost)
 ```
 
-权重：腿里程计提供位置+速度(在线但不准)，cuVSLAM 提供位置(准但可能丢)，IMU 提供角速度(高频转向)。
+完全信任 cuVSLAM 视觉里程计结果。
 
 **Lite3_ROS SDK** (`lite3_ros-ros2-foxy/`)
 
@@ -231,14 +225,14 @@ D455 深度图 → `/camera/depth/image_raw` + `/camera/depth/camera_info` → `
 
 **`nav2_params.yaml`** — 全部 Nav2 参数
 
-| 组件 | 配置 |
-|------|------|
+| 组件         | 配置                                                           |
+| ------------ | -------------------------------------------------------------- |
 | 全局代价地图 | StaticLayer(PGM) + ObstacleLayer(PointCloud2) + InflationLayer |
-| 局部代价地图 | VoxelLayer 2m×2m 滚动窗口 |
-| 全局规划器 | A\* (NavFn, `use_astar: true`) |
-| 控制器 | RegulatedPurePursuit (TEB 注释供选) |
-| 机器人 | 1m×0.5m 长方形足迹, 膨胀半径 0.2m |
-| 速度 | 线速度 0.25m/s, 角速度 0.5rad/s |
+| 局部代价地图 | VoxelLayer 2m×2m 滚动窗口                                     |
+| 全局规划器   | A\* (NavFn, `use_astar: true`)                               |
+| 控制器       | RegulatedPurePursuit (TEB 注释供选)                            |
+| 机器人       | 1m×0.5m 长方形足迹, 膨胀半径 0.2m                             |
+| 速度         | 线速度 0.25m/s, 角速度 0.5rad/s                                |
 
 ### 决策层
 
@@ -261,9 +255,9 @@ nav.cancel()    # 取消
 
 ```
 PASS_OBSTACLE (两步):
-  ① start → obstacle_exit (穿越, D455 实时避锥桶)
-     ↓ 到达 → _switch_to_phase2_map() → 障碍区封堵
-  ② obstacle_exit → pos1_middle (安全走廊 A*)
+  ① start → obstacle_cross_target (A* + D455 实时绕锥桶, 无固定入口)
+     ↓ 到达安全走廊 → _switch_to_phase2_map() → 障碍区封堵
+  ② obstacle_cross_target → pos1_middle (安全走廊 A*)
 
 INSPECT_GAUGES (4 子步骤):
   pos1_middle (yaw=-90)     → 看上柜底面 → 测 A → 播报
@@ -277,32 +271,27 @@ FIND_RED_BAR → GRASP_BAR → PLACE_to_placement_X
   ↓ 全处理完 → FINISH
 ```
 
-**地图切换**：`task_manager` 内建 `LoadMap` 客户端。越障到达 `obstacle_exit` 后自动调 `/map_server/load_map`，从 phase1 切到 phase2（障碍区封堵）。
+**地图切换**：`task_manager` 内建 `LoadMap` 客户端。到达安全走廊后自动调 `/map_server/load_map`，从 phase1 切到 phase2（障碍区封堵），后续 A\* 不再穿障碍区。
 
 ### 数据流全景
 
 ```
-狗腿+IMU ──┐                     D455 ──┬── IR+IMU → cuVSLAM ──┐
-           │                            │                       │
-           ├──→ EKF ──→ /odom            ├──→ depth_pub → 点云   │
-           │   (Nav2定位)                │   (局部避障)          │
-           │                             │                       │
-           │                     ┌───────┴───────┐               │
-           │                     │   Nav2 导航栈  │               │
-           │                     │               │               │
-           │                     │ map_server    │ ← phase1/2   │
-           │                     │ planner (A*)  │               │
-           │                     │ controller    │               │
-           │                     │ costmap       │ ← 深度点云    │
-           │                     └───────┬───────┘               │
-           │                             │                       │
-           └────── /odom ────────────────┤                       │
-                                         │                       │
-                                    /cmd_vel                    │
-                                         │                       │
-                                   Lite3_ROS                     │
-                                         │                       │
-                                      UDP → 狗运动主机            │
+D455 ──┬── IR+IMU → cuVSLAM → cuvslam_bridge → /odom + TF
+       │
+       └── depth → depth_pub → 点云 → Nav2 local_costmap
+                │
+         ┌──────┴──────────┐
+         │   Nav2 导航栈    │
+         │                 │
+         │ map_server      │ ← phase1/2
+         │ planner (A*)    │
+         │ controller (RPP)│
+         │ costmap         │ ← 深度点云
+         └────────┬────────┘
+                  │
+             /cmd_vel
+                  │
+            Lite3_ROS → UDP → 狗运动主机
 ```
 
 ---
@@ -311,20 +300,21 @@ FIND_RED_BAR → GRASP_BAR → PLACE_to_placement_X
 
 所有坐标 ROS 米制 (map 帧)。yaw=None 表示到了就算，不管朝向。
 
-| 航点 | (x, y) m | yaw | 用途 |
-|------|----------|-----|------|
-| `start` | (5.35, 0.75) | — | 出发区 |
-| `obstacle_entry` | (3.00, 1.00) | — | 障碍区入口 |
-| `obstacle_exit` | (1.50, 3.25) | — | 障碍区出口 |
-| `pos1_middle` | (1.50, 3.25) | -90° | 看上柜底面 |
-| `pos1_middle_turned` | (1.50, 3.25) | 90° | 转身看下柜顶面 |
-| `pos2a_upper_right` | (2.20, 4.50) | 180° | 看上柜右侧面 |
-| `pos2b_lower_right` | (2.20, 2.00) | 180° | 看下柜右侧面 |
-| `grab_area` | (4.25, 2.00) | — | 抓取区 |
-| `placement_A` | (3.25, 5.75) | — | A 放置区 |
-| `placement_B` | (3.75, 5.75) | — | B 放置区 |
-| `placement_C` | (4.25, 5.75) | — | C 放置区 |
-| `placement_D` | (4.75, 5.75) | — | D 放置区 |
+| 航点                      | (x, y) m     | yaw   | 用途                   |
+| ------------------------- | ------------ | ----- | ---------------------- |
+| `start`                 | (5.35, 0.75) | —    | 出发区                 |
+| `obstacle_cross_target` | (0.50, 0.75) | —    | 穿障碍→安全走廊(x<1m) |
+| `pos1_middle`           | (1.50, 3.25) | -90° | 看上柜底面             |
+| `pos1_middle_turned`    | (1.50, 3.25) | 90°  | 转身看下柜顶面         |
+| `pos2a_upper_right`     | (2.20, 4.50) | 180° | 看上柜右侧面           |
+| `pos2b_lower_right`     | (2.20, 2.00) | 180° | 看下柜右侧面           |
+| `grab_area`             | (4.25, 2.00) | —    | 抓取区                 |
+| `placement_A`           | (3.25, 5.75) | —    | A 放置区               |
+| `placement_B`           | (3.75, 5.75) | —    | B 放置区               |
+| `placement_C`           | (4.25, 5.75) | —    | C 放置区               |
+| `placement_D`           | (4.75, 5.75) | —    | D 放置区               |
+
+障碍穿越不设固定入口——A\* + D455 实时避障自己找路穿过去。
 
 坐标唯一来源：`navi/map/navi_map_data.py`
 
@@ -336,51 +326,80 @@ FIND_RED_BAR → GRASP_BAR → PLACE_to_placement_X
 
 ```bash
 cd ~/quadruped-robot-competition
-chmod +x scripts/tools/install_nav2_deps.sh
-./scripts/tools/install_nav2_deps.sh
+sudo apt-get install -y ros-foxy-nav2-bringup ros-foxy-nav2-map-server \
+  ros-foxy-nav2-planner ros-foxy-nav2-controller ros-foxy-nav2-bt-navigator \
+  ros-foxy-nav2-lifecycle-manager ros-foxy-nav2-costmap-2d ros-foxy-nav2-voxel-grid \
+  ros-foxy-nav2-navfn-planner ros-foxy-nav2-regulated-pure-pursuit-controller \
+  ros-foxy-nav2-behavior-tree ros-foxy-nav2-waypoint-follower \
+  ros-foxy-depth-image-proc ros-foxy-image-pipeline
 pip3 install -e .
 cd navi/map && python3 generate_nav2_map.py
+cd ~/lite3_ros2_ws && colcon build   # Lite3 SDK 编译
 ```
 
-### 编译 Lite3_ROS SDK
+### 完整启动流程（3 个终端）
+
+**终端 1 — cuVSLAM Docker**（定位数据源）：
 
 ```bash
-cd ~/lite3_ros-ros2-foxy
-colcon build
-source install/setup.bash
+cd ~/quadruped-robot-competition
+CUVSLAM_MOUNT_MODE=robot CUVSLAM_PROFILE=planar_60fps \
+  CUVSLAM_PUBLISH_ODOM_TO_BASE_TF=false \
+  CUVSLAM_PUBLISH_MAP_TO_ODOM_TF=false \
+  bash scripts/start_cuvslam_rviz_gui.sh --no-rviz
+# 等待出现 "Loop metrics live summary"（约 90 秒 GPU 预热）
 ```
 
-### 启动
+**终端 2 — 桥接**（Docker cuVSLAM → 宿主机 `/odom`）：
 
 ```bash
 source /opt/ros/foxy/setup.bash
-
-# 1. 启动 Lite3 桥接（狗通信必备）
-ros2 launch transfer transfer.launch
-
-# 2. 启动 cuVSLAM Docker（另一终端）
-docker run --rm --gpus all --network host \
-  -v ~/workspaces/isaac_ros-dev:/workspaces/isaac_ros-dev \
-  isaac_ros_cuvslam_runtime:humble-rs \
-  ros2 launch isaac_ros_visual_slam isaac_ros_visual_slam_realsense.launch.py
-
-# 3. 启动导航栈
-ros2 launch launch/navigation.launch.py
-
-# 4. 启动比赛系统（含任务状态机）
-ros2 launch launch/competition.launch.py \
-  enable_task_manager:=true enable_navigation:=true
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp ROS_DOMAIN_ID=0 \
+  PYTHONPATH=/opt/ros/foxy/lib/python3.8/site-packages
+python3 /tmp/final_bridge.py
+# 成功标志: bridged 301 msgs | self-verify: ~150
 ```
+
+**终端 3 — 验证**（bridge 启动 30 秒后）：
+
+```bash
+source /opt/ros/foxy/setup.bash
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp ROS_DOMAIN_ID=0 \
+  PYTHONPATH=/opt/ros/foxy/lib/python3.8/site-packages
+python3 /tmp/test_odom_sub.py
+# 收到消息即定位链路通
+```
+
+一键启动+验证（终端 1 就绪后，终端 2 跑）：
+
+```bash
+source /opt/ros/foxy/setup.bash && export RMW_IMPLEMENTATION=rmw_fastrtps_cpp ROS_DOMAIN_ID=0 PYTHONPATH=/opt/ros/foxy/lib/python3.8/site-packages && python3 /tmp/final_bridge.py & sleep 30 && python3 /tmp/test_odom_sub.py
+```
+
+### 定位链路架构
+
+```
+D455 IR+IMU → Docker cuVSLAM (Humble, 44Hz)
+                    │ /visual_slam/vis/slam_odometry
+                    ▼ docker exec + stdbuf 管道
+              final_bridge.py (宿主机 Foxy)
+                    │ 订阅: best_effort QoS
+                    │ 发布: /odom (best_effort, 60Hz)
+                    │ TF: odom → base_link
+                    ▼
+              Nav2 / 其他消费者
+```
+
+> **QoS 要点**: cuVSLAM composable node 使用 BEST_EFFORT 发布。宿主机订阅必须匹配 BEST_EFFORT，RELIABLE 默认订阅无法接收。`final_bridge.py` 已内置正确的 QoS 配置和自验证订阅（self-verify 计数器）。
 
 ### 调试
 
 ```bash
-ros2 topic echo /odom                    # 融合定位
-ros2 topic echo /cmd_vel                 # 速度指令
-ros2 topic echo /plan                    # A* 路线
-ros2 topic echo /task/status             # 任务状态
-ros2 topic echo /slam/status             # cuVSLAM 状态
-ros2 run tf2_tools view_frames           # TF 树
+ros2 topic hz /odom                    # 定位频率
+ros2 topic echo /odom                  # 定位数据
+ros2 topic echo /task/status           # 任务状态
+ros2 run tf2_tools view_frames         # TF 树
+docker logs <cuvslam_container>        # cuVSLAM 日志
 ```
 
 ---
@@ -391,7 +410,7 @@ ros2 run tf2_tools view_frames           # TF 树
 Phase                    导航                             航点
 START                    等 SLAM OK+各子系统就绪           —
 PASS_OBSTACLE
-  step 0                 穿障碍区 → obstacle_exit          obstacle_exit
+  step 0                 穿障碍区 → 安全走廊 (无固定入口)  obstacle_cross_target
        ↓ 到达 → 切地图 phase2
   step 1                 安全区 → 观察位①                  pos1_middle
 INSPECT_GAUGES
@@ -415,13 +434,13 @@ N = 异常仪表数（通常 2 趟往返）。
 
 `configs/navigation/nav2_params.yaml`:
 
-| 参数 | 值 | 作用 |
-|------|-----|------|
-| `footprint` | 1m×0.5m 长方形 | 机器人外形 |
-| `desired_linear_vel` | 0.25 m/s | 行走速度 |
-| `inflation_radius` | 0.2m | 安全距离 |
-| `xy_goal_tolerance` | 0.15m | 到位精度 |
-| `timeout_per_phase` | 120s | 每阶段超时 |
+| 参数                   | 值              | 作用       |
+| ---------------------- | --------------- | ---------- |
+| `footprint`          | 1m×0.5m 长方形 | 机器人外形 |
+| `desired_linear_vel` | 0.25 m/s        | 行走速度   |
+| `inflation_radius`   | 0.2m            | 安全距离   |
+| `xy_goal_tolerance`  | 0.15m           | 到位精度   |
+| `timeout_per_phase`  | 120s            | 每阶段超时 |
 
 ---
 

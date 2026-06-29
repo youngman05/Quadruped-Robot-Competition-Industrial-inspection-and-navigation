@@ -1,0 +1,112 @@
+cuvSLAM + Nav2 端到端测试步骤
+===============================
+
+前置: D455 已插入 Jetson USB3.0 口，密码 123
+
+═══════════════════════════════════════════
+终端 1: 启动 cuVSLAM Docker (planar_60fps)
+═══════════════════════════════════════════
+
+cd ~/quadruped-robot-competition
+
+docker rm -f cuvslam_gui_20260628-163237 2>/dev/null
+
+CUVSLAM_MOUNT_MODE=robot \
+CUVSLAM_PROFILE=planar_60fps \
+CUVSLAM_BASE_TO_CAMERA_X=0.20 \
+CUVSLAM_BASE_TO_CAMERA_Y=0.00 \
+CUVSLAM_BASE_TO_CAMERA_Z=0.45 \
+CUVSLAM_BASE_TO_CAMERA_ROLL=0.0 \
+CUVSLAM_BASE_TO_CAMERA_PITCH=-0.523599 \
+CUVSLAM_BASE_TO_CAMERA_YAW=0.0 \
+CUVSLAM_PUBLISH_ODOM_TO_BASE_TF=false \
+CUVSLAM_PUBLISH_MAP_TO_ODOM_TF=false \
+bash scripts/start_cuvslam_rviz_gui.sh --no-rviz
+
+# 等待出现:
+#   OK topic: /visual_slam/status
+#   OK topic: /visual_slam/tracking/odometry
+
+
+═══════════════════════════════════════════
+终端 2: Foxy 主机端验证
+═══════════════════════════════════════════
+
+source /opt/ros/foxy/setup.bash
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+export ROS_DOMAIN_ID=0
+ros2 daemon stop
+
+# 能看到 cuVSLAM 话题吗？
+ros2 topic list | grep visual_slam
+# 期望: /visual_slam/status 和 /visual_slam/tracking/odometry
+
+# 如果看不到, 等 30 秒再试
+
+
+═══════════════════════════════════════════
+终端 3: 启动 cuvslam_bridge
+═══════════════════════════════════════════
+
+cd ~/quadruped-robot-competition
+source /opt/ros/foxy/setup.bash
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+export ROS_DOMAIN_ID=0
+export PYTHONPATH=$PWD/src:$PYTHONPATH
+
+python3 src/nodes/navigation/cuvslam_bridge.py \
+  --ros-args \
+  -p slam_odom_topic:=/visual_slam/tracking/odometry \
+  -p slam_status_topic:=/visual_slam/status
+
+
+═══════════════════════════════════════════
+终端 4: 验证 bridge 输出
+═══════════════════════════════════════════
+
+source /opt/ros/foxy/setup.bash
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+export ROS_DOMAIN_ID=0
+
+ros2 topic hz /odom
+# 应该有频率
+
+ros2 topic echo /odom
+# 应该看到 nav_msgs/msg/Odometry, frame_id=odom, child_frame_id=base_link
+
+ros2 run tf2_ros tf2_echo odom base_link
+# 应该持续输出 transform
+
+
+═══════════════════════════════════════════
+终端 5: 启动 Nav2 (地图 + 规划)
+═══════════════════════════════════════════
+
+cd ~/quadruped-robot-competition
+source /opt/ros/foxy/setup.bash
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+export ROS_DOMAIN_ID=0
+
+# 临时 map -> odom TF
+ros2 run tf2_ros static_transform_publisher 0 0 0 0 0 0 map odom &
+
+# 启动 Nav2 (不启动 depth_publisher, 避免抢 D455)
+ros2 launch launch/navigation.launch.py \
+  map_yaml:=navi/map/competition_field_phase1.yaml
+
+# 验证:
+ros2 topic list | grep -E 'odom|costmap|cmd_vel|plan'
+ros2 topic echo /cmd_vel
+#   ^^^ 安全原则: 只看, 不接狗 !!!
+
+
+═══════════════════════════════════════════
+验收清单
+═══════════════════════════════════════════
+
+[ ] Foxy host 能看到 /visual_slam/tracking/odometry
+[ ] cuvslam_bridge 能输出 /odom
+[ ] tf2_echo odom base_link 正常
+[ ] Nav2 lifecycle 节点进入 active
+[ ] Nav2 能看到 /odom
+[ ] /cmd_vel 只在终端观察, 不接狗
