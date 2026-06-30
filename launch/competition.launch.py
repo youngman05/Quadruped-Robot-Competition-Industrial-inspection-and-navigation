@@ -28,6 +28,7 @@ def generate_launch_description() -> LaunchDescription:
     enable_task_manager = LaunchConfiguration("enable_task_manager", default="false")
     enable_speech = LaunchConfiguration("enable_speech", default="false")
     enable_navigation = LaunchConfiguration("enable_navigation", default="false")
+    enable_whz = LaunchConfiguration("enable_whz", default="false")
 
     # ── 声明参数 ─────────────────────────────────────
     declare_enable_gauge = DeclareLaunchArgument(
@@ -50,6 +51,10 @@ def generate_launch_description() -> LaunchDescription:
         "enable_navigation", default_value="false",
         description="启动轻量导航 (A* + 纯追踪 + 深度避障)"
     )
+    declare_enable_whz = DeclareLaunchArgument(
+        "enable_whz", default_value="false",
+        description="启动 whz 巡检 (字母识别+仪表+语音播报)"
+    )
 
     # ═══════════════════════════════════════════════════
     # 感知层 — Perception
@@ -71,6 +76,26 @@ def generate_launch_description() -> LaunchDescription:
         parameters=[str(PARAMS_FILE)],
         output="screen",
         condition=IfCondition(enable_yolo),
+    )
+
+    # ── whz 巡检 (字母+仪表+语音) ──
+    color_image_pub_node = Node(
+        package="quadruped_robot_competition",
+        executable="color_image_publisher",
+        name="color_image_publisher_node",
+        output="screen",
+        condition=IfCondition(enable_whz),
+    )
+
+    whz_inspection_node = Node(
+        package="whz",
+        executable="inspection_node",
+        name="whz_inspection_node",
+        output="screen",
+        remappings=[
+            ("/camera/aligned_depth_to_color/image_raw", "/camera/depth/image_raw"),
+        ],
+        condition=IfCondition(enable_whz),
     )
 
     # ═══════════════════════════════════════════════════
@@ -149,9 +174,12 @@ def generate_launch_description() -> LaunchDescription:
         declare_enable_task_manager,
         declare_enable_speech,
         declare_enable_navigation,
+        declare_enable_whz,
         startup_info,
         gauge_node,
         yolo_node,
+        color_image_pub_node,
+        whz_inspection_node,
         task_manager_node,
         speech_node,
         initial_pose_node,

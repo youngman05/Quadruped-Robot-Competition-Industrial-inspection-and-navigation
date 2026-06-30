@@ -1,0 +1,2 @@
+"""WHZ cabinet inspection package."""
+

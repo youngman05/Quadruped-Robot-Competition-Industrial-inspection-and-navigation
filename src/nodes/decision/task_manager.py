@@ -24,6 +24,7 @@ import json
 import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import rclpy
@@ -277,7 +278,7 @@ class TaskManagerNode(Node):
                     self._nav.reset()
 
     def _tick_inspect_gauges(self, elapsed: float) -> None:
-        """INSPECT_GAUGES: 4 个子步骤，看一个报一个。"""
+        """INSPECT_GAUGES: 4 个观察位，每个位置调 /whz/inspect 服务。"""
         if self._handle_timeout(elapsed):
             return
 
@@ -310,9 +311,6 @@ class TaskManagerNode(Node):
             self.get_logger().info(
                 f"[观察 {self._inspection_step+1}/4] {step_info['desc']}"
             )
-            self._gauges_filled_count = sum(
-                1 for info in self._gauge_info.values() if info.stable_detected
-            )
             self._nav.navigate_to_waypoint(wp)
 
         # 导航失败 → 重试
@@ -322,25 +320,60 @@ class TaskManagerNode(Node):
                 self._nav.reset()
                 return
 
-        # ── 等待仪表检测 → 立即播报 ──────────────
-        curr_filled = sum(
-            1 for info in self._gauge_info.values() if info.stable_detected
-        )
-        if curr_filled > self._gauges_filled_count:
-            # 找到了最新的仪表 → 播报
-            # 按 A→B→C→D 顺序找当前步骤对应的仪表
-            letters = "ABCD"
-            idx = self._inspection_step
-            if idx < len(letters):
-                info = self._gauge_info[letters[idx]]
-                status_text = info.status if info.status else "未知"
-                level_text = info.level if info.level else "?"
-                if status_text == "normal":
-                    report = f"{letters[idx]}区仪表显示正常"
-                else:
-                    report = f"{letters[idx]}区仪表显示{level_text}，状态异常"
-                self.get_logger().info(f"🔊 播报: {report}")
-                self._publish_speech(report)
+        # ── 到达观察位 → 调 whz 巡检服务 ──────────
+        if not hasattr(self, "_inspect_pending"):
+            self._inspect_pending = False
+
+        # 服务未连接 → 等一等
+        if not hasattr(self, "_whz_client"):
+            from std_srvs.srv import Trigger
+            self._whz_client = self.create_client(Trigger, "/whz/inspect")
+            self.get_logger().info("等待 /whz/inspect 服务...")
+
+        if not self._whz_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().debug("/whz/inspect 服务不可用，重试...")
+            return
+
+        # 发送服务请求
+        if not self._inspect_pending:
+            self._inspect_pending = True
+            self.get_logger().info(f"[观察 {self._inspection_step+1}/4] 调 whz 巡检...")
+            future = self._whz_client.call_async(Trigger.Request())
+            future.add_done_callback(self._on_inspect_result)
+
+    def _on_inspect_result(self, future):
+        """whz 巡检服务回调。"""
+        self._inspect_pending = False
+        try:
+            response = future.result()
+            if not response.success:
+                self.get_logger().warn(f"whz 检测失败: {response.message}")
+                return
+
+            import json
+            result = json.loads(response.message)
+            area = result.get("area", "?")
+            state_key = result.get("state_key", "?")
+            level = result.get("level", "?")
+            status = result.get("status", "正常")
+            color = result.get("color", "?")
+
+            self.get_logger().info(f"whz 检测成功: {area}区 {color}/{status}")
+
+            # 更新仪表信息
+            if area in self._gauge_info:
+                info = self._gauge_info[area]
+                info.detected = True
+                info.stable_detected = True
+                info.letter = area
+                info.color = color
+                info.level = level
+                info.status = status
+
+            # 语音由 whz 直接播放（MP3），这里只记录日志
+            audio = result.get("audio_file", "")
+            if audio:
+                self.get_logger().info(f"🔊 whz 播报: {Path(audio).stem}")
 
             # 前进到下一个观察位
             self._inspection_step += 1
@@ -348,6 +381,9 @@ class TaskManagerNode(Node):
             self.get_logger().info(
                 f"观察子步骤完成 → {self._inspection_step}/4"
             )
+
+        except Exception as e:
+            self.get_logger().error(f"whz 服务回调异常: {e}")
 
     def _tick_find_red_bar(self, elapsed: float) -> None:
         """FIND_RED_BAR: 导航到抓取区，寻找并定位红色条。"""
