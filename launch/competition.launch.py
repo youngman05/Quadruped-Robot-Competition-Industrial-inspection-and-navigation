@@ -136,7 +136,8 @@ def generate_launch_description() -> LaunchDescription:
         package="tf2_ros",
         executable="static_transform_publisher",
         name="base_to_camera_tf",
-        arguments=["0", "0", "0.3", "0", "0", "0", "base_link", "camera_link"],
+        # x=0.080m forward, z=0.493m up, pitch=-30° (camera tilted down)
+        arguments=["0.080", "0.000", "0.493", "0", "-0.523599", "0", "base_link", "camera_link"],
         output="screen",
         condition=IfCondition(enable_navigation),
     )
