@@ -54,13 +54,13 @@ _RAW_WAYPOINTS: Dict[str, Dict[str, Any]] = {
     "pos1_middle_turned":   {"x_mm": 1500, "y_mm": 2750, "yaw_deg":  90, "label": "观察位① 转身看下柜顶面"},
     "pos2a_upper_right":    {"x_mm": 2200, "y_mm": 1500, "yaw_deg": 180, "label": "观察位②a 上柜右面"},
     "pos2b_lower_right":    {"x_mm": 2200, "y_mm": 4000, "yaw_deg": 180, "label": "观察位②b 下柜右面"},
-    "grab_area":            {"x_mm": 3600, "y_mm": 4000, "yaw_deg": 180, "label": "抓取区(外沿)"},
+    "grab_area":            {"x_mm": 4250, "y_mm": 3450, "yaw_deg": -90, "label": "抓取区(上方)"},
     "placement_A":          {"x_mm": 3250, "y_mm": 600,  "yaw_deg": 0,   "label": "A放置区"},
     "placement_B":          {"x_mm": 3750, "y_mm": 600,  "yaw_deg": 0,   "label": "B放置区"},
     "placement_C":          {"x_mm": 4250, "y_mm": 600,  "yaw_deg": 0,   "label": "C放置区"},
     "placement_D":          {"x_mm": 4750, "y_mm": 600,  "yaw_deg": 0,   "label": "D放置区"},
     "obstacle_entry":       {"x_mm": 3000, "y_mm": 5000, "yaw_deg": 180, "label": "障碍区入口(右侧)"},
-    "obstacle_exit":        {"x_mm": 1200, "y_mm": 5250, "yaw_deg": 180, "label": "障碍区出口(左侧)"},
+    "obstacle_exit":        {"x_mm": 950, "y_mm": 5250, "yaw_deg": 180, "label": "障碍区出口(左侧外)"},
 }
 
 # Convert waypoints to ROS coordinates
