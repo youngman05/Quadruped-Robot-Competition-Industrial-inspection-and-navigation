@@ -22,6 +22,7 @@ pkill -9 -f static_transform_publisher 2>/dev/null && echo "  ✓ static_tf" || 
 # Docker 内 relay 脚本（不碰 cuVSLAM 和 realsense）
 CN=$(docker ps --format '{{.Names}}' 2>/dev/null | grep cuvslam | head -1)
 if [ -n "$CN" ]; then
+    docker exec $CN pkill -f loop_metrics_recorder 2>/dev/null && echo "  ✓ loop_metrics (docker)" || true
     docker exec $CN pkill -f camera_relay  2>/dev/null && echo "  ✓ camera_relay (docker)" || true
     docker exec $CN pkill -f depth_relay   2>/dev/null && echo "  ✓ depth_relay (docker)" || true
     docker exec $CN pkill -f udp_exporter  2>/dev/null && echo "  ✓ udp_exporter (docker)" || true

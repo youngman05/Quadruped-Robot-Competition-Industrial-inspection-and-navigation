@@ -12,7 +12,10 @@ LOGFILE="$LOGDIR/competition_$(date +%Y%m%d_%H%M%S).log"
 exec > >(tee -a "$LOGFILE") 2>&1
 echo "日志: $LOGFILE"
 
-ENABLE_YOLO=false; ENABLE_WHZ=false; ENABLE_LOG=false
+# Ctrl+C → auto cleanup
+trap 'echo ""; echo "Ctrl+C 触发清理..."; bash scripts/stop_all.sh' INT TERM
+
+ENABLE_YOLO=true; ENABLE_WHZ=false; ENABLE_LOG=false
 for arg in "$@"; do
     case $arg in
         --yolo) ENABLE_YOLO=true ;;
@@ -47,6 +50,9 @@ if [ -z "$CN" ]; then
     CN=$(docker ps --format '{{.Names}}' | grep cuvslam)
 fi
 echo "  Docker: $CN"
+
+# Kill unnecessary Docker processes (loop_metrics_recorder eats ~53% CPU)
+docker exec $CN pkill -f loop_metrics_recorder 2>/dev/null && echo "  ⚡ loop_metrics killed" || true
 
 # [2] Relays (only restart relay scripts, do NOT kill cuVSLAM/realsense)
 echo '[2/5] 中继...'
@@ -96,7 +102,10 @@ ros2 node list 2>/dev/null | grep -v '/camera\|/visual\|/launch\|/transform\|/de
 echo '  /odom:'
 python3 scripts/probe_odom_best_effort.py --duration 3 --first-timeout 2 --no-color 2>&1 | head -10
 echo ''
+echo '  CPU TOP5:'
+ps aux --sort=-%cpu | head -6 | tail -5 | while read u p c m v w t s x y cmd; do printf "    %5s%%  %s\n" "\$c" "\$cmd"; done
+echo ''
 echo '==================================='
-echo ' 启动完成!'
+echo ' 启动完成! Ctrl+C 自动清场'
 echo ' 监控: bash ~/Desktop/monitor_cpu.sh'
 echo '==================================='

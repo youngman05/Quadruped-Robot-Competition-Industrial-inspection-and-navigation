@@ -23,7 +23,7 @@ PARAMS_FILE = PROJECT_ROOT / "configs" / "ros" / "competition_params.yaml"
 
 def generate_launch_description() -> LaunchDescription:
     # ─── 启动参数 ───────────────────────────────────
-    enable_gauge = LaunchConfiguration("enable_gauge", default="true")
+    enable_gauge = LaunchConfiguration("enable_gauge", default="false")
     enable_yolo = LaunchConfiguration("enable_yolo", default="false")
     enable_task_manager = LaunchConfiguration("enable_task_manager", default="false")
     enable_speech = LaunchConfiguration("enable_speech", default="false")
