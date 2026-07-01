@@ -278,7 +278,7 @@ class TaskManagerNode(Node):
                     self._nav.reset()
 
     def _tick_inspect_gauges(self, elapsed: float) -> None:
-        """INSPECT_GAUGES: 4 个观察位，每个位置调 /whz/inspect 服务。"""
+        """INSPECT_GAUGES: 4 个观察位，到位置后拍一帧→识别→播报→关。"""
         if self._handle_timeout(elapsed):
             return
 
@@ -320,70 +320,117 @@ class TaskManagerNode(Node):
                 self._nav.reset()
                 return
 
-        # ── 到达观察位 → 调 whz 巡检服务 ──────────
-        if not hasattr(self, "_inspect_pending"):
-            self._inspect_pending = False
+        # ── 已到达 → 拍一帧, 识别, 播报, 关 ──────
+        if not hasattr(self, "_inspect_done"):
+            self._inspect_done = False
 
-        # 服务未连接 → 等一等
-        if not hasattr(self, "_whz_client"):
-            from std_srvs.srv import Trigger
-            self._whz_client = self.create_client(Trigger, "/whz/inspect")
-            self.get_logger().info("等待 /whz/inspect 服务...")
+        if self._inspect_done:
+            return  # already processed, wait for step advance
 
-        if not self._whz_client.wait_for_service(timeout_sec=1.0):
-            self.get_logger().debug("/whz/inspect 服务不可用，重试...")
+        self._inspect_done = True
+        self._run_whz_inline(step_info["desc"])
+
+    def _run_whz_inline(self, desc: str):
+        """Capture one relay frame, run letter+gauge detection, play audio."""
+        import cv2, numpy as np, sys, time
+        from pathlib import Path
+        from collections import Counter
+
+        self.get_logger().info(f"[whz] 拍一帧识别: {desc}")
+
+        # Lazy-load whz modules (only during inspection, keeps CPU free otherwise)
+        _WS = Path(__file__).resolve().parents[3]
+        _WHZ = _WS / "src" / "whz" / "whz"
+        if str(_WHZ) not in sys.path:
+            sys.path.insert(0, str(_WHZ))
+        from letter_detector import LetterDetector
+        from gauge_detector import detect_gauge
+        from audio_player import AudioPlayer
+
+        relay_dir = Path.home() / "workspaces" / "isaac_ros-dev" / "camera_frames"
+        jpg = relay_dir / "latest_color.jpg"
+        raw = relay_dir / "latest_depth.raw"
+        meta = relay_dir / "latest_depth_meta.txt"
+
+        if not jpg.exists():
+            self.get_logger().error("[whz] 无 relay JPEG, 跳过")
+            self._advance_step()
             return
 
-        # 发送服务请求
-        if not self._inspect_pending:
-            self._inspect_pending = True
-            self.get_logger().info(f"[观察 {self._inspection_step+1}/4] 调 whz 巡检...")
-            future = self._whz_client.call_async(Trigger.Request())
-            future.add_done_callback(self._on_inspect_result)
+        # Wait for a fresh frame (up to 2s)
+        color = None
+        for _ in range(20):
+            color = cv2.imread(str(jpg), cv2.IMREAD_COLOR)
+            if color is not None and color.shape[0] > 0:
+                break
+            time.sleep(0.1)
 
-    def _on_inspect_result(self, future):
-        """whz 巡检服务回调。"""
-        self._inspect_pending = False
+        if color is None:
+            self.get_logger().error("[whz] JPEG 读取失败")
+            self._advance_step()
+            return
+
+        # Depth (optional)
+        depth = None
+        if raw.exists():
+            try:
+                data = raw.read_bytes()
+                w, h = 640, 360
+                if meta.exists():
+                    parts = meta.read_text().strip().split()
+                    if len(parts) >= 2:
+                        w, h = int(parts[0]), int(parts[1])
+                if len(data) == w * h * 2:
+                    depth = np.frombuffer(data, dtype=np.uint16).reshape(h, w).astype(np.float32) * 0.001
+            except Exception:
+                pass
+
+        # Detect
+        template_dir = _WS / "src" / "whz" / "assets" / "templates"
+        audio_dir = _WS / "src" / "whz" / "assets" / "audio"
+        letter_det = LetterDetector(template_dir, min_score=0.38)
+        audio = AudioPlayer(audio_dir, timeout_sec=5.0)
+
+        letter = letter_det.detect(color)
+        gauge = detect_gauge(color, depth)
+
+        if letter is None or gauge is None:
+            err = f"letter={'OK' if letter else 'FAIL'} gauge={'OK' if gauge else 'FAIL'}"
+            self.get_logger().warn(f"[whz] 检测失败: {err}")
+            self._advance_step()
+            return
+
+        area = letter.area
+        state = gauge.state_key
+        self.get_logger().info(
+            f"[whz] 检测成功: {area}区 {gauge.color}/{gauge.status} "
+            f"letter_score={letter.score:.3f} gauge_conf={gauge.confidence:.3f}"
+        )
+
+        # Play audio (blocking, but only ~2s)
         try:
-            response = future.result()
-            if not response.success:
-                self.get_logger().warn(f"whz 检测失败: {response.message}")
-                return
+            audio.play(audio.audio_path_for(area, state))
+        except Exception:
+            pass
 
-            import json
-            result = json.loads(response.message)
-            area = result.get("area", "?")
-            state_key = result.get("state_key", "?")
-            level = result.get("level", "?")
-            status = result.get("status", "正常")
-            color = result.get("color", "?")
+        # Save result
+        if area in self._gauge_info:
+            info = self._gauge_info[area]
+            info.detected = True
+            info.stable_detected = True
+            info.letter = area
+            info.color = gauge.color
+            info.level = gauge.level
+            info.status = gauge.status
 
-            self.get_logger().info(f"whz 检测成功: {area}区 {color}/{status}")
+        self._advance_step()
 
-            # 更新仪表信息
-            if area in self._gauge_info:
-                info = self._gauge_info[area]
-                info.detected = True
-                info.stable_detected = True
-                info.letter = area
-                info.color = color
-                info.level = level
-                info.status = status
-
-            # 语音由 whz 直接播放（MP3），这里只记录日志
-            audio = result.get("audio_file", "")
-            if audio:
-                self.get_logger().info(f"🔊 whz 播报: {Path(audio).stem}")
-
-            # 前进到下一个观察位
-            self._inspection_step += 1
-            self._nav.reset()
-            self.get_logger().info(
-                f"观察子步骤完成 → {self._inspection_step}/4"
-            )
-
-        except Exception as e:
-            self.get_logger().error(f"whz 服务回调异常: {e}")
+    def _advance_step(self):
+        """Move to next inspection sub-step."""
+        self._inspect_done = False
+        self._inspection_step += 1
+        self._nav.reset()
+        self.get_logger().info(f"观察子步骤完成 → {self._inspection_step}/4")
 
     def _tick_find_red_bar(self, elapsed: float) -> None:
         """FIND_RED_BAR: 导航到抓取区，寻找并定位红色条。"""
