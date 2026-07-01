@@ -389,7 +389,7 @@ class TaskManagerNode(Node):
         template_dir = _WS / "src" / "whz" / "assets" / "templates"
         audio_dir = _WS / "src" / "whz" / "assets" / "audio"
         letter_det = LetterDetector(template_dir, min_score=0.38)
-        audio = AudioPlayer(audio_dir, timeout_sec=5.0)
+        audio = AudioPlayer(audio_dir, timeout_sec=10.0)
 
         letter = letter_det.detect(color)
         gauge = detect_gauge(color, depth)

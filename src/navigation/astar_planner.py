@@ -32,8 +32,8 @@ from .map_grid import (
 @dataclass
 class PlannerConfig:
     """A* planner configuration."""
-    inflation_radius_m: float = 0.15   # inflate occupied cells by robot half-width
-    goal_tolerance_m: float = 0.15     # stop search near goal
+    inflation_radius_m: float = 0.05   # inflate occupied cells by robot half-width
+    goal_tolerance_m: float = 0.05     # stop search near goal
     waypoint_spacing_m: float = 0.3    # spacing between output waypoints
 
 

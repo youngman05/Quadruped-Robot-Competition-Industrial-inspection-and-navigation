@@ -113,8 +113,8 @@ class Navigator:
 
         # ── Planner config ────────────────────────────
         planner_cfg = PlannerConfig(
-            inflation_radius_m=0.15,
-            goal_tolerance_m=0.15,
+            inflation_radius_m=0.05,
+            goal_tolerance_m=0.05,
             waypoint_spacing_m=0.3,
         )
         pursuit_cfg = PursuitConfig(
@@ -123,7 +123,7 @@ class Navigator:
             max_lookahead_m=0.9,
             max_linear_vel=0.25,
             max_angular_vel=0.5,
-            goal_tolerance_m=0.15,
+            goal_tolerance_m=0.05,
             yaw_tolerance_rad=0.25,
             turn_in_place_threshold_rad=0.3,
             k_linear=0.8,
