@@ -246,7 +246,7 @@ class TaskManagerNode(Node):
         if not hasattr(self, "_obstacle_step"):
             self._obstacle_step = 0  # 0=穿越障碍区, 1=安全区到观察位
 
-        # ── 子步骤 0: start → obstacle_entry → obstacle_exit ──
+        # ── 子步骤 0: start → obstacle_exit ──
         if self._obstacle_step == 0:
             if not self._nav.goal_sent and not self._nav.is_done():
                 self.get_logger().info("[越障 1/2] 穿越障碍区...")

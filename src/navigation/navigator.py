@@ -59,7 +59,6 @@ _RAW_WAYPOINTS: Dict[str, Dict[str, Any]] = {
     "placement_B":          {"x_mm": 3750, "y_mm": 600,  "yaw_deg": 0,   "label": "B放置区"},
     "placement_C":          {"x_mm": 4250, "y_mm": 600,  "yaw_deg": 0,   "label": "C放置区"},
     "placement_D":          {"x_mm": 4750, "y_mm": 600,  "yaw_deg": 0,   "label": "D放置区"},
-    "obstacle_entry":       {"x_mm": 3000, "y_mm": 5000, "yaw_deg": 180, "label": "障碍区入口(右侧)"},
     "obstacle_exit":        {"x_mm": 600, "y_mm": 5250, "yaw_deg": 180, "label": "障碍区出口(左侧外)"},
 }
 

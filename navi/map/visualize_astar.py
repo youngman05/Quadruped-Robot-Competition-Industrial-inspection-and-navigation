@@ -17,7 +17,6 @@ import numpy as np
 # ── Waypoints (mm coords) ──────────────────────────────
 _WAYPOINTS_MM = {
     "start":              (5350, 5250),
-    "obstacle_entry":     (3000, 5000),
     "obstacle_exit":      (600, 5250),
     "pos1_middle":        (1500, 2750),
     "pos1_middle_turned": (1500, 2750),
