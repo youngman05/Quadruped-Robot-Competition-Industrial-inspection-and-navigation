@@ -175,6 +175,9 @@ class Navigator:
         self._stuck_timeout: float = 10.0
         self._stuck_dist_threshold: float = 0.05
 
+        # Obstacle zone tracking
+        self._ignore_obstacles: bool = False
+
         # API compatibility
         self._goal_sent: bool = False
         self._goal_result: Optional[int] = None   # None=pending, 0=SUCCEEDED, -1=FAILED
@@ -292,6 +295,7 @@ class Navigator:
         self._planner.set_grid(self._grid)
         self._path = []
         self._state = _NavState.IDLE  # force replan on next goal
+        self.ignore_obstacles()       # YOLO cones no longer relevant
         self._logger.info("Map switched → Phase 2 (obstacle area sealed)")
 
     @property
@@ -340,8 +344,15 @@ class Navigator:
         self._current_yaw = _normalize_angle(self._odom_offset_yaw + odom_yaw)
         self._has_odom = True
 
+    def ignore_obstacles(self) -> None:
+        """Stop injecting YOLO obstacles (called after obstacle zone is crossed)."""
+        self._ignore_obstacles = True
+        self._logger.info("YOLO obstacle injection disabled")
+
     def _yolo_callback(self, msg) -> None:
         """Parse YOLO detections, inject cone obstacles into the A* grid."""
+        if self._ignore_obstacles:
+            return
         try:
             data = json.loads(msg.data)
         except (json.JSONDecodeError, TypeError):
