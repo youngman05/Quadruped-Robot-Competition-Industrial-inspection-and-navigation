@@ -103,7 +103,7 @@ echo '  /odom:'
 python3 scripts/probe_odom_best_effort.py --duration 3 --first-timeout 2 --no-color 2>&1 | head -10
 echo ''
 echo '  CPU TOP5:'
-ps aux --sort=-%cpu | head -6 | tail -5 | while read u p c m v w t s x y cmd; do printf "    %5s%%  %s\n" "\$c" "\$cmd"; done
+ps -eo pcpu,args --sort=-pcpu | head -6 | tail -5 | sed 's/^/    /'
 echo ''
 echo '==================================='
 echo ' 启动完成! Ctrl+C 自动清场'

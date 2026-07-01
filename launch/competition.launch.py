@@ -32,7 +32,7 @@ def generate_launch_description() -> LaunchDescription:
 
     # ── 声明参数 ─────────────────────────────────────
     declare_enable_gauge = DeclareLaunchArgument(
-        "enable_gauge", default_value="true",
+        "enable_gauge", default_value="false",
         description="启动仪表检测节点"
     )
     declare_enable_yolo = DeclareLaunchArgument(
