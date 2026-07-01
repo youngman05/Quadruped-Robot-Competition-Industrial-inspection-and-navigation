@@ -14,6 +14,7 @@ Public API matches the old NavigationClient for drop-in compatibility.
 from __future__ import annotations
 
 import math
+import json
 import sys
 import time
 from enum import Enum, auto
@@ -29,7 +30,7 @@ if str(_NAVI_MAP) not in sys.path:
     sys.path.insert(0, str(_NAVI_MAP))
 from navi_map_data import ROBOT_START_POSE  # noqa: E402
 
-from .map_grid import build_grid
+from .map_grid import build_grid, ros_to_grid, OCCUPIED, RESOLUTION
 from .astar_planner import AStarPlanner, PlannerConfig
 from .pure_pursuit import PurePursuitController, PursuitConfig, _normalize_angle
 from .local_obstacle import LocalObstacleDetector, ObstacleConfig
@@ -184,6 +185,7 @@ class Navigator:
         from nav_msgs.msg import Odometry
         from geometry_msgs.msg import Twist
         from sensor_msgs.msg import PointCloud2
+        from std_msgs.msg import String
         from rclpy.qos import QoSProfile, ReliabilityPolicy
 
         _best_effort = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
@@ -192,10 +194,19 @@ class Navigator:
             Odometry, "/odom", self._odom_callback, _best_effort,
         )
         self._cmd_vel_pub = node.create_publisher(Twist, "/cmd_vel", 10)
-        # Optional: subscribe to point cloud for obstacle detection
         self._pc_sub = node.create_subscription(
             PointCloud2, "/camera/depth/points", self._pointcloud_callback, 10,
         )
+        # YOLO cone detection → dynamic obstacle injection
+        self._yolo_sub = node.create_subscription(
+            String, "/yolo/detections", self._yolo_callback, 10,
+        )
+
+        # D455 RGB intrinsics (640x480)
+        self._fx = 617.0
+        self._fy = 617.0
+        self._cx = 320.0
+        self._cy = 240.0
 
         # Control loop timer (10 Hz)
         self._timer = node.create_timer(0.1, self._control_loop)
@@ -328,6 +339,74 @@ class Navigator:
         self._current_y = self._odom_offset_y + odom_x * self._odom_sin + odom_y * self._odom_cos
         self._current_yaw = _normalize_angle(self._odom_offset_yaw + odom_yaw)
         self._has_odom = True
+
+    def _yolo_callback(self, msg) -> None:
+        """Parse YOLO detections, inject cone obstacles into the A* grid."""
+        try:
+            data = json.loads(msg.data)
+        except (json.JSONDecodeError, TypeError):
+            return
+
+        cones = [d for d in data.get("detections", [])
+                 if d.get("class_id") == 2 or d.get("class_name") == "obstacle"]
+        if not cones:
+            return
+
+        need_replan = False
+        for cone in cones:
+            dist_m = cone.get("distance_m")
+            center = cone.get("center", {})
+            px = center.get("x", 320)
+            py_val = center.get("y", 240)
+            if dist_m is None or dist_m <= 0:
+                continue
+
+            # ── Pixel + distance → camera_link 3D ──────
+            # Cone surface → cone center: +10cm
+            depth_to_center = dist_m + 0.10  # m
+            x_cam = depth_to_center
+            y_cam = (px - self._cx) / self._fx * dist_m
+            z_cam = (py_val - self._cy) / self._fy * dist_m
+
+            # ── camera_link → base_link ────────────────
+            pitch = -0.523599  # camera mount pitch (-30°)
+            cp, sp = math.cos(pitch), math.sin(pitch)
+            x_rot = x_cam * cp + z_cam * sp
+            z_rot = -x_cam * sp + z_cam * cp
+            x_base = x_rot + 0.080
+            y_base = y_cam + 0.000
+            z_base = z_rot + 0.493
+
+            # Ignore points on the ground (below robot) or too high
+            if z_base < 0.02 or z_base > 0.8:
+                continue
+
+            # ── base_link → map frame ──────────────────
+            cos_yaw = math.cos(self._current_yaw)
+            sin_yaw = math.sin(self._current_yaw)
+            map_x = self._current_x + x_base * cos_yaw - y_base * sin_yaw
+            map_y = self._current_y + x_base * sin_yaw + y_base * cos_yaw
+
+            # ── Map → grid, mark with 20cm inflation ───
+            grid_r, grid_c = ros_to_grid(map_x, map_y)
+            self._mark_obstacle(grid_r, grid_c, radius_m=0.20)
+            need_replan = True
+
+        # Re-plan if we have an active path and obstacle is near it
+        if need_replan and self._state == _NavState.FOLLOWING and self._goal_pos:
+            self._state = _NavState.PLANNING
+            self._logger.info("YOLO cone detected — re-planning path")
+
+    def _mark_obstacle(self, center_r: int, center_c: int, radius_m: float):
+        """Paint an obstacle circle directly onto the inflated A* grid."""
+        radius_cells = int(math.ceil(radius_m / RESOLUTION))
+        rows, cols = self._grid.shape
+        for dr in range(-radius_cells, radius_cells + 1):
+            for dc in range(-radius_cells, radius_cells + 1):
+                if dr * dr + dc * dc <= radius_cells * radius_cells:
+                    nr, nc = center_r + dr, center_c + dc
+                    if 0 <= nr < rows and 0 <= nc < cols:
+                        self._planner._inflated[nr, nc] = OCCUPIED
 
     def _pointcloud_callback(self, msg) -> None:
         """Decode PointCloud2 and update obstacle detector."""
