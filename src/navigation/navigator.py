@@ -195,7 +195,7 @@ class Navigator:
         self._odom_sub = node.create_subscription(
             Odometry, "/odom", self._odom_callback, _best_effort,
         )
-        self._cmd_vel_pub = node.create_publisher(Twist, "/cmd_vel", 10)
+        self._cmd_vel_pub = node.create_publisher(Twist, "/cmd_vel", _best_effort)
         self._pc_sub = node.create_subscription(
             PointCloud2, "/camera/depth/points", self._pointcloud_callback, 10,
         )

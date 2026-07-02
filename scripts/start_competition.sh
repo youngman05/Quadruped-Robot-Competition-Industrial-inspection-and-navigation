@@ -80,10 +80,12 @@ bash scripts/fix_bridge.sh
 
 # [3.5] Transfer — Lite3 dog SDK (optional)
 if $ENABLE_TRANSFER; then
-    echo '[3.5] Lite3 Transfer...'
+    echo '[3.5] Lite3 狗初始化...'
+    python3 scripts/lite3_init.py
+    echo '[3.6] Lite3 Transfer...'
     source ~/quadruped-robot-competition/Lite3_ROS-ros2-foxy/install/setup.bash 2>/dev/null || true
     ros2 launch transfer transfer_launch.py &
-    echo "  PID=\$! (手机App切自动模式)"
+    echo "  PID=\$!"
     sleep 3
 fi
 
