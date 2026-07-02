@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 """
-Lite3 init — send heartbeat + stand + nav mode via UDP.
-No GUI, just runs the essential commands once.
+Lite3 init — heartbeat + stand + nav mode + continuous heartbeat via UDP.
 
-Usage: python3 scripts/lite3_init.py [--dog-ip 192.168.2.1]
+Usage: python3 scripts/lite3_init.py [--dog-ip 192.168.1.120]
 """
 import struct, socket, time, argparse
 
 CMD_HEARTBEAT = 0x21040001
-CMD_STAND_UP  = 0x21010202   # 起立/趴下
-CMD_NAV_MODE  = 0x21010C03   # 导航模式(自主)
-CMD_STOP      = 0x21010C0E   # 软急停
-CMD_MANUAL    = 0x21010C02   # 手动模式
+CMD_STAND_UP  = 0x21010202
+CMD_NAV_MODE  = 0x21010C03
+CMD_STOP      = 0x21010C0E
 
 def send(server, addr, code, p1=0, p2=0):
     payload = struct.pack('<3i', code, p1, p2)
@@ -28,27 +26,33 @@ def main():
 
     print(f'Connecting to dog at {args.dog_ip}:{args.dog_port}...')
 
-    # 1. Heartbeat
-    print('[1/3] Heartbeat...')
+    # 1. Heartbeat burst
     for _ in range(10):
         send(sock, addr, CMD_HEARTBEAT)
         time.sleep(0.1)
-    print('  Done')
 
     # 2. Stand up
-    print('[2/3] Stand up...')
+    print('Sending: stand up')
     send(sock, addr, CMD_STAND_UP)
     time.sleep(3)
-    print('  Done')
 
-    # 3. Switch to navigation mode
-    print('[3/3] Navigation mode...')
+    # 3. Navigation mode
+    print('Sending: navigation mode')
     send(sock, addr, CMD_NAV_MODE)
     time.sleep(1)
-    print('  Done')
 
-    print(f'Dog ready for /cmd_vel. Stop: python3 scripts/lite3_init.py --stop')
-    sock.close()
+    # 4. Continuous heartbeat (dog stays active)
+    print('Dog ready. Heartbeat active — Ctrl+C to stop.')
+    try:
+        while True:
+            send(sock, addr, CMD_HEARTBEAT)
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        send(sock, addr, CMD_STOP)
+        sock.close()
+        print('Stopped.')
 
 if __name__ == '__main__':
     main()

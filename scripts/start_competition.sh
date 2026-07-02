@@ -15,7 +15,7 @@ echo "日志: $LOGFILE"
 # Ctrl+C → auto cleanup
 trap 'echo ""; echo "Ctrl+C 触发清理..."; bash scripts/stop_all.sh' INT TERM
 
-ENABLE_YOLO=true; ENABLE_WHZ=false; ENABLE_LOG=false; ENABLE_TRANSFER=false
+ENABLE_YOLO=false; ENABLE_WHZ=false; ENABLE_LOG=true; ENABLE_TRANSFER=false
 for arg in "$@"; do
     case $arg in
         --yolo) ENABLE_YOLO=true ;;
@@ -81,7 +81,7 @@ bash scripts/fix_bridge.sh
 # [3.5] Transfer — Lite3 dog SDK (optional)
 if $ENABLE_TRANSFER; then
     echo '[3.5] Lite3 狗初始化...'
-    python3 scripts/lite3_init.py
+    python3 scripts/lite3_init.py &
     echo '[3.6] Lite3 Transfer...'
     source ~/quadruped-robot-competition/Lite3_ROS-ros2-foxy/install/setup.bash 2>/dev/null || true
     ros2 launch transfer transfer_launch.py &
@@ -113,6 +113,21 @@ echo '  Host nodes:'
 ros2 node list 2>/dev/null | grep -v '/camera\|/visual\|/launch\|/transform\|/depth_relay\|/cuvslam\|/camera_relay'
 echo '  /odom:'
 python3 scripts/probe_odom_best_effort.py --duration 3 --first-timeout 2 --no-color 2>&1 | head -10
+echo '  /cmd_vel:'
+timeout 3 python3 -c "
+import rclpy, time
+rclpy.init()
+from geometry_msgs.msg import Twist
+n = rclpy.create_node('t')
+cnt=[0]
+def cb(m): cnt[0]+=1
+n.create_subscription(Twist, '/cmd_vel', cb, 10)
+t0=time.time()
+while time.time()-t0<2.5: rclpy.spin_once(n, timeout_sec=0.05)
+print(f'{cnt[0]} msgs in 2.5s')
+n.destroy_node()
+rclpy.shutdown()
+" 2>&1 || echo '  /cmd_vel probe failed'
 echo ''
 echo '  CPU TOP5:'
 ps -eo pcpu,args --sort=-pcpu | head -6 | tail -5 | sed 's/^/    /'
