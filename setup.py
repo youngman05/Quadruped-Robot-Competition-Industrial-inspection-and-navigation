@@ -19,6 +19,7 @@ setup(
             "yolo_detect_publisher = nodes.perception.yolo_detect_publisher:main",
             "color_image_publisher = nodes.perception.color_image_publisher:main",
             "whz_standalone = nodes.perception.whz_standalone_inspect:main",
+            "yolo_image_server = nodes.perception.yolo_image_server:main",
             # ── 决策层 ──────────────────────────
             "task_manager = nodes.decision.task_manager:main",
             # "speech_publisher = nodes.decision.speech:main",
