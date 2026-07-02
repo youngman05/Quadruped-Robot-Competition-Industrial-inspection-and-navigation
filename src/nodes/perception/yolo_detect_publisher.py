@@ -203,6 +203,9 @@ class YoloDetectNode(Node):
                     return
                 try:
                     frame = cv2.imread(str(self._relay_jpg), cv2.IMREAD_COLOR)
+                    # Resize to model input size if needed (cuVSLAM uses 1280x720)
+                    if frame is not None and frame.shape[1] != self._width:
+                        frame = cv2.resize(frame, (self._width, self._height))
                 except Exception:
                     return
                 if frame is None:

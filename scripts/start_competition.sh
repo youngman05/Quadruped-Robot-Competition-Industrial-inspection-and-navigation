@@ -15,12 +15,13 @@ echo "日志: $LOGFILE"
 # Ctrl+C → auto cleanup
 trap 'echo ""; echo "Ctrl+C 触发清理..."; bash scripts/stop_all.sh' INT TERM
 
-ENABLE_YOLO=true; ENABLE_WHZ=false; ENABLE_LOG=false
+ENABLE_YOLO=true; ENABLE_WHZ=false; ENABLE_LOG=false; ENABLE_TRANSFER=false
 for arg in "$@"; do
     case $arg in
         --yolo) ENABLE_YOLO=true ;;
         --whz)  ENABLE_WHZ=true ;;
         --log)  ENABLE_LOG=true ;;
+        --dog)  ENABLE_TRANSFER=true ;;
     esac
 done
 
@@ -76,6 +77,15 @@ sleep 3 && echo "  Depth: $(docker exec $CN tail -1 /tmp/dep.log 2>/dev/null || 
 # [3] Bridge — use fix_bridge.sh (handles exporter + bridge properly)
 echo '[3/5] UDP 桥接...'
 bash scripts/fix_bridge.sh
+
+# [3.5] Transfer — Lite3 dog SDK (optional)
+if $ENABLE_TRANSFER; then
+    echo '[3.5] Lite3 Transfer...'
+    source ~/quadruped-robot-competition/Lite3_ROS-ros2-foxy/install/setup.bash 2>/dev/null || true
+    ros2 launch transfer transfer_launch.py &
+    echo "  PID=\$! (手机App切自动模式)"
+    sleep 3
+fi
 
 # [4] Competition system
 echo '[4/5] 导航...'
