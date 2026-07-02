@@ -7,6 +7,10 @@ setup(
     package_dir={"": "src"},
     packages=find_packages(where="src"),
     python_requires=">=3.8",
+    data_files=[
+        ("share/" + "quadruped_robot_competition" + "/launch",
+         ["launch/competition.launch.py"]),
+    ],
     # ROS2 节点入口 — ros2 run quadruped_robot_competition <name>
     entry_points={
         "console_scripts": [
