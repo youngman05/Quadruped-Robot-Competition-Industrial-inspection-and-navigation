@@ -14,6 +14,7 @@ Public API matches the old NavigationClient for drop-in compatibility.
 from __future__ import annotations
 
 import math
+import os
 import sys
 import time
 from enum import Enum, auto
@@ -110,6 +111,16 @@ class Navigator:
         self._node = node
         self._logger = node.get_logger()
 
+        self._direct_udp_enabled = (
+            os.environ.get("NAV_DIRECT_UDP", "0").strip().lower()
+            in ("1", "true", "yes", "on")
+        )
+        self._dog_addr = ("192.168.1.120", 43893)
+        self._udp_sock = None
+        self._cmd_log_file = None
+        self._cmd_log_error_logged = False
+        self._direct_udp_error_logged = False
+
         # ── Planner config ────────────────────────────
         planner_cfg = PlannerConfig(
             inflation_radius_m=0.05,
@@ -203,6 +214,10 @@ class Navigator:
         self._timer = node.create_timer(0.1, self._control_loop)
 
         self._logger.info("Navigator initialized (lightweight A* + Pure Pursuit)")
+        if self._direct_udp_enabled:
+            self._logger.warn("NAV_DIRECT_UDP=1: direct Lite3 UDP output is ENABLED")
+        else:
+            self._logger.info("Direct Lite3 UDP output disabled; using ROS /cmd_vel only")
 
     # ── Public API ──────────────────────────────────────────
 
@@ -502,7 +517,7 @@ class Navigator:
         self._publish_cmd_vel(vx, az)
 
     def _publish_cmd_vel(self, vx: float, az: float) -> None:
-        """Publish /cmd_vel via ROS2 + direct UDP to dog + file log."""
+        """Publish ROS /cmd_vel; direct Lite3 UDP is opt-in only."""
         from geometry_msgs.msg import Twist
         msg = Twist()
         msg.linear.x = float(vx)
@@ -512,51 +527,58 @@ class Navigator:
         msg.angular.y = 0.0
         msg.angular.z = float(az)
         self._cmd_vel_pub.publish(msg)
+        self._log_cmd_vel(vx, az)
 
-        # Direct file log + UDP to dog (bypass DDS entirely)
+        if not self._direct_udp_enabled:
+            return
+
+        self._publish_direct_udp(vx, az)
+
+    def _log_cmd_vel(self, vx: float, az: float) -> None:
+        """Write command log without affecting the navigation control loop."""
         try:
-            import os, struct, socket
-            if not hasattr(self, '_udp_sock'):
-                self._udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                self._dog_addr = ('192.168.1.120', 43893)
+            if self._cmd_log_file is None:
                 d = os.path.expanduser('~/competition_logs')
                 os.makedirs(d, exist_ok=True)
                 self._cmd_log_file = open(f'{d}/cmd_vel_direct.csv', 'a')
 
-            # Log to file
             now = time.time()
             self._cmd_log_file.write(f'{now:.3f},{vx:.4f},{az:.4f}\n')
             self._cmd_log_file.flush()
+        except Exception as exc:
+            if not self._cmd_log_error_logged:
+                self._logger.warn(f"cmd_vel file log disabled after error: {exc}")
+                self._cmd_log_error_logged = True
 
-            # Direct UDP using SDK MotionComplexCMD format (20 bytes)
-            # Protocol doc 1.2.12: 速度指令 codes 0x0140/0x0141/0x0145
-            # Format: <3id = cmd_code(4B) + size(4B) + type(4B) + data(8B)
-            import struct, socket
-            if not hasattr(self, '_udp_sock'):
+    def _publish_direct_udp(self, vx: float, az: float) -> None:
+        """Legacy Lite3 UDP path. Keep disabled unless explicitly requested."""
+        try:
+            import socket
+            import struct
+
+            if self._udp_sock is None:
                 self._udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                self._dog_addr = ('192.168.1.120', 43893)
 
-            # Send heartbeat (dog requires heartbeat from same source)
             self._udp_sock.sendto(
                 struct.pack('<3i', 0x21040001, 0, 0), self._dog_addr
             )
 
-            # Only send ONE motion type per cycle — dog firmware processes
-            # the last MotionComplexCMD as the active mode.
             if abs(az) > 0.1:
-                # Prioritize rotation when heading correction needed
                 self._udp_sock.sendto(
                     struct.pack('<3id', 321, 8, 1, float(-az)), self._dog_addr
                 )
             elif abs(vx) > 0.01:
-                # Forward only (straight line)
                 self._udp_sock.sendto(
                     struct.pack('<3id', 320, 8, 1, float(vx)), self._dog_addr
                 )
             else:
-                # Stop
                 self._udp_sock.sendto(
                     struct.pack('<3id', 320, 8, 1, 0.0), self._dog_addr
                 )
-        except Exception:
-            pass
+            self._direct_udp_error_logged = False
+        except Exception as exc:
+            if not self._direct_udp_error_logged:
+                self._logger.warn(
+                    f"Direct Lite3 UDP send failed; keeping ROS /cmd_vel alive: {exc}"
+                )
+                self._direct_udp_error_logged = True

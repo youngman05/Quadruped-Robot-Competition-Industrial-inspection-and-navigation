@@ -143,7 +143,7 @@ for i in $(seq 1 30); do
 done
 
 # ═══════════════════════════════════════════
-# [4] 狗初始化 (直接 UDP, 不用 transfer SDK)
+# [4] Dog init + transfer driver
 # ═══════════════════════════════════════════
 if $ENABLE_DOG; then
     echo ''
@@ -159,6 +159,23 @@ if $ENABLE_DOG; then
             echo "  狗就绪: $(tail -1 /tmp/lite3_init.log)"
         else
             echo "  ⚠ 狗初始化可能失败, 日志: /tmp/lite3_init.log"
+        fi
+
+
+        # Dedicated driver node: subscribe /cmd_vel, then talk to Lite3.
+        # Navigator publishes /cmd_vel only by default and no longer bypasses this node.
+        if [ -f Lite3_ROS-ros2-foxy/install/setup.bash ]; then
+            source Lite3_ROS-ros2-foxy/install/setup.bash
+            nohup ros2 launch transfer transfer_launch.py > /tmp/transfer.log 2>&1 &
+            TRANSFER_PID=$!
+            sleep 2
+            if ros2 node list 2>/dev/null | grep -q motion_sender; then
+                echo "  transfer driver ready: /cmd_vel -> Lite3 (PID=$TRANSFER_PID)"
+            else
+                echo "  WARN: transfer driver not visible yet, log: /tmp/transfer.log"
+            fi
+        else
+            echo "  WARN: Lite3 transfer workspace is not built; /cmd_vel will not reach the dog"
         fi
     fi
 fi
