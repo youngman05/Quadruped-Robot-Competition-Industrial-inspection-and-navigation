@@ -156,9 +156,11 @@ class Navigator:
         ros_sx, ros_sy = _mm_to_ros(ROBOT_START_POSE["x_mm"], ROBOT_START_POSE["y_mm"])
         self._odom_offset_x: float = ros_sx
         self._odom_offset_y: float = ros_sy
-        self._odom_offset_yaw: float = _deg_to_rad(ROBOT_START_POSE["yaw_deg"])
-        self._odom_cos: float = math.cos(self._odom_offset_yaw)
-        self._odom_sin: float = math.sin(self._odom_offset_yaw)
+        self._desired_start_yaw: float = _deg_to_rad(ROBOT_START_POSE["yaw_deg"])
+        self._odom_offset_yaw: float = self._desired_start_yaw  # may be recalibrated
+        self._odom_cos: float = math.cos(self._desired_start_yaw)
+        self._odom_sin: float = math.sin(self._desired_start_yaw)
+        self._yaw_calibrated: bool = False  # set True on first odom reading
 
         # Current pose in map frame (from /odom + offset)
         self._current_x: float = 0.0
@@ -169,9 +171,11 @@ class Navigator:
         # Stuck detection
         self._stuck_start_x: float = 0.0
         self._stuck_start_y: float = 0.0
+        self._stuck_start_yaw: float = 0.0
         self._stuck_start_time: float = 0.0
         self._stuck_timeout: float = 10.0
         self._stuck_dist_threshold: float = 0.05
+        self._stuck_yaw_threshold: float = 0.2   # rad — treat as progress if turning
 
         # API compatibility
         self._goal_sent: bool = False
@@ -190,7 +194,7 @@ class Navigator:
         self._odom_sub = node.create_subscription(
             Odometry, "/odom", self._odom_callback, _best_effort,
         )
-        self._cmd_vel_pub = node.create_publisher(Twist, "/cmd_vel", _best_effort)
+        self._cmd_vel_pub = node.create_publisher(Twist, "/cmd_vel", _best_effort)  # BEST_EFFORT — matches jetson2motion
         self._pc_sub = node.create_subscription(
             PointCloud2, "/camera/depth/points", self._pointcloud_callback, 10,
         )
@@ -309,23 +313,38 @@ class Navigator:
 
     # ── ROS2 callbacks ────────────────────────────────────────
 
-    def _odom_callback(self, msg) -> None:
-        """Update current pose in map frame from /odom + static map→odom offset."""
-        # Odometry gives pose of base_link in odom frame.
-        # Transform to map frame using the static map→odom offset.
-        odom_x = msg.pose.pose.position.x
-        odom_y = msg.pose.pose.position.y
-        q = msg.pose.pose.orientation
-        siny = 2.0 * (q.w * q.z + q.x * q.y)
-        cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
-        odom_yaw = math.atan2(siny, cosy)
+    def _apply_odom_pose(self, odom_x: float, odom_y: float, odom_yaw: float) -> None:
+        """Apply odom→map transform. Calibrates yaw offset on first call."""
+        if not self._yaw_calibrated:
+            # Dynamic calibration: cuVSLAM initial yaw may not match physical
+            self._odom_offset_yaw = _normalize_angle(
+                self._desired_start_yaw - odom_yaw
+            )
+            self._odom_cos = math.cos(self._odom_offset_yaw)
+            self._odom_sin = math.sin(self._odom_offset_yaw)
+            self._yaw_calibrated = True
+            self._logger.info(
+                f"Yaw calibrated: desired={math.degrees(self._desired_start_yaw):.0f} "
+                f"odom={math.degrees(odom_yaw):.0f} "
+                f"offset={math.degrees(self._odom_offset_yaw):.0f}"
+            )
 
-        # Apply static transform: map = T_map_odom * odom_pose
-        # where T_map_odom = (tx, ty, θ) from robot start pose
         self._current_x = self._odom_offset_x + odom_x * self._odom_cos - odom_y * self._odom_sin
         self._current_y = self._odom_offset_y + odom_x * self._odom_sin + odom_y * self._odom_cos
         self._current_yaw = _normalize_angle(self._odom_offset_yaw + odom_yaw)
         self._has_odom = True
+
+    def _odom_callback(self, msg) -> None:
+        """Update current pose from ROS2 /odom topic."""
+        q = msg.pose.pose.orientation
+        siny = 2.0 * (q.w * q.z + q.x * q.y)
+        cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+        odom_yaw = math.atan2(siny, cosy)
+        self._apply_odom_pose(
+            msg.pose.pose.position.x,
+            msg.pose.pose.position.y,
+            odom_yaw,
+        )
 
     def _pointcloud_callback(self, msg) -> None:
         """Decode PointCloud2 and update obstacle detector."""
@@ -342,8 +361,33 @@ class Navigator:
 
     # ── Control loop (10 Hz) ──────────────────────────────────
 
+    def _read_odom_file(self) -> bool:
+        """Read latest odometry from file (DDS bypass for Jetson).
+
+        Returns True if odom was updated from file.
+        """
+        try:
+            import json
+            with open('/tmp/odom_latest.json', 'r') as f:
+                d = json.load(f)
+            odom_x = float(d['x'])
+            odom_y = float(d['y'])
+            qx = float(d['qx']); qy = float(d['qy'])
+            qz = float(d['qz']); qw = float(d['qw'])
+            siny = 2.0 * (qw * qz + qx * qy)
+            cosy = 1.0 - 2.0 * (qy * qy + qz * qz)
+            odom_yaw = math.atan2(siny, cosy)
+
+            self._apply_odom_pose(odom_x, odom_y, odom_yaw)
+            return True
+        except Exception:
+            return False
+
     def _control_loop(self) -> None:
         """Timer callback: plan, follow, or idle."""
+        # DDS bypass: read odom from file if ROS2 callback hasn't fired
+        self._read_odom_file()
+
         if self._state == _NavState.IDLE:
             # Publish zero velocity to keep robot stationary
             if self._has_odom:
@@ -387,6 +431,7 @@ class Navigator:
         # Initialize stuck detection
         self._stuck_start_x = self._current_x
         self._stuck_start_y = self._current_y
+        self._stuck_start_yaw = self._current_yaw
         self._stuck_start_time = time.time()
 
         self._state = _NavState.FOLLOWING
@@ -435,10 +480,12 @@ class Navigator:
             self._current_x - self._stuck_start_x,
             self._current_y - self._stuck_start_y,
         )
-        if moved < self._stuck_dist_threshold:
+        turned = abs(_normalize_angle(self._current_yaw - self._stuck_start_yaw))
+        progress = moved > self._stuck_dist_threshold or turned > self._stuck_yaw_threshold
+        if not progress:
             if now - self._stuck_start_time > self._stuck_timeout:
                 self._logger.warn(
-                    f"Stuck detected (moved {moved:.3f}m in "
+                    f"Stuck detected (moved {moved:.3f}m, turned {turned:.3f}rad in "
                     f"{now - self._stuck_start_time:.1f}s)"
                 )
                 self._publish_cmd_vel(0.0, 0.0)
@@ -446,15 +493,16 @@ class Navigator:
                 self._goal_result = -1
                 return
         else:
-            # Reset stuck timer when robot moves
+            # Reset stuck timer when robot moves or turns
             self._stuck_start_x = self._current_x
             self._stuck_start_y = self._current_y
+            self._stuck_start_yaw = self._current_yaw
             self._stuck_start_time = now
 
         self._publish_cmd_vel(vx, az)
 
     def _publish_cmd_vel(self, vx: float, az: float) -> None:
-        """Publish Twist to /cmd_vel."""
+        """Publish /cmd_vel via ROS2 + direct UDP to dog + file log."""
         from geometry_msgs.msg import Twist
         msg = Twist()
         msg.linear.x = float(vx)
@@ -464,3 +512,40 @@ class Navigator:
         msg.angular.y = 0.0
         msg.angular.z = float(az)
         self._cmd_vel_pub.publish(msg)
+
+        # Direct file log + UDP to dog (bypass DDS entirely)
+        try:
+            import os, struct, socket
+            if not hasattr(self, '_udp_sock'):
+                self._udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                self._dog_addr = ('192.168.1.120', 43893)
+                d = os.path.expanduser('~/competition_logs')
+                os.makedirs(d, exist_ok=True)
+                self._cmd_log_file = open(f'{d}/cmd_vel_direct.csv', 'a')
+
+            # Log to file
+            now = time.time()
+            self._cmd_log_file.write(f'{now:.3f},{vx:.4f},{az:.4f}\n')
+            self._cmd_log_file.flush()
+
+            # Direct UDP using SDK MotionComplexCMD format (20 bytes)
+            # Protocol doc 1.2.12: 速度指令 codes 0x0140/0x0141/0x0145
+            # Format: <3id = cmd_code(4B) + size(4B) + type(4B) + data(8B)
+            import struct, socket
+            if not hasattr(self, '_udp_sock'):
+                self._udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                self._dog_addr = ('192.168.1.120', 43893)
+
+            # Forward velocity (0x0140 = 320)
+            payload = struct.pack('<3id', 320, 8, 1, float(vx))
+            self._udp_sock.sendto(payload, self._dog_addr)
+
+            # Lateral velocity (0x0145 = 325)
+            payload = struct.pack('<3id', 325, 8, 1, 0.0)
+            self._udp_sock.sendto(payload, self._dog_addr)
+
+            # Angular velocity (0x0141 = 321), negated per SDK convention
+            payload = struct.pack('<3id', 321, 8, 1, float(-az))
+            self._udp_sock.sendto(payload, self._dog_addr)
+        except Exception:
+            pass

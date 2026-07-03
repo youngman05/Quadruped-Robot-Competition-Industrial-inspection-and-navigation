@@ -1,38 +1,51 @@
 #!/bin/bash
-# 停止所有比赛进程（不碰 Docker cuVSLAM）
-echo "停止比赛进程..."
+# ==============================================
+#  停止所有比赛进程 — 可靠的强制清理
+# ==============================================
+echo "=== 停止比赛进程 ==="
 
-# Host 进程
-pkill -9 -f competition.launch     2>/dev/null && echo "  killed: competition.launch" || true
-pkill -9 -f task_manager           2>/dev/null && echo "  killed: task_manager" || true
-pkill -9 -f final_bridge           2>/dev/null && echo "  killed: final_bridge" || true
-pkill -9 -f gauge_status_publisher 2>/dev/null && echo "  killed: gauge_status" || true
-pkill -9 -f yolo_detect_publisher  2>/dev/null && echo "  killed: yolo_detect" || true
-pkill -9 -f color_image_publisher  2>/dev/null && echo "  killed: color_publisher" || true
-pkill -9 -f depth_publisher        2>/dev/null && echo "  killed: depth_publisher" || true
-pkill -9 -f initial_pose_publisher 2>/dev/null && echo "  killed: initial_pose" || true
-pkill -9 -f inspection_node        2>/dev/null && echo "  killed: inspection_node" || true
-pkill -9 -f whz_standalone         2>/dev/null && echo "  killed: whz_standalone" || true
-pkill -9 -f _ros2_daemon           2>/dev/null && echo "  killed: ros2_daemon" || true
-pkill -9 -f test_logger            2>/dev/null && echo "  killed: test_logger" || true
-pkill -9 -f static_transform_publisher 2>/dev/null && echo "  killed: static_tf" || true
+# 1. 先杀 ros2 launch（防止它复活子进程）—— 最关键！
+echo "[1] 停止 launch..."
+pkill -9 -f "ros2 launch"          2>/dev/null
+pkill -9 -f "competition.launch"   2>/dev/null
+pkill -9 -f "transfer_launch"      2>/dev/null
+sleep 2
 
-# Lite3 Transfer (dog SDK)
-pkill -9 -f jetson2motion          2>/dev/null && echo "  killed: jetson2motion" || true
-pkill -9 -f jetson2app             2>/dev/null && echo "  killed: jetson2app" || true
-pkill -9 -f sensor_checker         2>/dev/null && echo "  killed: sensor_checker" || true
-pkill -9 -f transfer_launch        2>/dev/null && echo "  killed: transfer_launch" || true
+# 2. 杀掉所有比赛节点
+echo "[2] 停止比赛节点..."
+for name in task_manager initial_pose_publisher depth_publisher \
+            gauge_status_publisher inspection_node whz_standalone \
+            color_image_publisher yolo_detect_publisher \
+            static_transform_publisher test_logger; do
+    pkill -9 -f "$name" 2>/dev/null
+done
+sleep 1
 
-# Docker 内 relay（不碰 cuVSLAM 和 realsense）
+# 3. 杀掉 transfer SDK 和狗初始化
+echo "[3] 停止 SDK / 狗..."
+for name in jetson2motion jetson2app sensor_checker lite3_init dog_init; do
+    pkill -9 -f "$name" 2>/dev/null
+done
+sleep 1
+
+# 4. 杀掉桥接进程
+echo "[4] 停止桥接..."
+pkill -9 -f "final_bridge"         2>/dev/null
+pkill -9 -f "udp_exporter"         2>/dev/null
+pkill -9 -f "_ros2_daemon"         2>/dev/null
+sleep 1
+
+# 5. 清理 Docker 内中继（不碰 cuVSLAM/realsense）
+echo "[5] 停止 Docker 中继..."
 CN=$(docker ps --format '{{.Names}}' 2>/dev/null | grep cuvslam | head -1)
 if [ -n "$CN" ]; then
-    docker exec $CN pkill -f camera_relay  2>/dev/null && echo "  killed: camera_relay (docker)" || true
-    docker exec $CN pkill -f depth_relay   2>/dev/null && echo "  killed: depth_relay (docker)" || true
-    docker exec $CN pkill -f udp_exporter  2>/dev/null && echo "  killed: udp_exporter (docker)" || true
-    docker exec $CN pkill -f loop_metrics_recorder 2>/dev/null && echo "  killed: loop_metrics (docker)" || true
+    docker exec $CN pkill -f camera_relay       2>/dev/null || true
+    docker exec $CN pkill -f depth_relay        2>/dev/null || true
+    docker exec $CN pkill -f udp_exporter       2>/dev/null || true
+    docker exec $CN pkill -f loop_metrics_recorder 2>/dev/null || true
 fi
 
-sleep 1
 echo ""
-echo "剩余进程:"
-ps aux --sort=-%cpu | head -6 | grep -v grep
+echo "=== 剩余进程 (TOP5 CPU) ==="
+ps -eo pcpu,pid,comm --sort=-pcpu 2>/dev/null | head -6 | tail -5 || true
+echo "=== 完成 ==="

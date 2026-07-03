@@ -54,9 +54,11 @@ class TestLogger(Node):
         self._status_writer = csv.writer(self._status_f)
         self._status_writer.writerow(["stamp_s", "status_json"])
 
-        # ── Subscriptions ──────────────────────
-        self.create_subscription(Twist, "/cmd_vel", self._cmd_cb, 10)
-        self.create_subscription(Odometry, "/odom", self._odom_cb, 10)
+        # ── Subscriptions (BEST_EFFORT to match system publishers) ──
+        from rclpy.qos import QoSProfile, ReliabilityPolicy
+        be = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
+        self.create_subscription(Twist, "/cmd_vel", self._cmd_cb, 10)  # RELIABLE — match publisher
+        self.create_subscription(Odometry, "/odom", self._odom_cb, be)
         self.create_subscription(String, "/task/phase", self._phase_cb, 10)
         self.create_subscription(String, "/task/status", self._status_cb, 10)
 

@@ -454,7 +454,7 @@ class TaskManagerNode(Node):
 
         try:
             result = subprocess.run(
-                [sys.executable, script], capture_output=True, text=True, timeout=30,
+                [sys.executable, script], capture_output=True, text=True, timeout=60,
                 cwd=str(_WS),
             )
             data = json.loads(result.stdout) if result.stdout else {"error": "empty output"}

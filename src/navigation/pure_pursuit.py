@@ -20,8 +20,8 @@ class PursuitConfig:
     lookahead_distance_m: float = 0.5    # base lookahead
     min_lookahead_m: float = 0.3         # minimum (at low speed)
     max_lookahead_m: float = 0.9         # maximum (at high speed)
-    max_linear_vel: float = 0.25         # m/s
-    max_angular_vel: float = 0.5         # rad/s
+    max_linear_vel: float = 0.3          # m/s (conservative for visual SLAM)
+    max_angular_vel: float = 0.4         # rad/s (slow to avoid losing vSLAM tracking)
     goal_tolerance_m: float = 0.05       # position tolerance
     yaw_tolerance_rad: float = 0.25      # orientation tolerance
     turn_in_place_threshold_rad: float = 0.3  # if yaw error > this, turn first

@@ -291,6 +291,23 @@ def main():
             fill_transform(transform, msg)
             tf_broadcaster.sendTransform(transform)
 
+            # Write latest odom to file (DDS bypass for Navigator on Jetson)
+            try:
+                with open('/tmp/odom_latest.json', 'w') as f:
+                    import json as _json
+                    _json.dump({
+                        'x': msg.pose.pose.position.x,
+                        'y': msg.pose.pose.position.y,
+                        'z': msg.pose.pose.position.z,
+                        'qx': msg.pose.pose.orientation.x,
+                        'qy': msg.pose.pose.orientation.y,
+                        'qz': msg.pose.pose.orientation.z,
+                        'qw': msg.pose.pose.orientation.w,
+                        'stamp': stamp_source if stamp_source else time.time(),
+                    }, f)
+            except Exception:
+                pass
+
             rclpy.spin_once(node, timeout_sec=0.0)
             if args.log_every > 0 and count % args.log_every == 1:
                 stamp = msg.header.stamp
