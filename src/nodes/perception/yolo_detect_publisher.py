@@ -92,10 +92,13 @@ class YoloDetectNode(Node):
 
         # 相机参数
         self.declare_parameter("use_d455", True)
+        self.declare_parameter("use_relay", True)       # 比赛模式：读 Docker relay JPEG
         self.declare_parameter("camera_id", 0)          # USB 摄像头备选
         self.declare_parameter("width", 640)
         self.declare_parameter("height", 480)
         self.declare_parameter("enable_depth", True)    # D455 深度测距
+        self.declare_parameter("relay_dir",
+                              str(Path.home() / "workspaces/isaac_ros-dev/camera_frames"))
 
         # 话题参数
         self.declare_parameter("detections_topic", "/yolo/detections")
@@ -110,10 +113,12 @@ class YoloDetectNode(Node):
         self._interval_sec = float(self.get_parameter("interval_sec").value)
         self._frame_id = str(self.get_parameter("frame_id").value)
         self._use_d455 = bool(self.get_parameter("use_d455").value)
+        self._use_relay = bool(self.get_parameter("use_relay").value)
         self._camera_id = int(self.get_parameter("camera_id").value)
         self._width = int(self.get_parameter("width").value)
         self._height = int(self.get_parameter("height").value)
         self._enable_depth = bool(self.get_parameter("enable_depth").value)
+        self._relay_dir = Path(self.get_parameter("relay_dir").value)
         detections_topic = str(self.get_parameter("detections_topic").value)
         image_topic = str(self.get_parameter("image_topic").value)
         count_topic = str(self.get_parameter("count_topic").value)
@@ -135,7 +140,12 @@ class YoloDetectNode(Node):
         self._cam = None
         self._cap = None  # USB fallback
 
-        if self._use_d455:
+        if self._use_relay:
+            # Competition mode: read from Docker relay JPEG (cuVSLAM owns D455)
+            self._relay_jpg = self._relay_dir / "latest_color.jpg"
+            self._use_d455 = False
+            self.get_logger().info(f"Relay mode: reading {self._relay_jpg}")
+        elif self._use_d455:
             try:
                 from cv.realsense_camera import RealsenseCamera
                 self._cam = RealsenseCamera(
@@ -152,7 +162,7 @@ class YoloDetectNode(Node):
                 self.get_logger().warn(f"D455 failed ({exc}), falling back to USB camera")
                 self._use_d455 = False
 
-        if not self._use_d455:
+        if not self._use_d455 and not self._use_relay:
             import cv2
             self._cap = cv2.VideoCapture(self._camera_id)
             if not self._cap.isOpened():
@@ -187,8 +197,25 @@ class YoloDetectNode(Node):
         try:
             # 1. 取帧
             depth_img = None
-            if self._use_d455 and self._cam:
-                color_img, depth_img = self._cam.get_frames()
+            if self._use_relay:
+                import cv2
+                if not self._relay_jpg.exists():
+                    return
+                try:
+                    frame = cv2.imread(str(self._relay_jpg), cv2.IMREAD_COLOR)
+                    # Resize to model input size if needed (cuVSLAM uses 1280x720)
+                    if frame is not None and frame.shape[1] != self._width:
+                        frame = cv2.resize(frame, (self._width, self._height))
+                except Exception:
+                    return
+                if frame is None:
+                    return
+            elif self._use_d455 and self._cam:
+                try:
+                    color_img, depth_img = self._cam.get_frames()
+                except RuntimeError:
+                    self.get_logger().warn("D455 frame timeout, retrying...", throttle_duration_sec=5.0)
+                    return
                 if color_img is None:
                     return
                 frame = color_img

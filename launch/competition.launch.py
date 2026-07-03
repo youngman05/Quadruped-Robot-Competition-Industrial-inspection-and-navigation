@@ -23,8 +23,8 @@ PARAMS_FILE = PROJECT_ROOT / "configs" / "ros" / "competition_params.yaml"
 
 def generate_launch_description() -> LaunchDescription:
     # ─── 启动参数 ───────────────────────────────────
-    enable_gauge = LaunchConfiguration("enable_gauge", default="true")
-    enable_yolo = LaunchConfiguration("enable_yolo", default="false")
+    enable_gauge = LaunchConfiguration("enable_gauge", default="false")
+    enable_yolo = LaunchConfiguration("enable_yolo", default="true")
     enable_task_manager = LaunchConfiguration("enable_task_manager", default="false")
     enable_speech = LaunchConfiguration("enable_speech", default="false")
     enable_navigation = LaunchConfiguration("enable_navigation", default="false")
@@ -32,11 +32,11 @@ def generate_launch_description() -> LaunchDescription:
 
     # ── 声明参数 ─────────────────────────────────────
     declare_enable_gauge = DeclareLaunchArgument(
-        "enable_gauge", default_value="true",
+        "enable_gauge", default_value="false",
         description="启动仪表检测节点"
     )
     declare_enable_yolo = DeclareLaunchArgument(
-        "enable_yolo", default_value="false",
+        "enable_yolo", default_value="true",
         description="启动 YOLO 检测节点"
     )
     declare_enable_task_manager = DeclareLaunchArgument(
@@ -136,7 +136,8 @@ def generate_launch_description() -> LaunchDescription:
         package="tf2_ros",
         executable="static_transform_publisher",
         name="base_to_camera_tf",
-        arguments=["0", "0", "0.3", "0", "0", "0", "base_link", "camera_link"],
+        # x=0.080m forward, z=0.493m up, pitch=-30° (camera tilted down)
+        arguments=["0.080", "0.000", "0.493", "0", "-0.523599", "0", "base_link", "camera_link"],
         output="screen",
         condition=IfCondition(enable_navigation),
     )

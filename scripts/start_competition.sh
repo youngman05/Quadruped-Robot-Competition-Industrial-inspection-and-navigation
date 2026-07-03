@@ -1,88 +1,222 @@
 #!/bin/bash
-# =========================================
-#  四足机器人竞赛 — 一键启动脚本
-# =========================================
-set -e
-cd ~/quadruped-robot-competition
+# ==============================================
+#  四足机器人竞赛 — 鲁棒一键启动
+#  用法: bash scripts/start_competition.sh [--dog] [--yolo] [--whz]
+# ==============================================
+# 注意: 不用 set -e，每个步骤自行容错
 
-ENABLE_YOLO=false; ENABLE_WHZ=false; ENABLE_LOG=false
+cd ~/quadruped-robot-competition
+LOGDIR="$HOME/Desktop/logs"
+mkdir -p "$LOGDIR"
+LOGFILE="$LOGDIR/competition_$(date +%Y%m%d_%H%M%S).log"
+exec > >(tee -a "$LOGFILE") 2>&1
+echo "日志: $LOGFILE"
+trap 'echo ""; echo "Ctrl+C → 清理..."; bash scripts/stop_all.sh' INT TERM
+
+# ── 参数解析 ──────────────────────────────
+ENABLE_YOLO=false; ENABLE_WHZ=false; ENABLE_DOG=false; SKIP_YOLO=true; DO_STAND=false
 for arg in "$@"; do
     case $arg in
-        --yolo) ENABLE_YOLO=true ;;
-        --whz)  ENABLE_WHZ=true ;;
-        --log)  ENABLE_LOG=true ;;
+        --yolo)  ENABLE_YOLO=true; SKIP_YOLO=false ;;
+        --whz)   ENABLE_WHZ=true ;;
+        --dog)   ENABLE_DOG=true ;;
+        --stand) DO_STAND=true ;;   # force stand toggle (dog lying down)
     esac
 done
 
 echo ''
 echo '==================================='
-echo ' 四足机器人竞赛系统 - 轻量A*'
+echo ' 四足机器人竞赛系统 v2 — 鲁棒启动'
 echo '==================================='
+echo " DOG=$ENABLE_DOG  YOLO=$ENABLE_YOLO  WHZ=$ENABLE_WHZ"
 
-# [0] Kill zombies
-echo '[0/5] 清理旧进程...'
-pkill -9 -f color_image_publisher 2>/dev/null || true
-pkill -9 -f inspection_node 2>/dev/null || true
-pkill -9 -f final_bridge 2>/dev/null || true
-pkill -9 -f task_manager 2>/dev/null || true
-pkill -9 -f gauge_status_publisher 2>/dev/null || true
-pkill -9 -f depth_publisher 2>/dev/null || true
-pkill -9 -f initial_pose_publisher 2>/dev/null || true
-sleep 2 && echo '  干净'
+# ═══════════════════════════════════════════
+# [0] 清理旧进程
+# ═══════════════════════════════════════════
+echo ''
+echo '[0/6] 清理旧进程...'
+bash scripts/stop_all.sh 2>&1 | tail -3
+sleep 1
 
-# [1] Docker
-echo '[1/5] Docker...'
+# ═══════════════════════════════════════════
+# [1] Docker cuVSLAM
+# ═══════════════════════════════════════════
+echo ''
+echo '[1/6] Docker cuVSLAM...'
 CN=$(docker ps --format '{{.Names}}' 2>/dev/null | grep cuvslam || true)
 if [ -z "$CN" ]; then
-    CUVSLAM_MOUNT_MODE=robot CUVSLAM_PROFILE=planar_60fps       CUVSLAM_PUBLISH_ODOM_TO_BASE_TF=false CUVSLAM_PUBLISH_MAP_TO_ODOM_TF=false       bash scripts/start_cuvslam_rviz_gui.sh --no-rviz > /tmp/cuvslam.log 2>&1 &
-    echo '  等 100 秒 GPU 预热...'; sleep 100
-    CN=$(docker ps --format '{{.Names}}' | grep cuvslam)
+    echo "  启动 Docker (需要 ~90s)..."
+    CUVSLAM_MOUNT_MODE=robot CUVSLAM_PROFILE=planar_60fps \
+      CUVSLAM_PUBLISH_ODOM_TO_BASE_TF=false CUVSLAM_PUBLISH_MAP_TO_ODOM_TF=false \
+      bash scripts/start_cuvslam_rviz_gui.sh --no-rviz > /tmp/cuvslam_start.log 2>&1 &
+    # 轮询等待 Docker 容器出现 + cuVSLAM 节点起来
+    for i in $(seq 1 60); do
+        sleep 3
+        CN=$(docker ps --format '{{.Names}}' 2>/dev/null | grep cuvslam || true)
+        if [ -n "$CN" ]; then break; fi
+        echo -n "."
+    done
+    if [ -z "$CN" ]; then
+        echo " ❌ Docker 启动超时"
+        exit 1
+    fi
+    echo " Docker 容器已启动，等待 cuVSLAM 初始化..."
+    # 等待视觉 SLAM 开始追踪
+    for i in $(seq 1 30); do
+        sleep 2
+        if docker exec $CN bash -c 'source /opt/ros/humble/setup.bash && ros2 topic echo /visual_slam/vis/slam_odometry --once 2>/dev/null' | grep -q stamp; then
+            echo " cuVSLAM 追踪中"
+            break
+        fi
+        echo -n "."
+    done
+else
+    echo "  Docker 已在运行: $CN"
 fi
-echo "  Docker: $CN"
+# 杀掉高CPU的 loop_metrics
+docker exec $CN pkill -f loop_metrics_recorder 2>/dev/null && echo "  loop_metrics killed" || true
 
-# [2] Relays
-echo '[2/5] 中继...'
+# ═══════════════════════════════════════════
+# [2] 中继 (Camera + Depth)
+# ═══════════════════════════════════════════
+echo ''
+echo '[2/6] 中继...'
 docker cp scripts/camera_relay_docker.py $CN:/tmp/ 2>/dev/null || true
 docker cp scripts/depth_relay_docker.py $CN:/tmp/ 2>/dev/null || true
 docker exec $CN pkill -f camera_relay 2>/dev/null || true
-docker exec $CN pkill -f depth_relay 2>/dev/null || true
+docker exec $CN pkill -f depth_relay  2>/dev/null || true
 sleep 1
-docker exec -d $CN bash -c "source /opt/ros/humble/setup.bash; source /workspaces/isaac_ros-dev/install/setup.bash; mkdir -p /workspaces/isaac_ros-dev/camera_frames; python3 /tmp/camera_relay_docker.py > /tmp/cam.log 2>&1"
-sleep 3 && echo "  Camera: $(docker exec $CN tail -1 /tmp/cam.log 2>/dev/null || echo OK)"
-docker exec -d $CN bash -c "source /opt/ros/humble/setup.bash; source /workspaces/isaac_ros-dev/install/setup.bash; python3 /tmp/depth_relay_docker.py > /tmp/dep.log 2>&1"
-sleep 3 && echo "  Depth: $(docker exec $CN tail -1 /tmp/dep.log 2>/dev/null || echo OK)"
 
-# [3] Bridge (no-SHM for cross-DDS)
-echo '[3/5] 桥接...'
-source /opt/ros/foxy/setup.bash
-export RMW_IMPLEMENTATION=rmw_fastrtps_cpp ROS_DOMAIN_ID=0 PYTHONPATH=/opt/ros/foxy/lib/python3.8/site-packages FASTRTPS_DEFAULT_PROFILES_FILE=~/quadruped-robot-competition/configs/ros/fastrtps_no_shm.xml
+# 启动 camera relay
+docker exec -d $CN bash -c \
+  "source /opt/ros/humble/setup.bash && \
+   source /workspaces/isaac_ros-dev/install/setup.bash && \
+   mkdir -p /workspaces/isaac_ros-dev/camera_frames && \
+   python3 /tmp/camera_relay_docker.py > /tmp/cam.log 2>&1"
+# 等待 camera relay 开始写入
+for i in $(seq 1 10); do
+    sleep 1
+    FRAMES=$(docker exec $CN bash -c 'cat /tmp/cam.log 2>/dev/null' | grep -c 'Saved' || true)
+    if [ "$FRAMES" -gt 0 ]; then break; fi
+done
+echo "  Camera: $(docker exec $CN tail -1 /tmp/cam.log 2>/dev/null || echo 'OK')"
+
+# 启动 depth relay
+docker exec -d $CN bash -c \
+  "source /opt/ros/humble/setup.bash && \
+   source /workspaces/isaac_ros-dev/install/setup.bash && \
+   python3 /tmp/depth_relay_docker.py > /tmp/dep.log 2>&1"
+for i in $(seq 1 10); do
+    sleep 1
+    FRAMES=$(docker exec $CN bash -c 'cat /tmp/dep.log 2>/dev/null' | grep -c 'Depth' || true)
+    if [ "$FRAMES" -gt 0 ]; then break; fi
+done
+echo "  Depth:  $(docker exec $CN tail -1 /tmp/dep.log 2>/dev/null || echo 'OK')"
+
+# ═══════════════════════════════════════════
+# [3] UDP 桥接 (odom)
+# ═══════════════════════════════════════════
+echo ''
+echo '[3/6] UDP 桥接...'
+# 清理旧桥接
+pkill -9 -f final_bridge 2>/dev/null || true
+docker exec $CN pkill -f udp_exporter 2>/dev/null || true
+sleep 1
+
+source /opt/ros/foxy/setup.bash 2>/dev/null || true
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp ROS_DOMAIN_ID=0
+export FASTRTPS_DEFAULT_PROFILES_FILE=~/quadruped-robot-competition/configs/ros/fastrtps_no_shm.xml
+export PYTHONPATH=/opt/ros/foxy/lib/python3.8/site-packages
+
 nohup python3 scripts/final_bridge.py > /tmp/fb.log 2>&1 &
-sleep 10 && echo "  $(tail -1 /tmp/fb.log)"
+BRIDGE_PID=$!
+# 等待第一个 odom 消息
+for i in $(seq 1 30); do
+    sleep 1
+    if grep -q 'bridged' /tmp/fb.log 2>/dev/null; then
+        echo "  Bridge 就绪 (PID=$BRIDGE_PID)"
+        break
+    fi
+    if [ $i -eq 30 ]; then
+        echo "  ⚠ Bridge 等待超时 (检查 cuVSLAM)"
+    fi
+done
 
-# [4] Competition system
-echo '[4/5] 导航...'
-if $ENABLE_LOG; then
-    nohup python3 scripts/test_logger.py > /tmp/logger.log 2>&1 &
-    sleep 2 && echo "  Logger: ~/competition_logs/$(ls ~/competition_logs/ | tail -1)"
+# ═══════════════════════════════════════════
+# [4] 狗初始化 (直接 UDP, 不用 transfer SDK)
+# ═══════════════════════════════════════════
+if $ENABLE_DOG; then
+    echo ''
+    echo '[4/6] 狗初始化...'
+    # 检查网络
+    if ! ping -c 1 -W 1 192.168.1.120 > /dev/null 2>&1; then
+        echo "  ⚠ 狗网络不通 (192.168.1.120) — 继续但狗不会动"
+    else
+        # 仅自动模式+心跳（你手动站立）
+        python3 -u scripts/lite3_init.py --no-stand > /tmp/lite3_init.log 2>&1 &
+        sleep 6
+        if grep -q 'Heartbeat' /tmp/lite3_init.log 2>/dev/null; then
+            echo "  狗就绪: $(tail -1 /tmp/lite3_init.log)"
+        else
+            echo "  ⚠ 狗初始化可能失败, 日志: /tmp/lite3_init.log"
+        fi
+    fi
 fi
-source install/setup.bash
+
+# ═══════════════════════════════════════════
+# [5] 比赛系统
+# ═══════════════════════════════════════════
+echo ''
+echo '[5/6] 启动比赛...'
+source install/setup.bash 2>/dev/null || { echo "  ⚠ 需要先 colcon build"; exit 1; }
+
 YF=false; WF=false
 $ENABLE_YOLO && YF=true
-$ENABLE_WHZ && WF=true
-ros2 launch quadruped_robot_competition competition.launch.py   enable_task_manager:=true enable_navigation:=true   enable_yolo:=$YF enable_whz:=$WF &
-echo "  PID=$! YOLO=$YF WHZ=$WF"
-sleep 10
+$ENABLE_WHZ  && WF=true
+ros2 launch quadruped_robot_competition competition.launch.py \
+  enable_task_manager:=true enable_navigation:=true \
+  enable_yolo:=$YF enable_whz:=$WF \
+  auto_advance:=$SKIP_YOLO > /tmp/competition.log 2>&1 &
+COMP_PID=$!
+echo "  Launch PID=$COMP_PID YOLO=$YF WHZ=$WF SKIP_YOLO=$SKIP_YOLO"
+# 等待 task_manager 节点出现
+for i in $(seq 1 15); do
+    sleep 1
+    if ros2 node list 2>/dev/null | grep -q task_manager; then
+        echo "  task_manager 就绪"
+        break
+    fi
+done
 
-# [5] Verify
-echo '[5/5] 验证...'
-source /opt/ros/foxy/setup.bash
-export RMW_IMPLEMENTATION=rmw_fastrtps_cpp ROS_DOMAIN_ID=0
-echo '  Host nodes:'
-ros2 node list 2>/dev/null | grep -v '/camera\|/visual\|/launch\|/transform\|/depth_relay\|/cuvslam'
-echo '  /odom:'
-timeout 4 ros2 topic hz /odom 2>&1 | head -3 || echo '  (waiting...)'
+# ═══════════════════════════════════════════
+# [6] 验证
+# ═══════════════════════════════════════════
+echo ''
+echo '[6/6] 验证...'
+sleep 3
+echo "  === 节点 ==="
+ros2 node list 2>/dev/null | grep -v '/camera\|/visual\|/launch\|/transform\|/docker' || echo "  (无)"
+echo "  === Odom ==="
+python3 -c "
+import json
+try:
+    d = json.load(open('/tmp/odom_latest.json'))
+    print(f'  x={d[\"x\"]:.2f} y={d[\"y\"]:.2f}')
+except: print('  odom 文件尚未就绪')
+" 2>/dev/null
+
+echo "  === 狗状态 ==="
+if $ENABLE_DOG; then
+    tail -1 /tmp/lite3_init.log 2>/dev/null || echo "  (无)"
+    ping -c 1 -W 1 192.168.1.120 > /dev/null 2>&1 && echo "  狗网络: ✅" || echo "  狗网络: ❌"
+fi
+
+echo "  === CPU TOP5 ==="
+ps -eo pcpu,pid,comm --sort=-pcpu 2>/dev/null | head -6 | tail -5
+
 echo ''
 echo '==================================='
-echo ' 启动完成!'
-echo ' 监控: bash ~/Desktop/monitor_cpu.sh'
-echo '===================================
+echo ' ✅ 启动完成!'
+echo " 日志: $LOGFILE"
+echo ' 停止: bash scripts/stop_all.sh'
+echo '==================================='

@@ -10,6 +10,7 @@ base_link frame using the known static TF (camera at z=0.3m above base).
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from enum import Enum, auto
 from typing import Tuple
 
@@ -35,8 +36,11 @@ class ObstacleConfig:
 
 
 # Known static transform: camera_link → base_link
-# camera is mounted at (0, 0, 0.3) relative to base_link
-CAMERA_Z_OFFSET = 0.3  # meters
+# Camera mounted forward 80mm, up 493mm, pitched down 30°
+# Source: CAD + Lite3 URDF engineering estimate
+CAMERA_X = 0.080       # meters forward
+CAMERA_Z = 0.493       # meters up
+CAMERA_PITCH = -0.523599  # radians (-30°), camera tilted down
 
 
 class LocalObstacleDetector:
@@ -76,11 +80,15 @@ class LocalObstacleDetector:
             return self._latest_state
 
         # Transform from camera_link to base_link:
-        # camera is at (0, 0, CAMERA_Z_OFFSET) in base_link frame.
-        # For points in camera_link, z_base = z_camera - CAMERA_Z_OFFSET.
-        # x and y are unchanged (camera faces forward, no rotation).
+        # Camera at (CAMERA_X, 0, CAMERA_Z), pitched CAMERA_PITCH (-30°)
         pts = self._latest_points.astype(np.float64)
-        z_base = pts[:, 2] - CAMERA_Z_OFFSET
+        cp = math.cos(CAMERA_PITCH)
+        sp = math.sin(CAMERA_PITCH)
+        # Rotate by pitch around Y axis, then translate
+        x_rot = pts[:, 0] * cp + pts[:, 2] * sp
+        z_rot = -pts[:, 0] * sp + pts[:, 2] * cp
+        x_base = x_rot + CAMERA_X
+        z_base = z_rot + CAMERA_Z
 
         # Height filter: remove floor and overhead
         height_mask = (z_base >= self._cfg.min_height_m) & (z_base <= self._cfg.max_height_m)
@@ -91,7 +99,8 @@ class LocalObstacleDetector:
             return self._latest_state
 
         # Safety zone filter: in front of robot, within lateral bounds
-        x = pts_filtered[:, 0]
+        # Use base-frame coordinates (already transformed above)
+        x = x_base[height_mask]
         y = pts_filtered[:, 1]
         zone_mask = (
             (x > 0.0) &

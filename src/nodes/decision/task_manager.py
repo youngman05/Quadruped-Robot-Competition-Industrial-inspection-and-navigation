@@ -115,7 +115,7 @@ class TaskManagerNode(Node):
             "start", "pass_obstacle", "inspect_gauges", "report_status",
             "find_red_bar", "grasp_bar", "place_to_abnormal_zone", "finish",
         ])
-        self.declare_parameter("timeout_per_phase", 120.0)   # 每阶段超时 (秒)
+        self.declare_parameter("timeout_per_phase", 300.0)   # 每阶段超时 (秒), 含YOLO
         self.declare_parameter("tick_rate", 10.0)             # 状态机主循环频率 (Hz)
         self.declare_parameter("require_stable_gauge", True)  # 是否必须稳定检测
         self.declare_parameter("auto_advance", False)         # 调试: 自动推进阶段
@@ -246,8 +246,18 @@ class TaskManagerNode(Node):
         if not hasattr(self, "_obstacle_step"):
             self._obstacle_step = 0  # 0=穿越障碍区, 1=安全区到观察位
 
-        # ── 子步骤 0: start → obstacle_entry → obstacle_exit ──
+        # ── 子步骤 0: YOLO检测锥桶 → 注入A* → start → obstacle_exit ──
         if self._obstacle_step == 0:
+            # Phase 0a: one-shot YOLO cone detection
+            if not hasattr(self, "_yolo_done"):
+                self._yolo_done = False
+
+            if not self._yolo_done:
+                self._yolo_done = True
+                self._run_yolo_cone_detect()
+                return  # wait for next tick to start navigation
+
+            # Phase 0b: navigate
             if not self._nav.goal_sent and not self._nav.is_done():
                 self.get_logger().info("[越障 1/2] 穿越障碍区...")
                 self._nav.navigate_to_waypoint("obstacle_exit")
@@ -257,6 +267,7 @@ class TaskManagerNode(Node):
                     self.get_logger().info("已穿过障碍区，切换地图+进入安全区域")
                     self._switch_to_phase2_map()
                     self._obstacle_step = 1
+                    del self._yolo_done
                     self._nav.reset()
                 else:
                     self.get_logger().warn("越障导航失败，重试...")
@@ -278,7 +289,7 @@ class TaskManagerNode(Node):
                     self._nav.reset()
 
     def _tick_inspect_gauges(self, elapsed: float) -> None:
-        """INSPECT_GAUGES: 4 个观察位，每个位置调 /whz/inspect 服务。"""
+        """INSPECT_GAUGES: 4 个观察位，到位置后拍一帧→识别→播报→关。"""
         if self._handle_timeout(elapsed):
             return
 
@@ -320,70 +331,189 @@ class TaskManagerNode(Node):
                 self._nav.reset()
                 return
 
-        # ── 到达观察位 → 调 whz 巡检服务 ──────────
-        if not hasattr(self, "_inspect_pending"):
-            self._inspect_pending = False
+        # ── 已到达 → 拍一帧, 识别, 播报, 关 ──────
+        if not hasattr(self, "_inspect_done"):
+            self._inspect_done = False
 
-        # 服务未连接 → 等一等
-        if not hasattr(self, "_whz_client"):
-            from std_srvs.srv import Trigger
-            self._whz_client = self.create_client(Trigger, "/whz/inspect")
-            self.get_logger().info("等待 /whz/inspect 服务...")
+        if self._inspect_done:
+            return  # already processed, wait for step advance
 
-        if not self._whz_client.wait_for_service(timeout_sec=1.0):
-            self.get_logger().debug("/whz/inspect 服务不可用，重试...")
+        self._inspect_done = True
+        self._run_whz_inline(step_info["desc"])
+
+    def _run_whz_inline(self, desc: str):
+        """Capture one relay frame, run letter+gauge detection, play audio."""
+        import cv2, numpy as np, sys, time
+        from pathlib import Path
+        from collections import Counter
+
+        self.get_logger().info(f"[whz] 拍一帧识别: {desc}")
+
+        # Lazy-load whz modules (only during inspection, keeps CPU free otherwise)
+        _WS = Path(__file__).resolve().parents[3]
+        _WHZ = _WS / "src" / "whz" / "whz"
+        if str(_WHZ) not in sys.path:
+            sys.path.insert(0, str(_WHZ))
+        from letter_detector import LetterDetector
+        from gauge_detector import detect_gauge
+        from audio_player import AudioPlayer
+
+        relay_dir = Path.home() / "workspaces" / "isaac_ros-dev" / "camera_frames"
+        jpg = relay_dir / "latest_color.jpg"
+        raw = relay_dir / "latest_depth.raw"
+        meta = relay_dir / "latest_depth_meta.txt"
+
+        if not jpg.exists():
+            self.get_logger().error("[whz] 无 relay JPEG, 跳过")
+            self._advance_step()
             return
 
-        # 发送服务请求
-        if not self._inspect_pending:
-            self._inspect_pending = True
-            self.get_logger().info(f"[观察 {self._inspection_step+1}/4] 调 whz 巡检...")
-            future = self._whz_client.call_async(Trigger.Request())
-            future.add_done_callback(self._on_inspect_result)
+        # Wait for a fresh frame (up to 2s)
+        color = None
+        for _ in range(20):
+            color = cv2.imread(str(jpg), cv2.IMREAD_COLOR)
+            if color is not None and color.shape[0] > 0:
+                break
+            time.sleep(0.1)
 
-    def _on_inspect_result(self, future):
-        """whz 巡检服务回调。"""
-        self._inspect_pending = False
+        if color is None:
+            self.get_logger().error("[whz] JPEG 读取失败")
+            self._advance_step()
+            return
+
+        # Depth (optional)
+        depth = None
+        if raw.exists():
+            try:
+                data = raw.read_bytes()
+                w, h = 640, 360
+                if meta.exists():
+                    parts = meta.read_text().strip().split()
+                    if len(parts) >= 2:
+                        w, h = int(parts[0]), int(parts[1])
+                if len(data) == w * h * 2:
+                    depth = np.frombuffer(data, dtype=np.uint16).reshape(h, w).astype(np.float32) * 0.001
+            except Exception:
+                pass
+
+        # Detect
+        template_dir = _WS / "src" / "whz" / "assets" / "templates"
+        audio_dir = _WS / "src" / "whz" / "assets" / "audio"
+        letter_det = LetterDetector(template_dir, min_score=0.38)
+        audio = AudioPlayer(audio_dir, timeout_sec=10.0)
+
+        letter = letter_det.detect(color)
+        gauge = detect_gauge(color, depth)
+
+        if letter is None or gauge is None:
+            err = f"letter={'OK' if letter else 'FAIL'} gauge={'OK' if gauge else 'FAIL'}"
+            self.get_logger().warn(f"[whz] 检测失败: {err}")
+            self._advance_step()
+            return
+
+        area = letter.area
+        state = gauge.state_key
+        self.get_logger().info(
+            f"[whz] 检测成功: {area}区 {gauge.color}/{gauge.status} "
+            f"letter_score={letter.score:.3f} gauge_conf={gauge.confidence:.3f}"
+        )
+
+        # Play audio (blocking, but only ~2s)
         try:
-            response = future.result()
-            if not response.success:
-                self.get_logger().warn(f"whz 检测失败: {response.message}")
-                return
+            audio.play(audio.audio_path_for(area, state))
+        except Exception:
+            pass
 
-            import json
-            result = json.loads(response.message)
-            area = result.get("area", "?")
-            state_key = result.get("state_key", "?")
-            level = result.get("level", "?")
-            status = result.get("status", "正常")
-            color = result.get("color", "?")
+        # Save result
+        if area in self._gauge_info:
+            info = self._gauge_info[area]
+            info.detected = True
+            info.stable_detected = True
+            info.letter = area
+            info.color = gauge.color
+            info.level = gauge.level
+            info.status = gauge.status
 
-            self.get_logger().info(f"whz 检测成功: {area}区 {color}/{status}")
+        self._advance_step()
 
-            # 更新仪表信息
-            if area in self._gauge_info:
-                info = self._gauge_info[area]
-                info.detected = True
-                info.stable_detected = True
-                info.letter = area
-                info.color = color
-                info.level = level
-                info.status = status
+    def _advance_step(self):
+        """Move to next inspection sub-step."""
+        self._inspect_done = False
+        self._inspection_step += 1
+        self._nav.reset()
+        self.get_logger().info(f"观察子步骤完成 → {self._inspection_step}/4")
 
-            # 语音由 whz 直接播放（MP3），这里只记录日志
-            audio = result.get("audio_file", "")
-            if audio:
-                self.get_logger().info(f"🔊 whz 播报: {Path(audio).stem}")
+    def _run_yolo_cone_detect(self):
+        """Run one-shot YOLO cone detection and inject into A* grid."""
+        import subprocess, json, math, sys
+        from pathlib import Path
 
-            # 前进到下一个观察位
-            self._inspection_step += 1
-            self._nav.reset()
-            self.get_logger().info(
-                f"观察子步骤完成 → {self._inspection_step}/4"
+        self.get_logger().info("[YOLO] 拍一帧识别锥桶...")
+        _WS = Path(__file__).resolve().parents[3]
+        script = str(_WS / "scripts" / "yolo_detect_once.py")
+
+        try:
+            result = subprocess.run(
+                [sys.executable, script], capture_output=True, text=True, timeout=60,
+                cwd=str(_WS),
             )
-
+            data = json.loads(result.stdout) if result.stdout else {"error": "empty output"}
         except Exception as e:
-            self.get_logger().error(f"whz 服务回调异常: {e}")
+            self.get_logger().error(f"[YOLO] failed: {e}")
+            return
+
+        if "error" in data:
+            self.get_logger().warn(f"[YOLO] {data['error']}")
+            return
+
+        cones = data.get("cones", [])
+        self.get_logger().info(f"[YOLO] 检测到 {len(cones)} 个锥桶")
+
+        # Inject cone positions into Navigator's A* grid
+        for cone in cones:
+            angle_h = math.radians(cone.get("angle_h_deg", 0))
+            angle_v = math.radians(cone.get("angle_v_deg", 0))
+
+            # Distance from depth image or bounding box estimation
+            est_dist = cone.get("distance_m")
+            if est_dist is None:
+                continue
+            # Surface → cone center: +10cm (cone radius from surface to center)
+            dist_to_center = est_dist + 0.10
+
+            # Camera → base_link transform
+            pitch = -0.523599  # -30°
+            x_cam = dist_to_center
+            y_cam = dist_to_center * math.tan(angle_h)
+            z_cam = est_dist * math.tan(angle_v)
+
+            cp, sp = math.cos(pitch), math.sin(pitch)
+            x_base = x_cam * cp + z_cam * sp + 0.080
+            y_base = y_cam
+            z_base = -x_cam * sp + z_cam * cp + 0.493
+
+            # Map frame
+            nav = self._nav
+            cos_y = math.cos(nav._current_yaw)
+            sin_y = math.sin(nav._current_yaw)
+            map_x = nav._current_x + x_base * cos_y - y_base * sin_y
+            map_y = nav._current_y + x_base * sin_y + y_base * cos_y
+
+            # Mark on grid
+            from navigation.map_grid import ros_to_grid, OCCUPIED, RESOLUTION as GRID_RES
+            gr, gc = ros_to_grid(map_x, map_y)
+            radius_cells = int(math.ceil(0.20 / GRID_RES))  # 20cm radius
+            rows, cols = nav._planner._inflated.shape
+            for dr in range(-radius_cells, radius_cells + 1):
+                for dc in range(-radius_cells, radius_cells + 1):
+                    if dr*dr + dc*dc <= radius_cells*radius_cells:
+                        nr, nc = gr + dr, gc + dc
+                        if 0 <= nr < rows and 0 <= nc < cols:
+                            nav._planner._inflated[nr, nc] = OCCUPIED
+
+            self.get_logger().info(
+                f"[YOLO] 标记锥桶: grid({gr},{gc}) map({map_x:.2f},{map_y:.2f}) r=0.20m"
+            )
 
     def _tick_find_red_bar(self, elapsed: float) -> None:
         """FIND_RED_BAR: 导航到抓取区，寻找并定位红色条。"""
