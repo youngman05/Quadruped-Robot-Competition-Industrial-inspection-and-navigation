@@ -1,0 +1,22 @@
+Turn test: FWD 1m → LEFT90 → RIGHT90 → RIGHT90
+Initial yaw (relative): -0.0°
+
+[1] Forward 1m...
+  yaw after: 0.3°
+
+[2] Left turn 90°...
+  OK — yaw: 86.4°
+
+[3] Right turn 90°...
+  OK — yaw: 7.2°
+
+[4] Right turn 90°...
+  OK — yaw: -88.6°
+
+=== Summary ===
+  FWD 1m       → yaw=0.3°
+  LEFT 90      → yaw=86.4°
+  RIGHT 90     → yaw=7.2°
+  RIGHT 90     → yaw=-88.6°
+  Final yaw: -88.6°
+  Net rotation: +90 -90 -90 = -90°, cuVSLAM says: -88.6°

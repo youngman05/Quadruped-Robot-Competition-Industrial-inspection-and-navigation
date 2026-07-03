@@ -115,7 +115,7 @@ class TaskManagerNode(Node):
             "start", "pass_obstacle", "inspect_gauges", "report_status",
             "find_red_bar", "grasp_bar", "place_to_abnormal_zone", "finish",
         ])
-        self.declare_parameter("timeout_per_phase", 120.0)   # 每阶段超时 (秒)
+        self.declare_parameter("timeout_per_phase", 300.0)   # 每阶段超时 (秒), 含YOLO
         self.declare_parameter("tick_rate", 10.0)             # 状态机主循环频率 (Hz)
         self.declare_parameter("require_stable_gauge", True)  # 是否必须稳定检测
         self.declare_parameter("auto_advance", False)         # 调试: 自动推进阶段

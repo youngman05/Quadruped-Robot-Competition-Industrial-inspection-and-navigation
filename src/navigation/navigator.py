@@ -173,9 +173,9 @@ class Navigator:
         self._stuck_start_y: float = 0.0
         self._stuck_start_yaw: float = 0.0
         self._stuck_start_time: float = 0.0
-        self._stuck_timeout: float = 10.0
+        self._stuck_timeout: float = 120.0   # effectively disabled (cuVSLAM odom too noisy)
         self._stuck_dist_threshold: float = 0.05
-        self._stuck_yaw_threshold: float = 0.2   # rad — treat as progress if turning
+        self._stuck_yaw_threshold: float = 0.2
 
         # API compatibility
         self._goal_sent: bool = False
@@ -536,16 +536,27 @@ class Navigator:
                 self._udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 self._dog_addr = ('192.168.1.120', 43893)
 
-            # Forward velocity (0x0140 = 320)
-            payload = struct.pack('<3id', 320, 8, 1, float(vx))
-            self._udp_sock.sendto(payload, self._dog_addr)
+            # Send heartbeat (dog requires heartbeat from same source)
+            self._udp_sock.sendto(
+                struct.pack('<3i', 0x21040001, 0, 0), self._dog_addr
+            )
 
-            # Lateral velocity (0x0145 = 325)
-            payload = struct.pack('<3id', 325, 8, 1, 0.0)
-            self._udp_sock.sendto(payload, self._dog_addr)
-
-            # Angular velocity (0x0141 = 321), negated per SDK convention
-            payload = struct.pack('<3id', 321, 8, 1, float(-az))
-            self._udp_sock.sendto(payload, self._dog_addr)
+            # Only send ONE motion type per cycle — dog firmware processes
+            # the last MotionComplexCMD as the active mode.
+            if abs(az) > 0.1:
+                # Prioritize rotation when heading correction needed
+                self._udp_sock.sendto(
+                    struct.pack('<3id', 321, 8, 1, float(-az)), self._dog_addr
+                )
+            elif abs(vx) > 0.01:
+                # Forward only (straight line)
+                self._udp_sock.sendto(
+                    struct.pack('<3id', 320, 8, 1, float(vx)), self._dog_addr
+                )
+            else:
+                # Stop
+                self._udp_sock.sendto(
+                    struct.pack('<3id', 320, 8, 1, 0.0), self._dog_addr
+                )
         except Exception:
             pass
