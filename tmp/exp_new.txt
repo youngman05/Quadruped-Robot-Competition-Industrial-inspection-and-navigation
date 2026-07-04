@@ -1,0 +1,2 @@
+[INFO] [1783150642.358238634] [cuvslam_odometry_udp_exporter]: exporting /visual_slam/vis/slam_odometry to udp://127.0.0.1:19001
+[INFO] [1783150642.368711107] [cuvslam_odometry_udp_exporter]: sent 1 odom UDP packets to 127.0.0.1:19001 stamp=1783150642.036685791

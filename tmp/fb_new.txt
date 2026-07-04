@@ -1,0 +1,3 @@
+[WARN] [1783150642.383722610] [final_bridge]: dropped stale odom packet latency=335.15 ms > 150.00 ms | recv=1 drained_old=0 stale_drop=1
+[WARN] [1783150646.825698154] [final_bridge]: still waiting for first UDP odometry packet
+[INFO] [1783150648.580677180] [final_bridge]: bridged 1 UDP msgs | stamp=1783150647.633088623 (source) | latency=137.34 ms | recv=48 drained_old=1 stale_drop=46 invalid_drop=0 | self-verify: 1

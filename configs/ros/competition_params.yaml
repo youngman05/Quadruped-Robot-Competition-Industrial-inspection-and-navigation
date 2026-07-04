@@ -51,11 +51,12 @@ yolo_detect_node:
 task_manager_node:
   ros__parameters:
     phases: ["start", "pass_obstacle", "inspect_gauges", "report_status", "find_red_bar", "grasp_bar", "place_to_abnormal_zone", "finish"]
-    timeout_per_phase: 120.0     # 每阶段超时秒数
+    timeout_per_phase: 300.0     # 每阶段超时秒数 (含YOLO, 仪表检测)
     report_duration: 5.0         # 语音播报最短时长
     tick_rate: 10.0              # 状态机主循环频率 (Hz)
     require_stable_gauge: true   # 是否必须仪表稳定检测才推进
     auto_advance: false          # 调试: 自动推进阶段（跳过所有条件）
+    phase2_map_yaml: "navi/map/competition_field_phase2.yaml"  # Nav2 越障后地图
     gauge_topic: "/gauge/status"
     yolo_topic: "/yolo/detections"
     slam_status_topic: "/visual_slam/status"

@@ -1,0 +1,4 @@
+=== Direct UDP test ===
+HB sent
+FWD 0.3 sent
+STOP sent

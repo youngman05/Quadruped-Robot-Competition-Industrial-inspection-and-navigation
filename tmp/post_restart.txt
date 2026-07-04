@@ -1,0 +1,15 @@
+=== ps aux | grep -E "task_man|lite3" | grep -v grep ===
+superwf+   23568  0.0  0.0  12604  2408 ?        S    15:19   0:00 bash -c cd /home/superwfx666/quadruped-robot-competition && source install/setup.bash && source /opt/ros/foxy/setup.bash && export RMW_IMPLEMENTATION=rmw_fastrtps_cpp ROS_DOMAIN_ID=0 && export NAV_DIRECT_UDP=1 && nohup ros2 launch quadruped_robot_competition competition.launch.py enable_task_manager:=true enable_navigation:=true &>/tmp/task_manager.log &
+superwf+   23624  1.7  0.2 433196 41312 ?        Sl   15:19   0:03 /usr/bin/python3 /opt/ros/foxy/bin/ros2 launch quadruped_robot_competition competition.launch.py enable_task_manager:=true enable_navigation:=true
+superwf+   23638 31.7  0.4 911816 61184 ?        Sl   15:19   0:54 /usr/bin/python3 /home/superwfx666/quadruped-robot-competition/install/quadruped_robot_competition/lib/quadruped_robot_competition/task_manager --ros-args -r __node:=task_manager_node --params-file /home/superwfx666/quadruped-robot-competition/configs/ros/competition_params.yaml
+
+=== tail -5 /tmp/task_manager.log 2>/dev/null ===
+[task_manager-2] [INFO] [1783149721.275633200] [task_manager_node]: Nav goal → 障碍区出口(左侧外) (0.60, 0.75)
+[task_manager-2] [INFO] [1783149721.644559137] [task_manager_node]: A* path: 2 waypoints, executing...
+[task_manager-2] [INFO] [1783149721.691059922] [task_manager_node]: Path simplified: 2 → 2 waypoints
+[task_manager-2] [INFO] [1783149721.740825331] [task_manager_node]: Turn to 180 deg
+[task_manager-2] [INFO] [1783149721.773853736] [task_manager_node]: Walk 4.75 m → (0.60, 0.75)
+
+=== grep -i "Navigator initialized\|Direct UDP" /tmp/task_manager.log 2>/dev/null ===
+[task_manager-2] [INFO] [1783149598.461179076] [task_manager_node]: Navigator initialized (MotionController API mode)
+

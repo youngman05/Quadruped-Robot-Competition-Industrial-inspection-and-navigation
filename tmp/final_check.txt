@@ -1,0 +1,22 @@
+=== ps aux | grep -E "task_man|lite3" | grep -v grep ===
+superwf+   25128  0.1  0.0  12604  2368 ?        S    15:25   0:00 bash -c cd /home/superwfx666/quadruped-robot-competition && source install/setup.bash && source /opt/ros/foxy/setup.bash && export RMW_IMPLEMENTATION=rmw_fastrtps_cpp ROS_DOMAIN_ID=0 && nohup ros2 launch quadruped_robot_competition competition.launch.py enable_task_manager:=true enable_navigation:=true &>/tmp/task_manager.log &
+superwf+   25193  9.5  0.2 433196 39464 ?        Sl   15:26   0:03 /usr/bin/python3 /opt/ros/foxy/bin/ros2 launch quadruped_robot_competition competition.launch.py enable_task_manager:=true enable_navigation:=true
+superwf+   25246 19.4  0.3 917068 57580 ?        Sl   15:26   0:03 /usr/bin/python3 /home/superwfx666/quadruped-robot-competition/install/quadruped_robot_competition/lib/quadruped_robot_competition/task_manager --ros-args -r __node:=task_manager_node --params-file /home/superwfx666/quadruped-robot-competition/configs/ros/competition_params.yaml
+
+=== grep -i "Direct UDP\|initialized" /tmp/task_manager.log 2>/dev/null | tail -5 ===
+
+=== tail -10 /tmp/task_manager.log 2>/dev/null ===
+╚════════════════════════════════════════╝
+
+[INFO] [yolo_detect_publisher-1]: process started with pid [25244]
+[INFO] [task_manager-2]: process started with pid [25246]
+[INFO] [initial_pose_publisher-3]: process started with pid [25248]
+[INFO] [static_transform_publisher-4]: process started with pid [25250]
+[INFO] [depth_publisher-5]: process started with pid [25252]
+[static_transform_publisher-4] [INFO] [1783149978.445063350] [base_to_camera_tf]: Spinning until killed publishing transform from 'base_link' to 'camera_link'
+[depth_publisher-5] [INFO] [1783149998.005926541] [d455_depth_publisher]: Reading depth from Docker relay
+[task_manager-2] [WARN] [1783149998.637060926] [task_manager_node]: NAV_DIRECT_UDP=1: direct Lite3 UDP ENABLED
+
+ps aux | grep -E "task_man|lite3" | grep -v grep: 958 bytes
+grep -i "Direct UDP\|initialized" /tmp/task_manager.log 2>/dev/null | tail -5: 0 bytes
+tail -10 /tmp/task_manager.log 2>/dev/null: 830 bytes

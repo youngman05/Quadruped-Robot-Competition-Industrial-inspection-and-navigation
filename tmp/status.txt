@@ -1,0 +1,17 @@
+=== cat /tmp/lite3_init.log 2>/dev/null ===
+Dog at 192.168.1.120:43893
+Skip stand (--no-stand)
+Sending: auto mode (0x21010C03)
+Sending: motion mode (0x21010D06)
+Dog ready. Heartbeat active — Ctrl+C to stop.
+
+
+=== ps aux | grep lite3_init | grep -v grep | grep -v bash ===
+superwf+   20555  0.4  0.0  22784 10672 ?        S    15:07   0:00 python3 -u scripts/lite3_init.py --no-stand
+
+
+=== ps aux | grep task_man | grep -v grep ===
+superwf+   12729  0.1  0.2 433160 41516 ?        Sl   14:36   0:03 /usr/bin/python3 /opt/ros/foxy/bin/ros2 launch quadruped_robot_competition competition.launch.py enable_task_manager:=true enable_navigation:=true
+superwf+   12779 45.7  0.3 911660 58864 ?        Sl   14:36  14:40 /usr/bin/python3 /home/superwfx666/quadruped-robot-competition/install/quadruped_robot_competition/lib/quadruped_robot_competition/task_manager --ros-args -r __node:=task_manager_node --params-file /home/superwfx666/quadruped-robot-competition/configs/ros/competition_params.yaml
+
+

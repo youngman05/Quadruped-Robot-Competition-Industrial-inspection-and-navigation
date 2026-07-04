@@ -31,7 +31,11 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 
-from navigation.navigator import Navigator
+from nav2_msgs.srv import LoadMap
+from navi.navigation_client import (
+    NavigationClient,
+    WAYPOINTS,
+)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -120,6 +124,7 @@ class TaskManagerNode(Node):
         self.declare_parameter("require_stable_gauge", True)  # 是否必须稳定检测
         self.declare_parameter("auto_advance", False)         # 调试: 自动推进阶段
 
+        self.declare_parameter("phase2_map_yaml", "navi/map/competition_field_phase2.yaml")
         self.declare_parameter("gauge_topic", "/gauge/status")
         self.declare_parameter("yolo_topic", "/yolo/detections")
         self.declare_parameter("slam_status_topic", "/visual_slam/status")
@@ -168,8 +173,12 @@ class TaskManagerNode(Node):
         self._abnormal_handled: int = 0                # 已完成抓取放置的异常数
         self._phase_seq_idx: int = 0                  # 在 PHASE_SEQUENCE 中的位置
 
-        # ── 导航客户端 (轻量 A* + 纯追踪) ─────
-        self._nav = Navigator(self)
+        # ── 地图切换客户端 ────────────────────────
+        self._phase2_yaml = str(self.get_parameter("phase2_map_yaml").value)
+        self._map_client = self.create_client(LoadMap, "/map_server/load_map")
+
+        # ── 导航客户端 (Nav2 NavigateToPose) ─────
+        self._nav = NavigationClient(self)
         # 4 个观察子步骤: 位置 + 朝向 + 说明
         self._inspection_steps = [
             {"waypoint": "pos1_middle",        "desc": "仰头看上柜底面 (上区仪表)"},
@@ -231,9 +240,8 @@ class TaskManagerNode(Node):
         if self._auto_advance and elapsed > 0.5:
             self._advance_to_next_phase()
 
-        # 用 odom 数据到达判断定位就绪 (DDS QoS 兼容性更好)
-        slam_ready = self._slam_ok or self._nav._has_odom
-        if slam_ready and elapsed > 1.0:
+        # 正式条件: SLAM 就绪 + 至少收到过一次 gauge/yolo 数据
+        if self._slam_ok and elapsed > 1.0:
             self.get_logger().info("各子系统就绪，进入越障巡航阶段")
             self._advance_to_next_phase()
 
@@ -246,28 +254,17 @@ class TaskManagerNode(Node):
         if not hasattr(self, "_obstacle_step"):
             self._obstacle_step = 0  # 0=穿越障碍区, 1=安全区到观察位
 
-        # ── 子步骤 0: YOLO检测锥桶 → 注入A* → start → obstacle_exit ──
+        # ── 子步骤 0: start → obstacle_cross_target (Nav2 全局 + 局部代价地图绕开锥桶) ──
         if self._obstacle_step == 0:
-            # Phase 0a: one-shot YOLO cone detection
-            if not hasattr(self, "_yolo_done"):
-                self._yolo_done = False
-
-            if not self._yolo_done:
-                self._yolo_done = True
-                self._run_yolo_cone_detect()
-                return  # wait for next tick to start navigation
-
-            # Phase 0b: navigate
             if not self._nav.goal_sent and not self._nav.is_done():
                 self.get_logger().info("[越障 1/2] 穿越障碍区...")
-                self._nav.navigate_to_waypoint("obstacle_exit")
+                self._nav.navigate_to_waypoint("obstacle_cross_target")
 
             if self._nav.is_done():
                 if self._nav.succeeded():
                     self.get_logger().info("已穿过障碍区，切换地图+进入安全区域")
                     self._switch_to_phase2_map()
                     self._obstacle_step = 1
-                    del self._yolo_done
                     self._nav.reset()
                 else:
                     self.get_logger().warn("越障导航失败，重试...")
@@ -351,7 +348,7 @@ class TaskManagerNode(Node):
 
         # Lazy-load whz modules (only during inspection, keeps CPU free otherwise)
         _WS = Path(__file__).resolve().parents[3]
-        _WHZ = _WS / "src" / "whz" / "whz"
+        _WHZ = _WS / "whz" / "whz"
         if str(_WHZ) not in sys.path:
             sys.path.insert(0, str(_WHZ))
         from letter_detector import LetterDetector
@@ -397,8 +394,8 @@ class TaskManagerNode(Node):
                 pass
 
         # Detect
-        template_dir = _WS / "src" / "whz" / "assets" / "templates"
-        audio_dir = _WS / "src" / "whz" / "assets" / "audio"
+        template_dir = _WS / "whz" / "assets" / "templates"
+        audio_dir = _WS / "whz" / "assets" / "audio"
         letter_det = LetterDetector(template_dir, min_score=0.38)
         audio = AudioPlayer(audio_dir, timeout_sec=10.0)
 
@@ -442,78 +439,6 @@ class TaskManagerNode(Node):
         self._inspection_step += 1
         self._nav.reset()
         self.get_logger().info(f"观察子步骤完成 → {self._inspection_step}/4")
-
-    def _run_yolo_cone_detect(self):
-        """Run one-shot YOLO cone detection and inject into A* grid."""
-        import subprocess, json, math, sys
-        from pathlib import Path
-
-        self.get_logger().info("[YOLO] 拍一帧识别锥桶...")
-        _WS = Path(__file__).resolve().parents[3]
-        script = str(_WS / "scripts" / "yolo_detect_once.py")
-
-        try:
-            result = subprocess.run(
-                [sys.executable, script], capture_output=True, text=True, timeout=60,
-                cwd=str(_WS),
-            )
-            data = json.loads(result.stdout) if result.stdout else {"error": "empty output"}
-        except Exception as e:
-            self.get_logger().error(f"[YOLO] failed: {e}")
-            return
-
-        if "error" in data:
-            self.get_logger().warn(f"[YOLO] {data['error']}")
-            return
-
-        cones = data.get("cones", [])
-        self.get_logger().info(f"[YOLO] 检测到 {len(cones)} 个锥桶")
-
-        # Inject cone positions into Navigator's A* grid
-        for cone in cones:
-            angle_h = math.radians(cone.get("angle_h_deg", 0))
-            angle_v = math.radians(cone.get("angle_v_deg", 0))
-
-            # Distance from depth image or bounding box estimation
-            est_dist = cone.get("distance_m")
-            if est_dist is None:
-                continue
-            # Surface → cone center: +10cm (cone radius from surface to center)
-            dist_to_center = est_dist + 0.10
-
-            # Camera → base_link transform
-            pitch = -0.523599  # -30°
-            x_cam = dist_to_center
-            y_cam = dist_to_center * math.tan(angle_h)
-            z_cam = est_dist * math.tan(angle_v)
-
-            cp, sp = math.cos(pitch), math.sin(pitch)
-            x_base = x_cam * cp + z_cam * sp + 0.080
-            y_base = y_cam
-            z_base = -x_cam * sp + z_cam * cp + 0.493
-
-            # Map frame
-            nav = self._nav
-            cos_y = math.cos(nav._current_yaw)
-            sin_y = math.sin(nav._current_yaw)
-            map_x = nav._current_x + x_base * cos_y - y_base * sin_y
-            map_y = nav._current_y + x_base * sin_y + y_base * cos_y
-
-            # Mark on grid
-            from navigation.map_grid import ros_to_grid, OCCUPIED, RESOLUTION as GRID_RES
-            gr, gc = ros_to_grid(map_x, map_y)
-            radius_cells = int(math.ceil(0.20 / GRID_RES))  # 20cm radius
-            rows, cols = nav._planner._inflated.shape
-            for dr in range(-radius_cells, radius_cells + 1):
-                for dc in range(-radius_cells, radius_cells + 1):
-                    if dr*dr + dc*dc <= radius_cells*radius_cells:
-                        nr, nc = gr + dr, gc + dc
-                        if 0 <= nr < rows and 0 <= nc < cols:
-                            nav._planner._inflated[nr, nc] = OCCUPIED
-
-            self.get_logger().info(
-                f"[YOLO] 标记锥桶: grid({gr},{gc}) map({map_x:.2f},{map_y:.2f}) r=0.20m"
-            )
 
     def _tick_find_red_bar(self, elapsed: float) -> None:
         """FIND_RED_BAR: 导航到抓取区，寻找并定位红色条。"""
@@ -621,8 +546,18 @@ class TaskManagerNode(Node):
 
     def _switch_to_phase2_map(self) -> None:
         """越障完成后切换地图: 障碍区封堵, 后续不走回头路."""
-        self._nav.switch_phase2_map()
-        self.get_logger().info("地图已切换 → Phase 2 (障碍区封堵)")
+        if not self._map_client.wait_for_service(timeout_sec=3.0):
+            self.get_logger().warn("map_server 不可用, 跳过地图切换")
+            return
+        req = LoadMap.Request()
+        req.map_url = self._phase2_yaml
+        future = self._map_client.call_async(req)
+        future.add_done_callback(
+            lambda f: self.get_logger().info(
+                "地图已切换 → Phase 2 (障碍区封堵)"
+            ) if f.result().result == LoadMap.Response().RESULT_SUCCESS
+            else self.get_logger().error("地图切换失败")
+        )
 
     def _advance_to_next_phase(self) -> None:
         """推进到下一个阶段。"""

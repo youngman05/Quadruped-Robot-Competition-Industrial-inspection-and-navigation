@@ -1,0 +1,15 @@
+[task_manager-2] [INFO] [1783150439.288223005] [task_manager_node]: A* path: 2 waypoints, executing...
+[task_manager-2] [INFO] [1783150439.316869109] [task_manager_node]: Path simplified: 2 → 2 waypoints
+[task_manager-2] [INFO] [1783150439.326077399] [task_manager_node]: Turn to 180 deg
+[task_manager-2] [INFO] [1783150439.341016657] [task_manager_node]: Walk 4.75 m → (0.60, 0.75)
+[task_manager-2] [ERROR] [1783150499.430211674] [task_manager_node]: move_forward failed at dist=4.75
+[task_manager-2] [WARN] [1783150499.525804119] [task_manager_node]: 越障导航失败，重试...
+[task_manager-2] [INFO] [1783150499.689529683] [task_manager_node]: [越障 1/2] 穿越障碍区...
+[task_manager-2] [INFO] [1783150499.889696083] [task_manager_node]: Nav goal → 障碍区出口(左侧外) (0.60, 0.75)
+[task_manager-2] [INFO] [1783150500.752638939] [task_manager_node]: A* path: 2 waypoints, executing...
+[task_manager-2] [INFO] [1783150500.904405898] [task_manager_node]: Path simplified: 2 → 2 waypoints
+[task_manager-2] [INFO] [1783150500.915870974] [task_manager_node]: Turn to 180 deg
+[task_manager-2] [INFO] [1783150500.978707939] [task_manager_node]: Walk 4.75 m → (0.60, 0.75)
+[task_manager-2] [ERROR] [1783150553.489999751] [task_manager_node]: 阶段 越障巡航 超时 (300.1s > 300.0s)，进入中止状态!
+[task_manager-2] [INFO] [1783150553.511047532] [task_manager_node]: ══════ 状态机进入终态: 中止 ══════
+[task_manager-2] [ERROR] [1783150561.101405963] [task_manager_node]: move_forward failed at dist=4.75

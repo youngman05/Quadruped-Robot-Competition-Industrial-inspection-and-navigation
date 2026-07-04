@@ -1,0 +1,14 @@
+=== ps aux | grep task_man | grep -v grep ===
+superwf+   26045  0.2  0.0  12604  2380 ?        S    15:30   0:00 bash -c cd /home/superwfx666/quadruped-robot-competition && source install/setup.bash && source /opt/ros/foxy/setup.bash && export RMW_IMPLEMENTATION=rmw_fastrtps_cpp ROS_DOMAIN_ID=0 && nohup ros2 launch quadruped_robot_competition competition.launch.py enable_task_manager:=true enable_navigation:=true &>/tmp/task_manager.log &
+superwf+   26119 14.6  0.2 433156 41468 ?        Sl   15:30   0:03 /usr/bin/python3 /opt/ros/foxy/bin/ros2 launch quadruped_robot_competition competition.launch.py enable_task_manager:=true enable_navigation:=true
+superwf+   26141 24.0  0.3 843844 55792 ?        Rl   15:30   0:03 /usr/bin/python3 /home/superwfx666/quadruped-robot-competition/install/quadruped_robot_competition/lib/quadruped_robot_competition/task_manager --ros-args -r __node:=task_manager_node --params-file /home/superwfx666/quadruped-robot-competition/configs/ros/competition_params.yaml
+
+=== tail -5 /tmp/task_manager.log 2>/dev/null ===
+[INFO] [task_manager-2]: process started with pid [26141]
+[INFO] [initial_pose_publisher-3]: process started with pid [26143]
+[INFO] [static_transform_publisher-4]: process started with pid [26145]
+[INFO] [depth_publisher-5]: process started with pid [26147]
+[static_transform_publisher-4] [INFO] [1783150227.523231215] [base_to_camera_tf]: Spinning until killed publishing transform from 'base_link' to 'camera_link'
+
+=== grep "NAV_DIRECT_UDP\|initialized" /tmp/task_manager.log 2>/dev/null ===
+

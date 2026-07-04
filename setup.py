@@ -1,15 +1,23 @@
 """Package setup with ROS2 node entry points."""
 from setuptools import setup, find_packages
+from glob import glob
+
+package_name = "quadruped_robot_competition"
 
 setup(
-    name="quadruped-robot-competition",
+    name=package_name,
     version="0.1.0",
     package_dir={"": "src"},
     packages=find_packages(where="src"),
     python_requires=">=3.8",
     data_files=[
-        ("share/" + "quadruped_robot_competition" + "/launch",
-         ["launch/competition.launch.py"]),
+        ("share/" + package_name, ["package.xml"]),
+        ("share/" + package_name + "/launch",
+         glob("launch/*.py")),
+        ("share/" + package_name + "/configs/navigation",
+         glob("configs/navigation/*.yaml")),
+        ("share/" + package_name + "/navi/map",
+         glob("navi/map/*.pgm") + glob("navi/map/*.yaml")),
     ],
     # ROS2 节点入口 — ros2 run quadruped_robot_competition <name>
     entry_points={
@@ -23,10 +31,12 @@ setup(
             # ── 决策层 ──────────────────────────
             "task_manager = nodes.decision.task_manager:main",
             # "speech_publisher = nodes.decision.speech:main",
-            # ── 导航层 ──────────────────────────
+            # ── 导航层 (Nav2) ──────────────────
             "depth_publisher = nodes.navigation.depth_publisher:main",
             "initial_pose_publisher = nodes.navigation.initial_pose_publisher:main",
-            "lightweight_navigator = nodes.navigation.lightweight_navigator_node:main",
+            "cuvslam_bridge = nodes.navigation.cuvslam_bridge:main",
+            "ir_imu_bridge = nodes.navigation.ir_imu_bridge:main",
+            "cmd_vel_bridge = nodes.navigation.cmd_vel_bridge:main",
         ],
     },
 )

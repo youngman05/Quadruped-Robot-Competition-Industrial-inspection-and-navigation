@@ -1,0 +1,21 @@
+=== [1] Kill old lite3_init ===
+cleaned
+
+=== [2] UDP test to dog ===
+Heartbeat sent to ('192.168.1.120', 43893)
+UDP OK (no error)
+
+=== [3] Start lite3_init (--no-stand) ===
+PID=20555
+
+=== [4] Check log ===
+Dog at 192.168.1.120:43893
+Skip stand (--no-stand)
+Sending: auto mode (0x21010C03)
+Sending: motion mode (0x21010D06)
+Dog ready. Heartbeat active — Ctrl+C to stop.
+
+=== [5] Check process ===
+superwf+   20555  3.8  0.0  22784 10672 ?        S    15:07   0:00 python3 -u scripts/lite3_init.py --no-stand
+
+=== DONE ===

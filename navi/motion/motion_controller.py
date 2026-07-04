@@ -87,6 +87,29 @@ class MotionController:
 
     # ── Lifecycle ──────────────────────────────────
 
+    def setup_odom_only(self, desired_start_yaw_deg: float = 0.0):
+        """Start odom reader ONLY — no dog commands.
+
+        Use when lite3_init / jetson2motion handles the dog.
+        """
+        self._running = True
+        t = threading.Thread(target=self._odom_loop, daemon=True)
+        t.start()
+
+        for _ in range(50):
+            with self._lock:
+                if self._odom_count > 3:
+                    break
+            time.sleep(0.1)
+        else:
+            raise RuntimeError("No odometry after 5s — cuVSLAM running?")
+
+        with self._lock:
+            raw = self._yaw_raw
+        self._yaw_offset = desired_start_yaw_deg - raw
+        print(f"[MotionCtrl] Odom ready. Yaw: raw={raw:.0f} "
+              f"desired={desired_start_yaw_deg:.0f} offset={self._yaw_offset:.0f}")
+
     def initialize(self, desired_start_yaw_deg: float = 0.0,
                    calibrate_yaw: bool = True):
         """Start odom reader, create UDP socket, set auto mode.

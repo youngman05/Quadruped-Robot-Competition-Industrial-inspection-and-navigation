@@ -1,0 +1,3 @@
+[WARN] [1783150556.909789528] [final_bridge]: still waiting for first UDP odometry packet
+[WARN] [1783150564.924359461] [final_bridge]: still waiting for first UDP odometry packet
+[WARN] [1783150573.079906434] [final_bridge]: still waiting for first UDP odometry packet

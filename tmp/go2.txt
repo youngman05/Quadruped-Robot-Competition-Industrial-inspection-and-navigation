@@ -1,0 +1,6 @@
+[task_manager-2] [INFO] [1783150439.326077399] [task_manager_node]: Turn to 180 deg
+[task_manager-2] [INFO] [1783150439.341016657] [task_manager_node]: Walk 4.75 m → (0.60, 0.75)
+[task_manager-2] [ERROR] [1783150499.430211674] [task_manager_node]: move_forward failed at dist=4.75
+[task_manager-2] [INFO] [1783150500.915870974] [task_manager_node]: Turn to 180 deg
+[task_manager-2] [INFO] [1783150500.978707939] [task_manager_node]: Walk 4.75 m → (0.60, 0.75)
+[task_manager-2] [ERROR] [1783150561.101405963] [task_manager_node]: move_forward failed at dist=4.75

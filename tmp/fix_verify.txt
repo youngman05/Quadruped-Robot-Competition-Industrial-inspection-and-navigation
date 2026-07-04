@@ -1,0 +1,2 @@
+185:            yaw = self._yaw_raw + self._yaw_offset
+260:            if abs(err) < tolerance:

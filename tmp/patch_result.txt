@@ -1,0 +1,3 @@
+179:        if True:  # always use initialize (was: NAV_DIRECT_UDP check)
+181:            self._mc.initialize(desired_start_yaw_deg=yaw_calib)
+186:            self._mc.setup_odom_only(desired_start_yaw_deg=yaw_calib)

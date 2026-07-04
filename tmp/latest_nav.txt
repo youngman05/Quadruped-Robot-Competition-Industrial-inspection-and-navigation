@@ -1,0 +1,8 @@
+[task_manager-2] [ERROR] [1783150315.330274973] [task_manager_node]: [YOLO] failed: Command '['/usr/bin/python3', '/home/superwfx666/quadruped-robot-competition/scripts/yolo_detect_once.py']' timed out after 60 seconds
+[task_manager-2] [INFO] [1783150315.900095779] [task_manager_node]: Nav goal → 障碍区出口(左侧外) (0.60, 0.75)
+[task_manager-2] [INFO] [1783150316.794937514] [task_manager_node]: Turn to 180 deg
+[task_manager-2] [INFO] [1783150316.800417811] [task_manager_node]: Walk 4.75 m → (0.60, 0.75)
+[task_manager-2] [ERROR] [1783150376.808762386] [task_manager_node]: move_forward failed at dist=4.75
+[task_manager-2] [INFO] [1783150377.192496684] [task_manager_node]: Nav goal → 障碍区出口(左侧外) (0.60, 0.75)
+[task_manager-2] [INFO] [1783150377.929820288] [task_manager_node]: Turn to 180 deg
+[task_manager-2] [INFO] [1783150377.934217977] [task_manager_node]: Walk 4.75 m → (0.60, 0.75)

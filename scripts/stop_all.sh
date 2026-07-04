@@ -9,7 +9,9 @@ echo "[1] 停止 launch..."
 pkill -9 -f "ros2 launch"          2>/dev/null
 pkill -9 -f "competition.launch"   2>/dev/null
 pkill -9 -f "transfer_launch"      2>/dev/null
-sleep 2
+pkill -9 -f "_ros2_daemon"         2>/dev/null
+pkill -9 -f "ros2"                 2>/dev/null   # aggressive: any ros2
+sleep 3
 
 # 2. 杀掉所有比赛节点
 echo "[2] 停止比赛节点..."
@@ -44,6 +46,13 @@ if [ -n "$CN" ]; then
     docker exec $CN pkill -f udp_exporter       2>/dev/null || true
     docker exec $CN pkill -f loop_metrics_recorder 2>/dev/null || true
 fi
+
+# 6. 最终清扫 — 确保任何残留都被杀掉
+echo "[6] 最终清扫..."
+sudo pkill -9 -f ros2       2>/dev/null || true
+sudo pkill -9 -f task_manager 2>/dev/null || true
+sudo pkill -9 -f competition 2>/dev/null || true
+sleep 1
 
 echo ""
 echo "=== 剩余进程 (TOP5 CPU) ==="

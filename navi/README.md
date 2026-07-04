@@ -46,22 +46,23 @@
 
 ### 导航栈对比
 
-| | Nav2 (已废弃) | 轻量方案 |
-|---|---|---|
-| 地图加载 | map_server 进程 | `map_grid.py` numpy数组 |
-| 全局规划 | planner_server 进程 | `astar_planner.py` (<30ms) |
-| 路径跟踪 | controller_server 进程 | `pure_pursuit.py` |
-| 行为编排 | bt_navigator 进程 | `task_manager.py` 状态机 |
-| 局部避障 | local_costmap (3层) | `local_obstacle.py` 点云计数 |
-| 生命周期 | lifecycle_manager 进程 | 不需要 (单节点) |
-| **进程数** | **12** | **5** |
-| **CPU占用** | **100% (卡死)** | **~10%** |
+|                   | Nav2 (已废弃)          | 轻量方案                       |
+| ----------------- | ---------------------- | ------------------------------ |
+| 地图加载          | map_server 进程        | `map_grid.py` numpy数组      |
+| 全局规划          | planner_server 进程    | `astar_planner.py` (<30ms)   |
+| 路径跟踪          | controller_server 进程 | `pure_pursuit.py`            |
+| 行为编排          | bt_navigator 进程      | `task_manager.py` 状态机     |
+| 局部避障          | local_costmap (3层)    | `local_obstacle.py` 点云计数 |
+| 生命周期          | lifecycle_manager 进程 | 不需要 (单节点)                |
+| **进程数**  | **12**           | **5**                    |
+| **CPU占用** | **100% (卡死)**  | **~10%**                 |
 
 ---
 
 ## 依赖与硬件
 
 ### Jetson Xavier NX
+
 - **OS**: Ubuntu 20.04 + JetPack 5.x
 - **ROS2**: Foxy (主机) + Humble (Docker内)
 - **传感器**: Intel RealSense D455 (USB 3.0)
@@ -69,16 +70,16 @@
 
 ### 关键软件包
 
-| 组件 | 安装方式 | 用途 |
-|------|---------|------|
-| `ros-foxy-ros-base` | apt | ROS2 核心 |
-| `ros-foxy-tf2-ros` | apt | TF 坐标变换 |
-| `ros-foxy-nav2-*` | ❌ 已移除 | 不再需要 |
-| `isaac_ros_cuvslam_runtime:humble-rs` | Docker | cuVSLAM 视觉SLAM |
-| `numpy` | pip | 栅格地图 + 路径规划 |
-| `opencv-python` | pip | 仪表检测图像处理 |
-| `pyrealsense2` | pip | D455 相机驱动 |
-| `rclpy` | ROS2自带 | Python ROS2 接口 |
+| 组件                                    | 安装方式  | 用途                |
+| --------------------------------------- | --------- | ------------------- |
+| `ros-foxy-ros-base`                   | apt       | ROS2 核心           |
+| `ros-foxy-tf2-ros`                    | apt       | TF 坐标变换         |
+| `ros-foxy-nav2-*`                     | ❌ 已移除 | 不再需要            |
+| `isaac_ros_cuvslam_runtime:humble-rs` | Docker    | cuVSLAM 视觉SLAM    |
+| `numpy`                               | pip       | 栅格地图 + 路径规划 |
+| `opencv-python`                       | pip       | 仪表检测图像处理    |
+| `pyrealsense2`                        | pip       | D455 相机驱动       |
+| `rclpy`                               | ROS2自带  | Python ROS2 接口    |
 
 ---
 
@@ -95,6 +96,7 @@
 ```
 
 关键转换：
+
 ```python
 # mm → ROS
 ros_x = x_mm / 1000.0
@@ -125,14 +127,14 @@ map ──(静态TF)──→ odom ──(cuVSLAM)──→ base_link ──(静
 
 运行时从 `navi_map_data.py` 直接生成，无需预生成 PGM 文件。
 
-| 区域 | Phase1 (过障碍) | Phase2 (任务阶段) |
-|------|:---:|:---:|
-| inspection_upper (1000×1000mm) | 墙 | 墙 |
-| inspection_lower (1000×1000mm) | 墙 | 墙 |
-| obstacle (4000×1500mm) | **可通过** | **墙** |
-| grab (1500×1000mm) | 墙(内缩15cm) | 墙(内缩15cm) |
-| placement A/B/C/D (4×500×500mm) | 墙 | 墙 |
-| 出发区 (600×1500mm) | 可通过 | 可通过 |
+| 区域                              | Phase1 (过障碍) | Phase2 (任务阶段) |
+| --------------------------------- | :--------------: | :---------------: |
+| inspection_upper (1000×1000mm)   |        墙        |        墙        |
+| inspection_lower (1000×1000mm)   |        墙        |        墙        |
+| obstacle (4000×1500mm)           | **可通过** |   **墙**   |
+| grab (1500×1000mm)               |   墙(内缩15cm)   |   墙(内缩15cm)   |
+| placement A/B/C/D (4×500×500mm) |        墙        |        墙        |
+| 出发区 (600×1500mm)              |      可通过      |      可通过      |
 
 Phase1: 障碍区敞开通行的原因——锥桶是随机放置的裁判道具，不能硬编码在地图上。实时避障靠 D455 深度相机。
 
@@ -140,20 +142,20 @@ Phase2: 穿越障碍区后切换，封堵障碍区防止机器人走回头路。
 
 ### 12个航点
 
-| 航点 | 位置 (ROS) | yaw | 用途 |
-|------|-----------|-----|------|
-| `start` | (5.35, 0.75) | π | 出发区 |
-| `obstacle_entry` | (3.00, 1.00) | π | 障碍区入口 |
-| `obstacle_exit` | (1.50, 3.25) | -π/2 | 障碍区出口, 同pos1 |
-| `pos1_middle` | (1.50, 3.25) | -π/2 | 仰头看上柜底面 |
-| `pos1_middle_turned` | (1.50, 3.25) | π/2 | 180°转身看下柜顶面 |
-| `pos2a_upper_right` | (2.20, 4.50) | π | 看上柜右侧面 |
-| `pos2b_lower_right` | (2.20, 2.00) | π | 看下柜右侧面 |
-| `grab_area` | (3.60, 2.00) | π | 抓取区外沿 |
-| `placement_A` | (3.25, 5.40) | 0 | A箱放置 |
-| `placement_B` | (3.75, 5.40) | 0 | B箱放置 |
-| `placement_C` | (4.25, 5.40) | 0 | C箱放置 |
-| `placement_D` | (4.75, 5.40) | 0 | D箱放置 |
+| 航点                   | 位置 (ROS)   | yaw   | 用途                |
+| ---------------------- | ------------ | ----- | ------------------- |
+| `start`              | (5.35, 0.75) | π    | 出发区              |
+| `obstacle_entry`     | (3.00, 1.00) | π    | 障碍区入口          |
+| `obstacle_exit`      | (1.50, 3.25) | -π/2 | 障碍区出口, 同pos1  |
+| `pos1_middle`        | (1.50, 3.25) | -π/2 | 仰头看上柜底面      |
+| `pos1_middle_turned` | (1.50, 3.25) | π/2  | 180°转身看下柜顶面 |
+| `pos2a_upper_right`  | (2.20, 4.50) | π    | 看上柜右侧面        |
+| `pos2b_lower_right`  | (2.20, 2.00) | π    | 看下柜右侧面        |
+| `grab_area`          | (3.60, 2.00) | π    | 抓取区外沿          |
+| `placement_A`        | (3.25, 5.40) | 0     | A箱放置             |
+| `placement_B`        | (3.75, 5.40) | 0     | B箱放置             |
+| `placement_C`        | (4.25, 5.40) | 0     | C箱放置             |
+| `placement_D`        | (4.75, 5.40) | 0     | D箱放置             |
 
 观察位需要到达后转到指定朝向（摄像头对准柜体标签面），其余航点只要求到位。
 
@@ -306,6 +308,7 @@ visual_slam_node                 final_bridge.py
 ```
 
 **QoS 匹配**: Navigator 和 task_manager 的关键订阅使用 BEST_EFFORT：
+
 ```python
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 _best_effort = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
@@ -319,11 +322,11 @@ Docker 内                         主机
 ────────                          ────
 camera_relay_docker.py            gauge_status.py
   /camera/color/image_raw          ← 读 latest_color.jpg
-  → latest_color.jpg (原子写入)    
+  → latest_color.jpg (原子写入)  
 
 depth_relay_docker.py              depth_publisher.py
   /camera/depth/image_rect_raw     ← 读 latest_depth.raw
-  → latest_depth.raw + meta        
+  → latest_depth.raw + meta
 ```
 
 ---
@@ -346,6 +349,7 @@ ls ~/quadruped-robot-competition/install/
 ### 启动步骤
 
 **终端1 — Docker**:
+
 ```bash
 cd ~/quadruped-robot-competition
 bash ~/Desktop/start_docker.sh
@@ -353,6 +357,7 @@ bash ~/Desktop/start_docker.sh
 ```
 
 **终端2 — 一键启动全部**:
+
 ```bash
 CN=$(docker ps --format '{{.Names}}' | grep cuvslam) && \
 docker cp ~/quadruped-robot-competition/scripts/camera_relay_docker.py $CN:/tmp/ && \
@@ -404,26 +409,28 @@ ros2 topic pub --once /nav/goal std_msgs/String "{data: 'pos1_middle'}"
 ### 接狗
 
 确认 `/cmd_vel` 正常输出后，启动 Lite3 传输层：
+
 ```bash
 ros2 launch transfer transfer.launch
 ```
+
 将 `/cmd_vel` 转换为 UDP 指令发送给绝影 Lite3 机器人。
 
 ---
 
 ## 故障排查
 
-| 现象 | 原因 | 解决 |
-|------|------|------|
-| Docker 起不来 | sudo 密码 | 前台跑 `sudo jetson_clocks` 后重试 |
-| Bridge 有数据但 /odom 对外不可见 | FastRTPS SHM 隔离 | 确认设置了 `FASTRTPS_DEFAULT_PROFILES_FILE` |
-| task_manager 卡在 START | QoS 不匹配收不到 odom | 检查 BEST_EFFORT 订阅配置 |
-| A* 规划失败 (NO PATH) | 航点在膨胀墙内 | BFS 自动找最近可通行格 (30格范围) |
-| 卡住检测反复触发 | 机器人未移动 (桌面测试) | 正常现象，上狗后消失 |
-| Camera relay 报 OpenCV 错误 | .tmp 后缀不识别 | 已修复，使用 .jpg 后缀 |
-| /cmd_vel 无输出 | Navigator IDLE | task_manager 阶段推进后自动开始发布 |
-| 深度图 reshape 错误 | Docker 写 640x360 而非 480x640 | 已修复，自动检测分辨率 |
-| ros2 topic echo 无数据 | 默认 RELIABLE QoS | 使用 `--qos-reliability best_effort` 或代码订阅 |
+| 现象                             | 原因                           | 解决                                             |
+| -------------------------------- | ------------------------------ | ------------------------------------------------ |
+| Docker 起不来                    | sudo 密码                      | 前台跑`sudo jetson_clocks` 后重试              |
+| Bridge 有数据但 /odom 对外不可见 | FastRTPS SHM 隔离              | 确认设置了`FASTRTPS_DEFAULT_PROFILES_FILE`     |
+| task_manager 卡在 START          | QoS 不匹配收不到 odom          | 检查 BEST_EFFORT 订阅配置                        |
+| A* 规划失败 (NO PATH)            | 航点在膨胀墙内                 | BFS 自动找最近可通行格 (30格范围)                |
+| 卡住检测反复触发                 | 机器人未移动 (桌面测试)        | 正常现象，上狗后消失                             |
+| Camera relay 报 OpenCV 错误      | .tmp 后缀不识别                | 已修复，使用 .jpg 后缀                           |
+| /cmd_vel 无输出                  | Navigator IDLE                 | task_manager 阶段推进后自动开始发布              |
+| 深度图 reshape 错误              | Docker 写 640x360 而非 480x640 | 已修复，自动检测分辨率                           |
+| ros2 topic echo 无数据           | 默认 RELIABLE QoS              | 使用`--qos-reliability best_effort` 或代码订阅 |
 
 ### 完全重启
 
