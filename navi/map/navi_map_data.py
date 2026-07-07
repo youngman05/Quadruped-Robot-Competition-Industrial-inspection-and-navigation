@@ -13,6 +13,7 @@ annotations from the figures where the PDF does not provide exact dimensions.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Literal, Tuple
 
@@ -65,6 +66,28 @@ FIELD = {
     "width": 5000.0,
     "height": 6000.0,
 }
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  坐标转换工具 (mm 场地图 ←→ ROS map 坐标系)
+# ═══════════════════════════════════════════════════════════════════
+
+def mm_to_ros(x_mm: float, y_mm: float) -> tuple[float, float]:
+    """将 mm 场地图坐标 (原点左上, +y↓) 转换为 ROS map 坐标 (原点左下, +y↑, 米)."""
+    ros_x = x_mm / 1000.0
+    ros_y = (FIELD["height"] - y_mm) / 1000.0
+    return ros_x, ros_y
+
+
+def mm_yaw_to_ros_quat(yaw_deg: float) -> tuple[float, float, float, float]:
+    """将 mm 坐标系 yaw (0=右, 正=顺时针) 转换为 ROS 四元数.
+
+    mm 坐标系 +y 朝下 (顺时针为正), ROS 坐标系 +y 朝上 (逆时针为正),
+    因此 ROS yaw = -(mm yaw).
+    """
+    ros_yaw_rad = math.radians(-yaw_deg)
+    half = ros_yaw_rad / 2.0
+    return (0.0, 0.0, math.sin(half), math.cos(half))
 
 
 # Officially dimensioned regions from Figure 6-2/6-3.

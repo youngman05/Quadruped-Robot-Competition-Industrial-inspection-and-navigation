@@ -17,11 +17,6 @@ map frame coordinates automatically.
 
 from __future__ import annotations
 
-import math
-import sys
-from pathlib import Path
-
-import math
 import sys
 from pathlib import Path
 
@@ -31,20 +26,7 @@ _NAVI_MAP = _WS_ROOT / "navi" / "map"
 if str(_NAVI_MAP) not in sys.path:
     sys.path.insert(0, str(_NAVI_MAP))
 
-from navi_map_data import FIELD
-
-
-def _mm_to_ros(x_mm: float, y_mm: float) -> tuple[float, float]:
-    """Convert mm field coords (origin top-left) to ROS map coords (origin bottom-left)."""
-    ros_x = x_mm / 1000.0
-    ros_y = (FIELD["height"] - y_mm) / 1000.0
-    return ros_x, ros_y
-
-
-def _deg_to_quat(yaw_deg: float) -> tuple[float, float, float, float]:
-    """Yaw in degrees (0=right, mm coords) → quaternion (qx, qy, qz, qw)."""
-    half = math.radians(yaw_deg) / 2.0
-    return (0.0, 0.0, math.sin(half), math.cos(half))
+from navi_map_data import FIELD, mm_to_ros, mm_yaw_to_ros_quat
 
 
 # yaw=None 表示不管朝向, Nav2 只导航到位置不强制转方向.
@@ -56,11 +38,11 @@ _RAW_WAYPOINTS: dict[str, dict] = {
     "pos1_middle_turned":      {"x_mm": 1500, "y_mm": 2750, "yaw_deg":  90,  "label": "观察位① 转身看下柜顶面"},
     "pos2a_upper_right":       {"x_mm": 2200, "y_mm": 1500, "yaw_deg": 180,  "label": "观察位②a 看上柜右侧面"},
     "pos2b_lower_right":       {"x_mm": 2200, "y_mm": 4000, "yaw_deg": 180,  "label": "观察位②b 看下柜右侧面"},
-    "grab_area":               {"x_mm": 4250, "y_mm": 4000, "yaw_deg": None, "label": "抓取区"},
-    "placement_A":             {"x_mm": 3250, "y_mm": 250,  "yaw_deg": None, "label": "A放置区"},
-    "placement_B":             {"x_mm": 3750, "y_mm": 250,  "yaw_deg": None, "label": "B放置区"},
-    "placement_C":             {"x_mm": 4250, "y_mm": 250,  "yaw_deg": None, "label": "C放置区"},
-    "placement_D":             {"x_mm": 4750, "y_mm": 250,  "yaw_deg": None, "label": "D放置区"},
+    "grab_area":               {"x_mm": 4250, "y_mm": 3450, "yaw_deg": None, "label": "抓取区"},
+    "placement_A":             {"x_mm": 3250, "y_mm": 600,  "yaw_deg": None, "label": "A放置区"},
+    "placement_B":             {"x_mm": 3750, "y_mm": 600,  "yaw_deg": None, "label": "B放置区"},
+    "placement_C":             {"x_mm": 4250, "y_mm": 600,  "yaw_deg": None, "label": "C放置区"},
+    "placement_D":             {"x_mm": 4750, "y_mm": 600,  "yaw_deg": None, "label": "D放置区"},
     # 穿越障碍区时不设固定入口 — A* + D455 实时避障自己找路
     # 目标点在障碍区左侧的安全走廊内, 穿越过程由 local_costmap 绕开锥桶
     # x=500mm (ROS 0.5m) 在安全走廊中部, 避开障碍区 (x≥1000mm)
@@ -70,9 +52,9 @@ _RAW_WAYPOINTS: dict[str, dict] = {
 # Build ROS-coordinate waypoint dict
 WAYPOINTS: dict[str, dict] = {}
 for name, wp in _RAW_WAYPOINTS.items():
-    ros_x, ros_y = _mm_to_ros(wp["x_mm"], wp["y_mm"])
+    ros_x, ros_y = mm_to_ros(wp["x_mm"], wp["y_mm"])
     if wp["yaw_deg"] is not None:
-        qx, qy, qz, qw = _deg_to_quat(wp["yaw_deg"])
+        qx, qy, qz, qw = mm_yaw_to_ros_quat(wp["yaw_deg"])
     else:
         qx, qy, qz, qw = 0.0, 0.0, 0.0, 1.0  # identity: 不管朝向
     WAYPOINTS[name] = {

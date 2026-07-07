@@ -14,7 +14,6 @@ the cuVSLAM odometry origin.
 """
 
 import sys
-import math
 from pathlib import Path
 
 import rclpy
@@ -29,20 +28,7 @@ _NAVI_MAP = _WS_ROOT / "navi" / "map"
 if str(_NAVI_MAP) not in sys.path:
     sys.path.insert(0, str(_NAVI_MAP))
 
-from navi_map_data import FIELD, ROBOT_START_POSE
-
-
-def _mm_to_ros(x_mm: float, y_mm: float):
-    """Convert mm field coords to ROS map coords."""
-    ros_x = x_mm / 1000.0
-    ros_y = (FIELD["height"] - y_mm) / 1000.0
-    return ros_x, ros_y
-
-
-def _yaw_to_quaternion(yaw_deg: float):
-    """Convert yaw degrees (mm coords, 0=right) to ROS quaternion."""
-    half = math.radians(yaw_deg) / 2.0
-    return (0.0, 0.0, math.sin(half), math.cos(half))
+from navi_map_data import FIELD, ROBOT_START_POSE, mm_to_ros, mm_yaw_to_ros_quat
 
 
 class InitialPosePublisher(Node):
@@ -66,8 +52,8 @@ class InitialPosePublisher(Node):
         self._tf_broadcaster = StaticTransformBroadcaster(self)
 
         # compute start pose
-        ros_x, ros_y = _mm_to_ros(ROBOT_START_POSE["x_mm"], ROBOT_START_POSE["y_mm"])
-        qx, qy, qz, qw = _yaw_to_quaternion(ROBOT_START_POSE["yaw_deg"])
+        ros_x, ros_y = mm_to_ros(ROBOT_START_POSE["x_mm"], ROBOT_START_POSE["y_mm"])
+        qx, qy, qz, qw = mm_yaw_to_ros_quat(ROBOT_START_POSE["yaw_deg"])
 
         self.get_logger().info(
             f"Robot start pose — ROS: ({ros_x:.2f}, {ros_y:.2f})  "
