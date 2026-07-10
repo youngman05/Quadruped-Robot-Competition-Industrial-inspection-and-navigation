@@ -57,3 +57,7 @@ build/
 install/
 log/
 dist/
+
+# Dataset images (too large, store separately)
+InstanceSegmentation/gauge_dataset/*.jpg
+InstanceSegmentation/projects/gauge/datasets/

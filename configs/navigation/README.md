@@ -21,7 +21,7 @@ Nav2 导航参数配置。
 ```bash
 # map_server 加载 PGM 地图
 ros2 run nav2_map_server map_server \
-  --ros-args -p yaml_filename:=navi/map/competition_field.yaml
+  --ros-args -p yaml_filename:=src/navi/map/competition_field.yaml
 
 # Nav2 导航栈
 ros2 launch nav2_bringup navigation_launch.py \

@@ -51,7 +51,7 @@ def _pure_nms(boxes, scores, iou_thres):
 torchvision.ops.nms = _pure_nms
 # ─────────────────────────────────────────────────
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 SCRIPTS = ROOT / "scripts"
 sys.path.insert(0, str(SRC))

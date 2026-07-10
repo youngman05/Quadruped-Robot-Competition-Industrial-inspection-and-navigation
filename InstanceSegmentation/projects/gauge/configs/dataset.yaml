@@ -1,0 +1,18 @@
+# 仪表柜面字母+颜色检测 — YOLO 数据集配置
+# 类别: A(0), B(1), C(2), D(3), green(4), red(5), yellow(6)
+
+path: C:/Users/tom/Desktop/ws/quadruped-robot-competition-main/InstanceSegmentation/projects/gauge/datasets
+
+train: images/train
+val: images/val
+
+nc: 7
+
+names:
+  0: A
+  1: B
+  2: C
+  3: D
+  4: green
+  5: red
+  6: yellow

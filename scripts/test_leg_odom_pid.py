@@ -445,11 +445,11 @@ def main():
         help='Route segments: "dx1,dy1; dx2,dy2; ..." (e.g. "5,0; 0,-1")'
     )
     parser.add_argument(
-        '--plot', type=str, default='navi/test/output/leg_odom_trajectory.png',
+        '--plot', type=str, default='tmp/navi_test_output/leg_odom_trajectory.png',
         help='Output plot file path'
     )
     parser.add_argument(
-        '--log', type=str, default='navi/test/output/leg_odom_log.json',
+        '--log', type=str, default='tmp/navi_test_output/leg_odom_log.json',
         help='Trajectory log file path'
     )
     parser.add_argument(

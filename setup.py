@@ -16,9 +16,18 @@ setup(
          glob("launch/*.py")),
         ("share/" + package_name + "/configs/navigation",
          glob("configs/navigation/*.yaml")),
+        ("share/" + package_name + "/configs/ros",
+         glob("configs/ros/*.yaml")),
         ("share/" + package_name + "/navi/map",
-         glob("navi/map/*.pgm") + glob("navi/map/*.yaml")),
+         glob("src/navi/map/*.pgm") + glob("src/navi/map/*.yaml")),
     ],
+    include_package_data=True,
+    package_data={
+        "whz": [
+            "assets/audio/*.mp3",
+            "assets/templates/*",
+        ],
+    },
     # ROS2 节点入口 — ros2 run quadruped_robot_competition <name>
     entry_points={
         "console_scripts": [
@@ -27,6 +36,7 @@ setup(
             "yolo_detect_publisher = nodes.perception.yolo_detect_publisher:main",
             "color_image_publisher = nodes.perception.color_image_publisher:main",
             "whz_standalone = nodes.perception.whz_standalone_inspect:main",
+            "whz_inspection_node = whz.inspection_node:main",
             "yolo_image_server = nodes.perception.yolo_image_server:main",
             # ── 决策层 ──────────────────────────
             "task_manager = nodes.decision.task_manager:main",

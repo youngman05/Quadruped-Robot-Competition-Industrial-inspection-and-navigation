@@ -1,7 +1,7 @@
 # 比赛系统参数 — 集中管理所有 ROS2 节点参数
 # 用法: ros2 launch launch/competition.launch.py
 
-gauge_status_node:
+gauge_status_publisher_node:
   ros__parameters:
     # --- 相机 ---
     width: 640
@@ -31,7 +31,7 @@ gauge_status_node:
 
 # --- 以下节点待实现 ---
 
-yolo_detect_node:
+yolo_detect_publisher_node:
   ros__parameters:
     model_path: "src/cv/yolo_detector/projects/combined/model/best.pt"
     conf: 0.5
@@ -56,7 +56,7 @@ task_manager_node:
     tick_rate: 10.0              # 状态机主循环频率 (Hz)
     require_stable_gauge: true   # 是否必须仪表稳定检测才推进
     auto_advance: false          # 调试: 自动推进阶段（跳过所有条件）
-    phase2_map_yaml: "navi/map/competition_field_phase2.yaml"  # Nav2 越障后地图
+    phase2_map_yaml: "src/navi/map/competition_field_phase2.yaml"  # Nav2 越障后地图
     gauge_topic: "/gauge/status"
     yolo_topic: "/yolo/detections"
     slam_status_topic: "/visual_slam/status"

@@ -149,10 +149,10 @@ map -> odom -> base_link -> camera_link -> camera_infra*
 
 - `launch/navigation.launch.py`
 - `configs/navigation/nav2_params.yaml`
-- `navi/map/navi_map_data.py`
-- `navi/map/generate_nav2_map.py`
-- `navi/map/competition_field.yaml`
-- `navi/map/competition_field.pgm`
+- `src/navi/map/navi_map_data.py`
+- `src/navi/map/generate_nav2_map.py`
+- `src/navi/map/competition_field.yaml`
+- `src/navi/map/competition_field.pgm`
 - `src/nodes/navigation/navigation_client.py`
 - `src/nodes/navigation/depth_publisher.py`
 - `src/nodes/navigation/initial_pose_publisher.py`
@@ -161,14 +161,14 @@ Nav2 配置要点：
 
 | 模块 | 当前选择 |
 |---|---|
-| 地图 | `navi/map/competition_field.pgm` |
+| 地图 | `src/navi/map/competition_field.pgm` |
 | 定位 | cuVSLAM，不使用 AMCL |
 | 全局规划器 | NavFn，`use_astar: true` |
 | 局部控制器 | Regulated Pure Pursuit |
 | 局部避障 | D455 depth -> PointCloud2 -> VoxelLayer |
 | 机器人 footprint | 约 `1.0 m x 0.5 m` |
 
-导航任务点定义在 `navigation_client.py` 和 `navi/map/navi_map_data.py` 中，包括：
+导航任务点定义在 `navigation_client.py` 和 `src/navi/map/navi_map_data.py` 中，包括：
 
 - `start`
 - `obstacle_entry`
@@ -191,7 +191,6 @@ YOLO 用于国赛中的语义目标识别：
 
 仓库内相关文件：
 
-- `InstanceSegmentation/`
 - `src/cv/yolo_detector/`
 - `src/nodes/perception/yolo_detect_publisher.py`
 - `configs/yolo/classes.yaml`
@@ -199,7 +198,7 @@ YOLO 用于国赛中的语义目标识别：
 
 当前注意点：
 
-- `InstanceSegmentation/projects/combined/README.md` 描述的 combined 模型类别为 `red / green / obstacle`。
+- `src/cv/yolo_detector/projects/combined/README.md` 描述的 combined 模型类别为 `red / green / obstacle`。
 - `configs/yolo/classes.yaml` 当前写的是 `gauge / A / B / C / D / red_bar / green_bar`。
 - `src/nodes/perception/yolo_detect_publisher.py` 中的注释也需要和实际模型类别进一步统一。
 
@@ -303,14 +302,9 @@ docs/
   system_design.md        系统架构笔记
   test_checklist.md       测试清单
 
-InstanceSegmentation/     YOLOv8 实例分割训练与推理工作区
-
 launch/
   competition.launch.py   比赛总启动入口
   navigation.launch.py    Nav2 导航启动入口
-
-navi/
-  map/                    场地地图、航点、PGM 生成
 
 scripts/
   camera/                 D455 相机测试脚本
@@ -321,6 +315,8 @@ scripts/
 
 src/
   cv/                     D455、OpenCV 仪表、YOLO 推理模块
+    yolo_detector/        YOLOv8 实例分割运行脚本和 combined 模型
+  src/navi/               导航客户端、场地地图、运动控制调试代码
   nodes/
     perception/           gauge + YOLO publisher
     navigation/           cuVSLAM bridge + Nav2 helper nodes
@@ -453,7 +449,7 @@ ros2 topic echo /task/status
 | 比赛总启动 | `launch/competition.launch.py` |
 | Nav2 启动 | `launch/navigation.launch.py` |
 | Nav2 参数 | `configs/navigation/nav2_params.yaml` |
-| 场地地图定义 | `navi/map/navi_map_data.py` |
+| 场地地图定义 | `src/navi/map/navi_map_data.py` |
 | cuVSLAM RViz 启动 | `scripts/start_cuvslam_rviz_gui.sh` |
 | cuVSLAM 指标记录 | `scripts/cuvslam_loop_metrics_recorder.py` |
 | cuVSLAM -> Nav2 桥接 | `src/nodes/navigation/cuvslam_bridge.py` |
@@ -469,10 +465,9 @@ ros2 topic echo /task/status
 ## 推荐阅读顺序
 
 1. `2026年中国高校智能机器人创意大赛（四足大型组）(2).pdf`
-2. `navi/README.md`
+2. `src/navi/README.md`
 3. `configs/navigation/README.md`
 4. `src/nodes/README.md`
 5. `src/cv/README.md`
 6. `docs/system_design.md`
 7. `docs/test_checklist.md`
-

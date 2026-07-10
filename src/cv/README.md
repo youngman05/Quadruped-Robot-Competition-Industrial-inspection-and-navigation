@@ -7,7 +7,7 @@
 | 目录 | 说明 |
 |------|------|
 | `gauge_detector/` | OpenCV 仪表盘状态识别（指针角度、颜色区域） |
-| `yolo_detector/` | YOLOv8 实例分割（训练 + TensorRT 推理） |
+| `depth_detector/` | YOLOv8 实例分割（训练 + TensorRT 推理） |
 | `realsense_camera/` | D455 相机 Python API（RGB/深度/红外/IMU） |
 
 ## 相关 ROS2 节点

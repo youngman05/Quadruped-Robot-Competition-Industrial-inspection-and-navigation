@@ -3,7 +3,7 @@
 ROS2 node: YOLOv8 instance segmentation using the combined model.
 
 Classes: 0=red, 1=green, 2=obstacle
-Model:  src/cv/yolo_detector/projects/combined/model/best.pt
+Model:  src/cv/depth_detector/projects/combined/model/best.pt
 
 Publishes:
     /yolo/detections      std_msgs/String   JSON detection results
@@ -72,7 +72,7 @@ sys.path.insert(0, str(SCRIPTS))
 # Model paths
 COMBINED_MODEL = (
     PROJECT_ROOT
-    / "src/cv/yolo_detector/projects/combined/model/best.pt"
+    / "src/cv/depth_detector/projects/combined/model/best.pt"
 )
 
 

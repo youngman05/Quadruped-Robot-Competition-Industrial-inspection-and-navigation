@@ -21,7 +21,7 @@ D455 RGB-D Camera
 ### CV
 
 - 从 D455 获取 RGB-D 图像（封装 API：`src/cv/realsense_camera/`）。
-- 使用 YOLOv8 实例分割工作区（`InstanceSegmentation/`）检测比赛场地物体。
+- 使用 YOLOv8 实例分割运行模块（`src/cv/yolo_detector/`）检测比赛场地物体。
 - 使用 OpenCV 仪表检测模块（`src/cv/gauge_detector/`）判断指针角度、颜色区域和表计状态。
 - 检测 A/B/C/D 字母、红色/绿色长条。
 - 使用深度图输出目标距离或三维坐标。

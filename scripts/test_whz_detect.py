@@ -4,19 +4,22 @@ import sys, json, time, cv2, numpy as np
 from pathlib import Path
 from collections import Counter
 
-# Add whz module path
-_WS = Path.home() / 'quadruped-robot-competition'
-sys.path.insert(0, str(_WS / 'src' / 'whz' / 'whz'))
-from letter_detector import LetterDetector
-from gauge_detector import detect_gauge
-from audio_player import AudioPlayer
+_WS = Path(__file__).resolve().parents[1]
+_SRC = _WS / 'src'
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
+from whz.letter_detector import LetterDetector
+from whz.gauge_detector import detect_gauge
+from whz.audio_player import AudioPlayer
+from whz.paths import default_audio_dir, default_template_dir
 
 RELAY = Path.home() / 'workspaces' / 'isaac_ros-dev' / 'camera_frames'
 COLOR_JPG = RELAY / 'latest_color.jpg'
 DEPTH_RAW = RELAY / 'latest_depth.raw'
 DEPTH_META = RELAY / 'latest_depth_meta.txt'
-TEMPLATE_DIR = _WS / 'src' / 'whz' / 'assets' / 'templates'
-AUDIO_DIR = _WS / 'src' / 'whz' / 'assets' / 'audio'
+TEMPLATE_DIR = default_template_dir()
+AUDIO_DIR = default_audio_dir()
 
 print(f'JPEG: {COLOR_JPG}  exists={COLOR_JPG.exists()}')
 print(f'Depth: {DEPTH_RAW}  exists={DEPTH_RAW.exists()}')

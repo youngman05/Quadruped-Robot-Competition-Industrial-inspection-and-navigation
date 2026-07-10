@@ -13,7 +13,7 @@ print("CUDA available:", torch.cuda.is_available())
 from ultralytics import YOLO
 
 # 使用项目相对路径，避免硬编码用户目录
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MODEL_PATH = PROJECT_ROOT / "src/cv/yolo_detector/projects/combined/model/best.pt"
 
 if not MODEL_PATH.exists():

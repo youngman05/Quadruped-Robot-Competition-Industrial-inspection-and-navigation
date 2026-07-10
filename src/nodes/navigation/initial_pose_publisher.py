@@ -24,7 +24,7 @@ from tf2_ros import StaticTransformBroadcaster
 
 # Resolve workspace root for navi_map_data import (4 levels up from this file)
 _WS_ROOT = Path(__file__).resolve().parents[3]  # navigation → nodes → src → root
-_NAVI_MAP = _WS_ROOT / "navi" / "map"
+_NAVI_MAP = _WS_ROOT / "src" / "navi" / "map"
 if str(_NAVI_MAP) not in sys.path:
     sys.path.insert(0, str(_NAVI_MAP))
 

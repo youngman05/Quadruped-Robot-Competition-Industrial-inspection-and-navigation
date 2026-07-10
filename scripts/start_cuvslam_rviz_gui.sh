@@ -5,6 +5,7 @@ set -Eeuo pipefail
 # This script is read-only with respect to the robot: it never publishes /cmd_vel.
 
 IMAGE="${IMAGE:-isaac_ros_cuvslam_runtime:humble-rs}"
+IMAGE_YOLO="${IMAGE_YOLO:-cuvslam_yolo:humble}"  # with YOLO deps pre-installed
 ISAAC_WS="${ISAAC_WS:-$HOME/workspaces/isaac_ros-dev}"
 PROJECT_DIR="${PROJECT_DIR:-$HOME/quadruped-robot-competition}"
 LOG_ROOT="${LOG_ROOT:-$HOME/cuvslam_lite3_logs}"
@@ -15,6 +16,7 @@ ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
 RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"
 CUVSLAM_CAMERA_PROFILE="${CUVSLAM_CAMERA_PROFILE:-640x360x60}"
 CUVSLAM_IMG_JITTER_THRESHOLD_MS="${CUVSLAM_IMG_JITTER_THRESHOLD_MS:-35.0}"
+ENABLE_COLOR="${ENABLE_COLOR:-0}"  # set to 1 to enable RGB for YOLO
 ENABLE_SLAM_VISUALIZATION="${ENABLE_SLAM_VISUALIZATION:-true}"
 ENABLE_LANDMARKS_VIEW="${ENABLE_LANDMARKS_VIEW:-true}"
 ENABLE_OBSERVATIONS_VIEW="${ENABLE_OBSERVATIONS_VIEW:-true}"
@@ -508,7 +510,7 @@ def generate_launch_description():
         parameters=[{
             'enable_infra1': True,
             'enable_infra2': True,
-            'enable_color': False,
+            'enable_color': ${ENABLE_COLOR_BOOL},
             'enable_depth': False,
             'depth_module.emitter_enabled': 0,
             'depth_module.profile': '${CUVSLAM_CAMERA_PROFILE}',
@@ -622,6 +624,8 @@ RVIZ_CONFIG="$LOG_DIR/cuvslam.rviz"
 CUVSLAM_LAUNCH="$LOG_DIR/cuvslam_realsense_tuned.launch.py"
 CUVSLAM_LAUNCH_RUNNER="$LOG_DIR/run_cuvslam_launch.py"
 RVIZ_HEAVY_ENABLED="$(rviz_bool "$RVIZ_HEAVY_DISPLAYS")"
+COLOR_ENABLED_PY="$(py_bool "$ENABLE_COLOR")"
+ENABLE_COLOR_BOOL="$COLOR_ENABLED_PY"
 mkdir -p "$LOG_DIR"
 write_rviz_config
 write_cuvslam_launch

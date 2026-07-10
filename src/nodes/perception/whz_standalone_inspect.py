@@ -9,7 +9,6 @@ Usage: python3 whz_standalone_inspect.py
 """
 
 import json
-import sys
 import time
 from pathlib import Path
 
@@ -19,17 +18,10 @@ import rclpy
 from rclpy.node import Node
 from std_srvs.srv import Trigger
 
-# whz modules
-_WS = Path(__file__).resolve().parents[3]
-_WHZ = _WS / "src" / "whz" / "whz"
-if str(_WHZ) not in sys.path:
-    sys.path.insert(0, str(_WHZ))
-
-from paths import default_audio_dir, default_template_dir
-from letter_detector import LetterDetector
-from gauge_detector import detect_gauge
-from audio_player import AudioPlayer
-from inspection import InspectionResult, Inspector
+from cv.gauge_detector import GaugeDetector
+from whz.paths import default_audio_dir
+from whz.audio_player import AudioPlayer
+from whz.inspection import Inspector, InspectionResult
 
 
 class WhzStandaloneNode(Node):
@@ -44,27 +36,23 @@ class WhzStandaloneNode(Node):
         self._depth_raw = relay_dir / "latest_depth.raw"
         self._depth_meta = relay_dir / "latest_depth_meta.txt"
 
-        # whz detectors
-        template_dir = default_template_dir()
-        audio_dir = default_audio_dir()
-        self._letter_detector = LetterDetector(template_dir, min_score=0.38)
-        self._audio_player = AudioPlayer(audio_dir, timeout_sec=10.0)
+        # YOLO detector + audio
+        self._detector = GaugeDetector()
+        self._audio_player = AudioPlayer(default_audio_dir(), timeout_sec=10.0)
+        self._inspector = Inspector(self._detector, self._audio_player)
 
         # Create service
         self._srv = self.create_service(Trigger, "/whz/inspect", self._on_inspect)
         self.get_logger().info(
-            f"WHZ standalone ready. Color: {self._color_jpg}  "
-            f"Depth: {self._depth_raw}"
+            f"WHZ standalone ready. Color: {self._color_jpg}"
         )
 
     def _on_inspect(self, request, response):
-        """Handle /whz/inspect service call."""
         del request
 
-        # Read 3 frames with delay between
         frames = []
         for i in range(3):
-            color, depth = self._read_frame()
+            color, _depth = self._read_frame()
             if color is None:
                 response.success = False
                 response.message = json.dumps({
@@ -73,84 +61,14 @@ class WhzStandaloneNode(Node):
                     "total_frames": len(frames),
                 })
                 return response
-            frames.append((color, depth))
+            frames.append(color)
             if i < 2:
                 time.sleep(0.3)
 
-        # Run detection on each frame
-        results = []
-        for color, depth in frames:
-            try:
-                letter = self._letter_detector.detect(color)
-                gauge = detect_gauge(color, depth)
-                if letter is None or gauge is None:
-                    results.append(InspectionResult(
-                        ok=False,
-                        area=letter.area if letter else None,
-                        error="letter_not_detected" if letter is None else "gauge_not_detected",
-                    ))
-                    continue
-                if letter.bbox:
-                    x0, y0, x1, y1 = letter.bbox
-                    ly = (y0 + y1) / 2.0
-                    above = ly < gauge.center_y
-                else:
-                    above = False
-                audio = self._audio_player.audio_path_for(letter.area, gauge.state_key)
-                results.append(InspectionResult(
-                    ok=True,
-                    area=letter.area,
-                    state_key=gauge.state_key,
-                    level=gauge.level,
-                    status=gauge.status,
-                    color=gauge.color,
-                    audio_file=str(audio),
-                    letter_score=round(letter.score, 4),
-                    gauge_confidence=round(gauge.confidence, 4),
-                    letter_above_gauge=above,
-                ))
-            except Exception as e:
-                results.append(InspectionResult(ok=False, error=str(e)))
+        result = self._inspector.inspect_frames(frames)
 
-        # Majority vote
-        from collections import Counter
-        successes = [r for r in results if r.ok]
-        if not successes:
-            response.success = False
-            response.message = json.dumps({
-                "ok": False,
-                "error": "no_successful_detection",
-                "total_frames": 3,
-                "details": [r.to_dict() if hasattr(r, 'to_dict') else str(r) for r in results],
-            })
-            return response
-
-        votes = Counter((r.area, r.state_key) for r in successes)
-        (area, state_key), count = votes.most_common(1)[0]
-        if count < 2:
-            response.success = False
-            response.message = json.dumps({
-                "ok": False, "error": f"vote={count}/2",
-                "area": area, "state_key": state_key,
-            })
-            return response
-
-        best = max(
-            [r for r in successes if r.area == area and r.state_key == state_key],
-            key=lambda r: (r.letter_score or 0) + (r.gauge_confidence or 0),
-        )
-        best.agree_frames = count
-        best.total_frames = 3
-
-        # Play audio
-        if best.audio_file:
-            try:
-                self._audio_player.play(Path(best.audio_file))
-            except Exception as e:
-                pass  # Audio failure is non-fatal
-
-        response.success = best.ok
-        d = best.to_dict() if hasattr(best, 'to_dict') else vars(best)
+        response.success = result.ok
+        d = result.to_dict()
         d["audio_played"] = True
         response.message = json.dumps(d, default=str)
         return response

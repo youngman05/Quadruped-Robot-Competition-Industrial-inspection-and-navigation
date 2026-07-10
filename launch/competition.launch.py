@@ -89,8 +89,8 @@ def generate_launch_description() -> LaunchDescription:
     )
 
     whz_inspection_node = Node(
-        package="whz",
-        executable="inspection_node",
+        package="quadruped_robot_competition",
+        executable="whz_inspection_node",
         name="whz_inspection_node",
         output="screen",
         remappings=[

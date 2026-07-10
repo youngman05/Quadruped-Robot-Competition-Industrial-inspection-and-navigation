@@ -19,4 +19,8 @@ packages = [
     "nodes.perception",
     "nodes.decision",
     "nodes.navigation",
+    "navi",
+    "navi.map",
+    "navi.motion",
+    "whz",
 ]

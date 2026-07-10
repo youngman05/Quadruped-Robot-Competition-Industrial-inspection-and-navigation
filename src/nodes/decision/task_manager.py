@@ -124,7 +124,7 @@ class TaskManagerNode(Node):
         self.declare_parameter("require_stable_gauge", True)  # 是否必须稳定检测
         self.declare_parameter("auto_advance", False)         # 调试: 自动推进阶段
 
-        self.declare_parameter("phase2_map_yaml", "navi/map/competition_field_phase2.yaml")
+        self.declare_parameter("phase2_map_yaml", "src/navi/map/competition_field_phase2.yaml")
         self.declare_parameter("gauge_topic", "/gauge/status")
         self.declare_parameter("yolo_topic", "/yolo/detections")
         self.declare_parameter("slam_status_topic", "/visual_slam/status")
@@ -340,25 +340,19 @@ class TaskManagerNode(Node):
 
     def _run_whz_inline(self, desc: str):
         """Capture one relay frame, run letter+gauge detection, play audio."""
-        import cv2, numpy as np, sys, time
+        import cv2, numpy as np, time
         from pathlib import Path
-        from collections import Counter
 
         self.get_logger().info(f"[whz] 拍一帧识别: {desc}")
 
-        # Lazy-load whz modules (only during inspection, keeps CPU free otherwise)
-        _WS = Path(__file__).resolve().parents[3]
-        _WHZ = _WS / "whz" / "whz"
-        if str(_WHZ) not in sys.path:
-            sys.path.insert(0, str(_WHZ))
-        from letter_detector import LetterDetector
-        from gauge_detector import detect_gauge
-        from audio_player import AudioPlayer
+        # Lazy-load whz modules
+        from cv.gauge_detector import GaugeDetector
+        from whz.audio_player import AudioPlayer
+        from whz.inspection import Inspector
+        from whz.paths import default_audio_dir
 
         relay_dir = Path.home() / "workspaces" / "isaac_ros-dev" / "camera_frames"
         jpg = relay_dir / "latest_color.jpg"
-        raw = relay_dir / "latest_depth.raw"
-        meta = relay_dir / "latest_depth_meta.txt"
 
         if not jpg.exists():
             self.get_logger().error("[whz] 无 relay JPEG, 跳过")
@@ -378,48 +372,31 @@ class TaskManagerNode(Node):
             self._advance_step()
             return
 
-        # Depth (optional)
-        depth = None
-        if raw.exists():
-            try:
-                data = raw.read_bytes()
-                w, h = 640, 360
-                if meta.exists():
-                    parts = meta.read_text().strip().split()
-                    if len(parts) >= 2:
-                        w, h = int(parts[0]), int(parts[1])
-                if len(data) == w * h * 2:
-                    depth = np.frombuffer(data, dtype=np.uint16).reshape(h, w).astype(np.float32) * 0.001
-            except Exception:
-                pass
+        # YOLO detection
+        detector = GaugeDetector()
+        audio = AudioPlayer(default_audio_dir(), timeout_sec=10.0)
+        inspector = Inspector(detector, audio, play_audio=False)
 
-        # Detect
-        template_dir = _WS / "whz" / "assets" / "templates"
-        audio_dir = _WS / "whz" / "assets" / "audio"
-        letter_det = LetterDetector(template_dir, min_score=0.38)
-        audio = AudioPlayer(audio_dir, timeout_sec=10.0)
+        result = inspector.inspect_once(color)
 
-        letter = letter_det.detect(color)
-        gauge = detect_gauge(color, depth)
-
-        if letter is None or gauge is None:
-            err = f"letter={'OK' if letter else 'FAIL'} gauge={'OK' if gauge else 'FAIL'}"
-            self.get_logger().warn(f"[whz] 检测失败: {err}")
+        if not result.ok:
+            self.get_logger().warn(f"[whz] 检测失败: {result.error}")
             self._advance_step()
             return
 
-        area = letter.area
-        state = gauge.state_key
+        area = result.area
+        state = result.state_key
         self.get_logger().info(
-            f"[whz] 检测成功: {area}区 {gauge.color}/{gauge.status} "
-            f"letter_score={letter.score:.3f} gauge_conf={gauge.confidence:.3f}"
+            f"[whz] 检测成功: {area}区 {result.color}/{result.status} "
+            f"letter_score={result.letter_score:.3f} gauge_conf={result.gauge_confidence:.3f}"
         )
 
-        # Play audio (blocking, but only ~2s)
-        try:
-            audio.play(audio.audio_path_for(area, state))
-        except Exception:
-            pass
+        # Play audio
+        if result.audio_file:
+            try:
+                audio.play(Path(result.audio_file))
+            except Exception:
+                pass
 
         # Save result
         if area in self._gauge_info:
@@ -427,9 +404,9 @@ class TaskManagerNode(Node):
             info.detected = True
             info.stable_detected = True
             info.letter = area
-            info.color = gauge.color
-            info.level = gauge.level
-            info.status = gauge.status
+            info.color = result.color
+            info.level = result.level
+            info.status = result.status
 
         self._advance_step()
 

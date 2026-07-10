@@ -11,16 +11,14 @@ Completed:
   - `src/cv/realsense_camera/`
   - `scripts/realsense_viewer.py`
   - package metadata for editable install.
-- Added YOLOv8 instance segmentation workspace:
-  - `InstanceSegmentation/README.md`
-  - `InstanceSegmentation/scripts/camera_detect.py`
-  - `InstanceSegmentation/scripts/image_detect.py`
-  - `InstanceSegmentation/scripts/video_detect.py`
-  - `InstanceSegmentation/scripts/train.py`
-  - `InstanceSegmentation/configs/dataset.yaml`
-  - `InstanceSegmentation/notebooks/quickstart.ipynb`
+- Added YOLOv8 instance segmentation workspace, later consolidated under `src/cv/yolo_detector/`:
+  - `src/cv/yolo_detector/README.md`
+  - `src/cv/yolo_detector/scripts/camera_detect.py`
+  - `src/cv/yolo_detector/scripts/image_detect.py`
+  - `src/cv/yolo_detector/scripts/video_detect.py`
+  - `src/cv/yolo_detector/scripts/train.py`
 - Added `configs/yolo/classes.yaml`.
-- Kept binary `.pt` model weights out of Git; the scripts can auto-download official Ultralytics weights or use local weights under `InstanceSegmentation/models/`.
+- Kept training datasets and intermediate checkpoints out of Git; runtime weights live under `src/cv/yolo_detector/projects/combined/model/`.
 - Updated README and system design docs.
 
 Important correction:

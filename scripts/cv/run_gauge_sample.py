@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 GAUGE_DIR = ROOT / "src" / "cv" / "gauge_detector"
 sys.path.insert(0, str(GAUGE_DIR))
 
@@ -25,4 +25,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
