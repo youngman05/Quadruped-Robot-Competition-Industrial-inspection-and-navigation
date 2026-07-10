@@ -164,8 +164,8 @@ Nav2 配置要点：
 | 地图 | `navi/map/competition_field.pgm` |
 | 定位 | cuVSLAM，不使用 AMCL |
 | 全局规划器 | NavFn，`use_astar: true` |
-| 局部控制器 | Regulated Pure Pursuit |
-| 局部避障 | D455 depth -> PointCloud2 -> VoxelLayer |
+| 局部控制器 | DWB |
+| 局部避障 | D455 depth -> PointCloud2 -> VoxelLayer（第一轮先验证静态地图+DWB闭环） |
 | 机器人 footprint | 约 `1.0 m x 0.5 m` |
 
 导航任务点定义在 `navigation_client.py` 和 `navi/map/navi_map_data.py` 中，包括：
@@ -475,4 +475,3 @@ ros2 topic echo /task/status
 5. `src/cv/README.md`
 6. `docs/system_design.md`
 7. `docs/test_checklist.md`
-

@@ -24,7 +24,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=19001)
-    parser.add_argument("--topic", default="/visual_slam/vis/slam_odometry")
+    parser.add_argument("--topic", default="/visual_slam/tracking/odometry")
     parser.add_argument("--exporter-path", default="/tmp/cuvslam_odometry_udp_exporter.py")
     parser.add_argument(
         "--local-exporter-path",

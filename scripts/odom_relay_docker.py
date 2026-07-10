@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Runs INSIDE Docker: subscribes to /visual_slam/vis/slam_odometry,
+Runs INSIDE Docker: subscribes to /visual_slam/tracking/odometry,
 writes latest pose as JSON to a shared file on the host filesystem.
 
 Replaces: docker exec + stdbuf ros2 topic echo pipeline
@@ -42,6 +42,6 @@ def callback(msg: Odometry):
 
 rclpy.init()
 node = rclpy.create_node("odom_relay")
-node.create_subscription(Odometry, "/visual_slam/vis/slam_odometry", callback, 10)
+node.create_subscription(Odometry, "/visual_slam/tracking/odometry", callback, 10)
 node.get_logger().info(f"Writing odometry to {OUT_FILE}")
 rclpy.spin(node)

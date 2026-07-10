@@ -13,8 +13,40 @@ WAIT_SECONDS="${WAIT_SECONDS:-90}"
 DEBUG_DUMP="${DEBUG_DUMP:-0}"
 ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
 RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"
-CUVSLAM_CAMERA_PROFILE="${CUVSLAM_CAMERA_PROFILE:-640x360x60}"
-CUVSLAM_IMG_JITTER_THRESHOLD_MS="${CUVSLAM_IMG_JITTER_THRESHOLD_MS:-35.0}"
+CUVSLAM_MOUNT_MODE_SET="${CUVSLAM_MOUNT_MODE+x}"
+CUVSLAM_MOUNT_MODE="${CUVSLAM_MOUNT_MODE:-bench}"
+CUVSLAM_BASE_FRAME_SET="${CUVSLAM_BASE_FRAME+x}"
+CUVSLAM_BASE_FRAME="${CUVSLAM_BASE_FRAME:-base_link}"
+CUVSLAM_PUBLISH_BASE_TO_CAMERA_TF_SET="${CUVSLAM_PUBLISH_BASE_TO_CAMERA_TF+x}"
+CUVSLAM_PUBLISH_BASE_TO_CAMERA_TF="${CUVSLAM_PUBLISH_BASE_TO_CAMERA_TF:-}"
+CUVSLAM_CAMERA_PROFILE_SET="${CUVSLAM_CAMERA_PROFILE+x}"
+CUVSLAM_CAMERA_PROFILE="${CUVSLAM_CAMERA_PROFILE:-}"
+CUVSLAM_INPUT_BASE_FRAME_SET="${CUVSLAM_INPUT_BASE_FRAME+x}"
+CUVSLAM_INPUT_BASE_FRAME="${CUVSLAM_INPUT_BASE_FRAME:-}"
+CUVSLAM_INPUT_LEFT_CAMERA_FRAME_SET="${CUVSLAM_INPUT_LEFT_CAMERA_FRAME+x}"
+CUVSLAM_INPUT_LEFT_CAMERA_FRAME="${CUVSLAM_INPUT_LEFT_CAMERA_FRAME:-camera_link}"
+CUVSLAM_INPUT_RIGHT_CAMERA_FRAME_SET="${CUVSLAM_INPUT_RIGHT_CAMERA_FRAME+x}"
+CUVSLAM_INPUT_RIGHT_CAMERA_FRAME="${CUVSLAM_INPUT_RIGHT_CAMERA_FRAME:-}"
+CUVSLAM_INPUT_IMU_FRAME_SET="${CUVSLAM_INPUT_IMU_FRAME+x}"
+CUVSLAM_INPUT_IMU_FRAME="${CUVSLAM_INPUT_IMU_FRAME:-camera_gyro_optical_frame}"
+CUVSLAM_ENABLE_IMU_FUSION_SET="${CUVSLAM_ENABLE_IMU_FUSION+x}"
+CUVSLAM_ENABLE_IMU_FUSION="${CUVSLAM_ENABLE_IMU_FUSION:-true}"
+CUVSLAM_REALSENSE_PUBLISH_TF="${CUVSLAM_REALSENSE_PUBLISH_TF:-true}"
+CUVSLAM_PROFILE="${CUVSLAM_PROFILE:-planar_60fps}"
+CUVSLAM_IMAGE_JITTER_THRESHOLD_MS="${CUVSLAM_IMAGE_JITTER_THRESHOLD_MS:-${CUVSLAM_IMG_JITTER_THRESHOLD_MS:-22.0}}"
+CUVSLAM_IMG_JITTER_THRESHOLD_MS="$CUVSLAM_IMAGE_JITTER_THRESHOLD_MS"
+CUVSLAM_ENABLE_LOCALIZATION_N_MAPPING="${CUVSLAM_ENABLE_LOCALIZATION_N_MAPPING:-true}"
+CUVSLAM_PUBLISH_MAP_TO_ODOM_TF="${CUVSLAM_PUBLISH_MAP_TO_ODOM_TF:-true}"
+CUVSLAM_PUBLISH_ODOM_TO_BASE_TF="${CUVSLAM_PUBLISH_ODOM_TO_BASE_TF:-true}"
+CUVSLAM_FORCE_PLANAR_MODE_SET="${CUVSLAM_FORCE_PLANAR_MODE+x}"
+CUVSLAM_FORCE_PLANAR_MODE="${CUVSLAM_FORCE_PLANAR_MODE:-}"
+CUVSLAM_DENOISE_INPUT_IMAGES="${CUVSLAM_DENOISE_INPUT_IMAGES:-false}"
+CUVSLAM_BASE_TO_CAMERA_X="${CUVSLAM_BASE_TO_CAMERA_X:-0.080}"
+CUVSLAM_BASE_TO_CAMERA_Y="${CUVSLAM_BASE_TO_CAMERA_Y:-0.0}"
+CUVSLAM_BASE_TO_CAMERA_Z="${CUVSLAM_BASE_TO_CAMERA_Z:-0.493}"
+CUVSLAM_BASE_TO_CAMERA_ROLL="${CUVSLAM_BASE_TO_CAMERA_ROLL:-0.0}"
+CUVSLAM_BASE_TO_CAMERA_PITCH="${CUVSLAM_BASE_TO_CAMERA_PITCH:--0.523599}"
+CUVSLAM_BASE_TO_CAMERA_YAW="${CUVSLAM_BASE_TO_CAMERA_YAW:-0.0}"
 ENABLE_SLAM_VISUALIZATION="${ENABLE_SLAM_VISUALIZATION:-true}"
 ENABLE_LANDMARKS_VIEW="${ENABLE_LANDMARKS_VIEW:-true}"
 ENABLE_OBSERVATIONS_VIEW="${ENABLE_OBSERVATIONS_VIEW:-true}"
@@ -46,8 +78,24 @@ Environment overrides:
   DEBUG_DUMP          Set to 1 to enable cuVSLAM debug dump. Default: 0
   ROS_DOMAIN_ID       ROS 2 DDS domain shared with host Foxy. Default: 0
   RMW_IMPLEMENTATION  ROS 2 middleware implementation. Default: rmw_fastrtps_cpp
-  CUVSLAM_CAMERA_PROFILE       RealSense IR profile. Default: 640x360x60
-  CUVSLAM_IMG_JITTER_THRESHOLD_MS  cuVSLAM image jitter threshold. Default: 35.0
+  CUVSLAM_MOUNT_MODE           Mount mode: bench or robot. Default: bench
+  CUVSLAM_PROFILE              Tuning profile: planar_60fps, planar_90fps, official_like, custom. Default: planar_60fps
+  CUVSLAM_CAMERA_PROFILE       RealSense IR profile, e.g. 640x360x60. Default depends on CUVSLAM_PROFILE
+  CUVSLAM_IMAGE_JITTER_THRESHOLD_MS  cuVSLAM image jitter threshold. Default: 22.0
+  CUVSLAM_ENABLE_LOCALIZATION_N_MAPPING  Enable localization + mapping. Default: true
+  CUVSLAM_PUBLISH_MAP_TO_ODOM_TF         Publish map->odom TF. Default: true
+  CUVSLAM_PUBLISH_ODOM_TO_BASE_TF        Publish odom->base TF. Default: true
+  CUVSLAM_FORCE_PLANAR_MODE    Force cuVSLAM planar motion mode. Default: true except official_like
+  CUVSLAM_DENOISE_INPUT_IMAGES Enable cuVSLAM input denoising. Default: false
+  CUVSLAM_BASE_FRAME           Robot base frame. Default: camera_link in bench, base_link in robot
+  CUVSLAM_INPUT_BASE_FRAME     Frame used as the base for TF lookup. Default: empty in bench, base_link in robot
+  CUVSLAM_INPUT_LEFT_CAMERA_FRAME  Left camera TF frame. Default: camera_link
+  CUVSLAM_INPUT_RIGHT_CAMERA_FRAME Right camera TF frame. Default: empty
+  CUVSLAM_INPUT_IMU_FRAME      IMU TF frame. Default: camera_gyro_optical_frame
+  CUVSLAM_ENABLE_IMU_FUSION    Enable IMU fusion. Default: true
+  CUVSLAM_REALSENSE_PUBLISH_TF Let RealSense publish camera internal TF. Default: true
+  CUVSLAM_PUBLISH_BASE_TO_CAMERA_TF  Publish base_link->camera_link TF. Auto by mount mode.
+  CUVSLAM_BASE_TO_CAMERA_X/Y/Z/ROLL/PITCH/YAW  base_link->camera_link static TF
   ENABLE_SLAM_VISUALIZATION    Publish SLAM visualization topics. Default: true
   ENABLE_LANDMARKS_VIEW        Publish landmarks view. Default: true
   ENABLE_OBSERVATIONS_VIEW     Publish observations cloud. Default: true
@@ -101,6 +149,80 @@ py_bool() {
     *) echo "False" ;;
   esac
 }
+
+case "${CUVSLAM_PROFILE,,}" in
+  planar_60fps)
+    if [[ -z "$CUVSLAM_CAMERA_PROFILE_SET" ]]; then
+      CUVSLAM_CAMERA_PROFILE="640x360x60"
+    fi
+    if [[ -z "$CUVSLAM_FORCE_PLANAR_MODE_SET" ]]; then
+      CUVSLAM_FORCE_PLANAR_MODE="true"
+    fi
+    ;;
+  planar_90fps)
+    if [[ -z "$CUVSLAM_CAMERA_PROFILE_SET" ]]; then
+      CUVSLAM_CAMERA_PROFILE="640x360x90"
+    fi
+    if [[ -z "$CUVSLAM_FORCE_PLANAR_MODE_SET" ]]; then
+      CUVSLAM_FORCE_PLANAR_MODE="true"
+    fi
+    ;;
+  official_like)
+    if [[ -z "$CUVSLAM_CAMERA_PROFILE_SET" ]]; then
+      CUVSLAM_CAMERA_PROFILE="640x360x90"
+    fi
+    if [[ -z "$CUVSLAM_FORCE_PLANAR_MODE_SET" ]]; then
+      CUVSLAM_FORCE_PLANAR_MODE="false"
+    fi
+    ;;
+  custom)
+    if [[ -z "$CUVSLAM_CAMERA_PROFILE_SET" ]]; then
+      CUVSLAM_CAMERA_PROFILE="640x360x90"
+    fi
+    if [[ -z "$CUVSLAM_FORCE_PLANAR_MODE_SET" ]]; then
+      CUVSLAM_FORCE_PLANAR_MODE="true"
+    fi
+    ;;
+  *)
+    echo "ERROR: Unknown CUVSLAM_PROFILE: $CUVSLAM_PROFILE (use planar_60fps, planar_90fps, official_like, or custom)" >&2
+    exit 2
+    ;;
+esac
+
+case "${CUVSLAM_MOUNT_MODE,,}" in
+  bench)
+    if [[ -z "$CUVSLAM_BASE_FRAME_SET" ]]; then
+      CUVSLAM_BASE_FRAME="camera_link"
+    fi
+    if [[ -z "$CUVSLAM_PUBLISH_BASE_TO_CAMERA_TF_SET" ]]; then
+      CUVSLAM_PUBLISH_BASE_TO_CAMERA_TF="false"
+    fi
+    if [[ -z "$CUVSLAM_INPUT_BASE_FRAME_SET" ]]; then
+      CUVSLAM_INPUT_BASE_FRAME=""
+    fi
+    if [[ -z "$CUVSLAM_INPUT_LEFT_CAMERA_FRAME_SET" ]]; then
+      CUVSLAM_INPUT_LEFT_CAMERA_FRAME="camera_link"
+    fi
+    ;;
+  robot)
+    if [[ -z "$CUVSLAM_BASE_FRAME_SET" ]]; then
+      CUVSLAM_BASE_FRAME="base_link"
+    fi
+    if [[ -z "$CUVSLAM_PUBLISH_BASE_TO_CAMERA_TF_SET" ]]; then
+      CUVSLAM_PUBLISH_BASE_TO_CAMERA_TF="true"
+    fi
+    if [[ -z "$CUVSLAM_INPUT_BASE_FRAME_SET" ]]; then
+      CUVSLAM_INPUT_BASE_FRAME="base_link"
+    fi
+    if [[ -z "$CUVSLAM_INPUT_LEFT_CAMERA_FRAME_SET" ]]; then
+      CUVSLAM_INPUT_LEFT_CAMERA_FRAME="camera_link"
+    fi
+    ;;
+  *)
+    echo "ERROR: Unknown CUVSLAM_MOUNT_MODE: $CUVSLAM_MOUNT_MODE (use bench or robot)" >&2
+    exit 2
+    ;;
+esac
 
 rviz_bool() {
   case "${1,,}" in
@@ -487,10 +609,21 @@ RVIZ
 
 write_cuvslam_launch() {
   local enable_slam_py enable_landmarks_py enable_observations_py debug_py
+  local enable_localization_n_mapping_py publish_map_to_odom_tf_py publish_odom_to_base_tf_py
+  local enable_imu_fusion_py publish_base_to_camera_tf_py
+  local force_planar_mode_py denoise_input_images_py realsense_publish_tf_py
   enable_slam_py="$(py_bool "$ENABLE_SLAM_VISUALIZATION")"
   enable_landmarks_py="$(py_bool "$ENABLE_LANDMARKS_VIEW")"
   enable_observations_py="$(py_bool "$ENABLE_OBSERVATIONS_VIEW")"
   debug_py="$(py_bool "$DEBUG_DUMP")"
+  enable_localization_n_mapping_py="$(py_bool "$CUVSLAM_ENABLE_LOCALIZATION_N_MAPPING")"
+  publish_map_to_odom_tf_py="$(py_bool "$CUVSLAM_PUBLISH_MAP_TO_ODOM_TF")"
+  publish_odom_to_base_tf_py="$(py_bool "$CUVSLAM_PUBLISH_ODOM_TO_BASE_TF")"
+  enable_imu_fusion_py="$(py_bool "$CUVSLAM_ENABLE_IMU_FUSION")"
+  publish_base_to_camera_tf_py="$(py_bool "$CUVSLAM_PUBLISH_BASE_TO_CAMERA_TF")"
+  force_planar_mode_py="$(py_bool "$CUVSLAM_FORCE_PLANAR_MODE")"
+  denoise_input_images_py="$(py_bool "$CUVSLAM_DENOISE_INPUT_IMAGES")"
+  realsense_publish_tf_py="$(py_bool "$CUVSLAM_REALSENSE_PUBLISH_TF")"
 
   cat >"$CUVSLAM_LAUNCH" <<PY
 # Generated by scripts/start_cuvslam_rviz_gui.sh.
@@ -500,6 +633,28 @@ from launch_ros.descriptions import ComposableNode
 
 
 def generate_launch_description():
+    launch_entities = []
+
+    if ${publish_base_to_camera_tf_py}:
+        launch_entities.append(
+            Node(
+                package='tf2_ros',
+                executable='static_transform_publisher',
+                name='base_link_to_camera_link_tf',
+                arguments=[
+                    '${CUVSLAM_BASE_TO_CAMERA_X}',
+                    '${CUVSLAM_BASE_TO_CAMERA_Y}',
+                    '${CUVSLAM_BASE_TO_CAMERA_Z}',
+                    '${CUVSLAM_BASE_TO_CAMERA_YAW}',
+                    '${CUVSLAM_BASE_TO_CAMERA_PITCH}',
+                    '${CUVSLAM_BASE_TO_CAMERA_ROLL}',
+                    'base_link',
+                    'camera_link',
+                ],
+                output='screen',
+            )
+        )
+
     realsense_camera_node = Node(
         name='camera',
         namespace='camera',
@@ -508,8 +663,8 @@ def generate_launch_description():
         parameters=[{
             'enable_infra1': True,
             'enable_infra2': True,
-            'enable_color': False,
-            'enable_depth': False,
+            'enable_color': True,
+            'enable_depth': True,
             'depth_module.emitter_enabled': 0,
             'depth_module.profile': '${CUVSLAM_CAMERA_PROFILE}',
             'enable_gyro': True,
@@ -517,6 +672,7 @@ def generate_launch_description():
             'gyro_fps': 200,
             'accel_fps': 200,
             'unite_imu_method': 2,
+            'publish_tf': ${realsense_publish_tf_py},
         }],
     )
 
@@ -525,7 +681,7 @@ def generate_launch_description():
         package='isaac_ros_visual_slam',
         plugin='nvidia::isaac_ros::visual_slam::VisualSlamNode',
         parameters=[{
-            'denoise_input_images': False,
+            'denoise_input_images': ${denoise_input_images_py},
             'rectified_images': True,
             'enable_debug_mode': ${debug_py},
             'debug_dump_path': '/logs/debug_dump',
@@ -534,9 +690,16 @@ def generate_launch_description():
             'enable_observations_view': ${enable_observations_py},
             'map_frame': 'map',
             'odom_frame': 'odom',
-            'base_frame': 'camera_link',
-            'input_imu_frame': 'camera_gyro_optical_frame',
-            'enable_imu_fusion': True,
+            'base_frame': '${CUVSLAM_BASE_FRAME}',
+            'input_base_frame': '${CUVSLAM_INPUT_BASE_FRAME}',
+            'input_left_camera_frame': '${CUVSLAM_INPUT_LEFT_CAMERA_FRAME}',
+            'input_right_camera_frame': '${CUVSLAM_INPUT_RIGHT_CAMERA_FRAME}',
+            'input_imu_frame': '${CUVSLAM_INPUT_IMU_FRAME}',
+            'enable_imu_fusion': ${enable_imu_fusion_py},
+            'enable_localization_n_mapping': ${enable_localization_n_mapping_py},
+            'publish_map_to_odom_tf': ${publish_map_to_odom_tf_py},
+            'publish_odom_to_base_tf': ${publish_odom_to_base_tf_py},
+            'force_planar_mode': ${force_planar_mode_py},
             'gyro_noise_density': 0.000244,
             'gyro_random_walk': 0.000019393,
             'accel_noise_density': 0.001862,
@@ -562,7 +725,8 @@ def generate_launch_description():
         output='screen',
     )
 
-    return launch.LaunchDescription([visual_slam_launch_container, realsense_camera_node])
+    launch_entities.extend([visual_slam_launch_container, realsense_camera_node])
+    return launch.LaunchDescription(launch_entities)
 PY
 }
 
@@ -571,14 +735,16 @@ write_cuvslam_launch_runner() {
 # Generated by scripts/start_cuvslam_rviz_gui.sh.
 import sys
 
-from launch import LaunchService
+from launch import LaunchDescription, LaunchService
+from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 
 
 def main():
     source = PythonLaunchDescriptionSource('/logs/cuvslam_realsense_tuned.launch.py')
+    launch_description = LaunchDescription([IncludeLaunchDescription(source)])
     launch_service = LaunchService()
-    launch_service.include_launch_description(source.get_launch_description())
+    launch_service.include_launch_description(launch_description)
     return launch_service.run()
 
 
@@ -590,7 +756,9 @@ PY
 need_cmd docker
 need_cmd date
 
-[[ -n "${DISPLAY:-}" ]] || die "DISPLAY is empty. Run this from the Jetson desktop, VNC, or NoMachine terminal."
+if [[ "$SKIP_RVIZ" -eq 0 ]]; then
+  [[ -n "${DISPLAY:-}" ]] || die "DISPLAY is empty. Run this from the Jetson desktop, VNC, or NoMachine terminal, or pass --no-rviz."
+fi
 [[ -d "$ISAAC_WS" ]] || die "Isaac ROS workspace not found: $ISAAC_WS"
 [[ -f "$ISAAC_WS/install/setup.bash" ]] || die "Missing install/setup.bash in $ISAAC_WS"
 docker image inspect "$IMAGE" >/dev/null 2>&1 || die "Docker image not found: $IMAGE"
@@ -608,11 +776,13 @@ if ! lsusb | grep -Eiq '8086:0b5c|realsense'; then
   die "No Intel RealSense device found in lsusb."
 fi
 
-if command -v xhost >/dev/null 2>&1; then
+if [[ -n "${DISPLAY:-}" ]] && command -v xhost >/dev/null 2>&1; then
   xhost +local:root >/dev/null 2>&1 || true
   xhost +local:docker >/dev/null 2>&1 || true
 else
-  echo "WARNING: xhost not found; RViz may fail to open." >&2
+  if [[ "$SKIP_RVIZ" -eq 0 ]]; then
+    echo "WARNING: xhost or DISPLAY not available; RViz may fail to open." >&2
+  fi
 fi
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
@@ -641,7 +811,7 @@ fi
 start_loop_metrics_recorder() {
   echo "Starting loop metrics recorder..."
   docker exec -d "$CONTAINER_NAME" bash -lc \
-    "source /opt/ros/humble/setup.bash && source /workspaces/isaac_ros-dev/install/setup.bash && python3 /logs/cuvslam_loop_metrics_recorder.py --interval '$LOOP_METRICS_INTERVAL' --path-dump-interval '$LOOP_METRICS_PATH_DUMP_INTERVAL' >/logs/loop_metrics_recorder.log 2>&1"
+    "source /opt/ros/humble/setup.bash && source /workspaces/isaac_ros-dev/install/setup.bash && python3 /logs/cuvslam_loop_metrics_recorder.py --interval '$LOOP_METRICS_INTERVAL' --path-dump-interval '$LOOP_METRICS_PATH_DUMP_INTERVAL' --mount-mode '$CUVSLAM_MOUNT_MODE' --expected-base-frame '$CUVSLAM_BASE_FRAME' >/logs/loop_metrics_recorder.log 2>&1"
   LOOP_RECORDER_STARTED=1
   echo "Loop metrics live summary: $LOG_DIR/loop_metrics_latest.txt"
 }
@@ -678,8 +848,19 @@ echo "Starting cuVSLAM container: $CONTAINER_NAME"
 echo "Logs: $LOG_DIR"
 echo "ROS_DOMAIN_ID=$ROS_DOMAIN_ID"
 echo "RMW_IMPLEMENTATION=$RMW_IMPLEMENTATION"
+echo "CUVSLAM_MOUNT_MODE=$CUVSLAM_MOUNT_MODE"
+echo "CUVSLAM_PROFILE=$CUVSLAM_PROFILE"
+echo "CUVSLAM_BASE_FRAME=$CUVSLAM_BASE_FRAME"
+echo "CUVSLAM_INPUT_BASE_FRAME=$CUVSLAM_INPUT_BASE_FRAME"
+echo "CUVSLAM_INPUT_LEFT_CAMERA_FRAME=$CUVSLAM_INPUT_LEFT_CAMERA_FRAME"
+echo "CUVSLAM_INPUT_RIGHT_CAMERA_FRAME=$CUVSLAM_INPUT_RIGHT_CAMERA_FRAME"
+echo "CUVSLAM_INPUT_IMU_FRAME=$CUVSLAM_INPUT_IMU_FRAME"
 echo "CUVSLAM_CAMERA_PROFILE=$CUVSLAM_CAMERA_PROFILE"
-echo "CUVSLAM_IMG_JITTER_THRESHOLD_MS=$CUVSLAM_IMG_JITTER_THRESHOLD_MS"
+echo "CUVSLAM_IMAGE_JITTER_THRESHOLD_MS=$CUVSLAM_IMAGE_JITTER_THRESHOLD_MS"
+echo "CUVSLAM_FORCE_PLANAR_MODE=$CUVSLAM_FORCE_PLANAR_MODE"
+echo "CUVSLAM_DENOISE_INPUT_IMAGES=$CUVSLAM_DENOISE_INPUT_IMAGES"
+echo "CUVSLAM_ENABLE_IMU_FUSION=$CUVSLAM_ENABLE_IMU_FUSION"
+echo "CUVSLAM_REALSENSE_PUBLISH_TF=$CUVSLAM_REALSENSE_PUBLISH_TF"
 echo "ENABLE_LANDMARKS_VIEW=$ENABLE_LANDMARKS_VIEW"
 echo "ENABLE_OBSERVATIONS_VIEW=$ENABLE_OBSERVATIONS_VIEW"
 echo "RVIZ_HEAVY_DISPLAYS=$RVIZ_HEAVY_DISPLAYS"
@@ -688,7 +869,7 @@ docker run -d --name "$CONTAINER_NAME" \
   --runtime nvidia \
   --network host \
   --privileged \
-  -e DISPLAY="$DISPLAY" \
+  -e DISPLAY="${DISPLAY:-}" \
   -e QT_X11_NO_MITSHM=1 \
   -e NVIDIA_VISIBLE_DEVICES=all \
   -e NVIDIA_DRIVER_CAPABILITIES=all \

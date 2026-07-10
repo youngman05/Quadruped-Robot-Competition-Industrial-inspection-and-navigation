@@ -10,8 +10,9 @@
 from pathlib import Path
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, LogInfo
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo
 from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -28,7 +29,9 @@ def generate_launch_description() -> LaunchDescription:
     enable_task_manager = LaunchConfiguration("enable_task_manager", default="false")
     enable_speech = LaunchConfiguration("enable_speech", default="false")
     enable_navigation = LaunchConfiguration("enable_navigation", default="false")
+    enable_cmd_vel_bridge = LaunchConfiguration("enable_cmd_vel_bridge", default="false")
     enable_whz = LaunchConfiguration("enable_whz", default="false")
+    auto_advance = LaunchConfiguration("auto_advance", default="false")
 
     # ── 声明参数 ─────────────────────────────────────
     declare_enable_gauge = DeclareLaunchArgument(
@@ -49,11 +52,19 @@ def generate_launch_description() -> LaunchDescription:
     )
     declare_enable_navigation = DeclareLaunchArgument(
         "enable_navigation", default_value="false",
-        description="启动轻量导航 (A* + 纯追踪 + 深度避障)"
+        description="启动官方 Nav2 导航栈 (NavFn A* + DWB)"
+    )
+    declare_enable_cmd_vel_bridge = DeclareLaunchArgument(
+        "enable_cmd_vel_bridge", default_value="false",
+        description="启动 /cmd_vel -> Lite3 UDP 桥接。默认关闭，用于安全 dry-run。"
     )
     declare_enable_whz = DeclareLaunchArgument(
         "enable_whz", default_value="false",
         description="启动 whz 巡检 (字母识别+仪表+语音播报)"
+    )
+    declare_auto_advance = DeclareLaunchArgument(
+        "auto_advance", default_value="false",
+        description="调试模式：跳过部分任务等待条件"
     )
 
     # ═══════════════════════════════════════════════════
@@ -106,7 +117,13 @@ def generate_launch_description() -> LaunchDescription:
         package="quadruped_robot_competition",
         executable="task_manager",
         name="task_manager_node",
-        parameters=[str(PARAMS_FILE)],
+        parameters=[
+            str(PARAMS_FILE),
+            {
+                "auto_advance": auto_advance,
+                "phase2_map_yaml": str(PROJECT_ROOT / "navi" / "map" / "competition_field_phase2.yaml"),
+            },
+        ],
         output="screen",
         condition=IfCondition(enable_task_manager),
     )
@@ -121,7 +138,7 @@ def generate_launch_description() -> LaunchDescription:
     )
 
     # ═══════════════════════════════════════════════════
-    # 执行层 — 轻量导航
+    # 定位/传感器辅助层 — Nav2 prerequisites
     # ═══════════════════════════════════════════════════
 
     initial_pose_node = Node(
@@ -136,8 +153,13 @@ def generate_launch_description() -> LaunchDescription:
         package="tf2_ros",
         executable="static_transform_publisher",
         name="base_to_camera_tf",
-        # x=0.080m forward, z=0.493m up, pitch=-30° (camera tilted down)
-        arguments=["0.080", "0.000", "0.493", "0", "-0.523599", "0", "base_link", "camera_link"],
+        # base_link -> camera_link: x=0.080m forward, z=0.493m up,
+        # pitch=-30 deg. Use quaternion form to avoid yaw/pitch/roll ambiguity.
+        arguments=[
+            "0.080", "0.000", "0.493",
+            "0.000000", "-0.258819", "0.000000", "0.965926",
+            "base_link", "camera_link",
+        ],
         output="screen",
         condition=IfCondition(enable_navigation),
     )
@@ -150,21 +172,40 @@ def generate_launch_description() -> LaunchDescription:
         condition=IfCondition(enable_navigation),
     )
 
-    # NOTE: point_cloud_xyz_node (depth_image_proc) not available on Jetson Foxy.
-    # Depth-based local obstacle detection will be added later via a custom node.
+    # Optional fallback bridge. The preferred dog path remains Nav2 /cmd_vel
+    # -> Lite3 transfer driver from scripts/start_competition.sh --dog.
+    cmd_vel_bridge_node = Node(
+        package="quadruped_robot_competition",
+        executable="cmd_vel_bridge",
+        name="cmd_vel_bridge_node",
+        output="screen",
+        condition=IfCondition(enable_cmd_vel_bridge),
+    )
+
+    # ═══════════════════════════════════════════════════
+    # 执行层 — official Nav2
+    # ═══════════════════════════════════════════════════
+
+    navigation_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            str(PROJECT_ROOT / "launch" / "navigation.launch.py")
+        ),
+        condition=IfCondition(enable_navigation),
+    )
 
     # ── 启动说明 ────────────────────────────────────
     startup_info = LogInfo(
         msg=[
             "\n",
             "╔════════════════════════════════════════╗\n",
-            "║   四足机器人竞赛系统 (轻量版) 启动中   ║\n",
+            "║   四足机器人竞赛系统 (Nav2版) 启动中   ║\n",
             "╠════════════════════════════════════════╣\n",
             "║ gauge_status     : ", enable_gauge, "  ║\n",
             "║ yolo_detect      : ", enable_yolo, "  ║\n",
             "║ task_manager     : ", enable_task_manager, "  ║\n",
             "║ speech           : ", enable_speech, "  ║\n",
-            "║ navigation (A*)  : ", enable_navigation, "  ║\n",
+            "║ navigation (Nav2): ", enable_navigation, "  ║\n",
+            "║ cmd_vel_bridge   : ", enable_cmd_vel_bridge, "  ║\n",
             "╚════════════════════════════════════════╝\n",
         ]
     )
@@ -175,7 +216,9 @@ def generate_launch_description() -> LaunchDescription:
         declare_enable_task_manager,
         declare_enable_speech,
         declare_enable_navigation,
+        declare_enable_cmd_vel_bridge,
         declare_enable_whz,
+        declare_auto_advance,
         startup_info,
         gauge_node,
         yolo_node,
@@ -186,4 +229,6 @@ def generate_launch_description() -> LaunchDescription:
         initial_pose_node,
         base_to_camera_tf,
         depth_pub_node,
+        cmd_vel_bridge_node,
+        navigation_launch,
     ])

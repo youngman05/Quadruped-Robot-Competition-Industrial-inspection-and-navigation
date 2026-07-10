@@ -5,7 +5,9 @@
 # ==============================================
 # 注意: 不用 set -e，每个步骤自行容错
 
-cd ~/quadruped-robot-competition
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_ROOT" || exit 1
 LOGDIR="$HOME/Desktop/logs"
 mkdir -p "$LOGDIR"
 LOGFILE="$LOGDIR/competition_$(date +%Y%m%d_%H%M%S).log"
@@ -64,7 +66,7 @@ if [ -z "$CN" ]; then
     # 等待视觉 SLAM 开始追踪
     for i in $(seq 1 30); do
         sleep 2
-        if docker exec $CN bash -c 'source /opt/ros/humble/setup.bash && ros2 topic echo /visual_slam/vis/slam_odometry --once 2>/dev/null' | grep -q stamp; then
+        if docker exec $CN bash -c 'source /opt/ros/humble/setup.bash && ros2 topic echo /visual_slam/tracking/odometry --once 2>/dev/null' | grep -q stamp; then
             echo " cuVSLAM 追踪中"
             break
         fi
@@ -125,7 +127,9 @@ sleep 1
 
 source /opt/ros/foxy/setup.bash 2>/dev/null || true
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp ROS_DOMAIN_ID=0
-export FASTRTPS_DEFAULT_PROFILES_FILE=~/quadruped-robot-competition/configs/ros/fastrtps_no_shm.xml
+if [ -f "$PROJECT_ROOT/configs/ros/fastrtps_no_shm.xml" ]; then
+    export FASTRTPS_DEFAULT_PROFILES_FILE="$PROJECT_ROOT/configs/ros/fastrtps_no_shm.xml"
+fi
 export PYTHONPATH=/opt/ros/foxy/lib/python3.8/site-packages
 
 nohup python3 scripts/final_bridge.py > /tmp/fb.log 2>&1 &
@@ -192,6 +196,7 @@ $ENABLE_YOLO && YF=true
 $ENABLE_WHZ  && WF=true
 ros2 launch quadruped_robot_competition competition.launch.py \
   enable_task_manager:=true enable_navigation:=true \
+  enable_cmd_vel_bridge:=false \
   enable_yolo:=$YF enable_whz:=$WF \
   auto_advance:=$SKIP_YOLO > /tmp/competition.log 2>&1 &
 COMP_PID=$!
