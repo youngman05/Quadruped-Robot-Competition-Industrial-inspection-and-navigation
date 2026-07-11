@@ -69,6 +69,20 @@ def parse_args():
     parser.add_argument("--base-to-camera-pitch", type=float, default=0.523599)
     parser.add_argument("--base-to-camera-yaw", type=float, default=0.0)
     parser.add_argument(
+        "--camera-world-rebase",
+        choices=("camera_start", "base_start"),
+        default="camera_start",
+        help=(
+            "For camera-frame odometry, keep the original camera-start odom "
+            "world or rotate/rebase it into the initial base frame."
+        ),
+    )
+    parser.add_argument(
+        "--planarize-output",
+        action="store_true",
+        help="Force output odometry onto the navigation plane: z=0, roll=pitch=0.",
+    )
+    parser.add_argument(
         "--comparison-csv",
         default="/tmp/final_bridge_odom_compare.csv",
         help="Write source and bridged poses from each accepted UDP packet.",
@@ -231,6 +245,8 @@ def make_transform_config(args):
         "q_base_camera": q_base_camera,
         "q_camera_base": q_camera_base,
         "t_camera_base": t_camera_base,
+        "camera_world_rebase": args.camera_world_rebase,
+        "planarize_output": args.planarize_output,
     }
 
 
@@ -238,7 +254,29 @@ def camera_pose_to_base_pose(position, orientation, config):
     offset_odom = rotate_vector(orientation, config["t_camera_base"])
     position_base = tuple(position[i] + offset_odom[i] for i in range(3))
     orientation_base = quat_multiply(orientation, config["q_camera_base"])
+    if config["camera_world_rebase"] == "base_start":
+        position_base = tuple(
+            config["t_base_camera"][i]
+            + rotate_vector(config["q_base_camera"], position_base)[i]
+            for i in range(3)
+        )
+        orientation_base = quat_multiply(config["q_base_camera"], orientation_base)
     return position_base, orientation_base
+
+
+def quat_to_yaw(q):
+    x, y, z, w = q
+    siny_cosp = 2.0 * (w * z + x * y)
+    cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
+    return math.atan2(siny_cosp, cosy_cosp)
+
+
+def quat_from_yaw(yaw):
+    return (0.0, 0.0, math.sin(yaw * 0.5), math.cos(yaw * 0.5))
+
+
+def planarize_pose(position, orientation):
+    return (position[0], position[1], 0.0), quat_from_yaw(quat_to_yaw(orientation))
 
 
 def camera_twist_to_base_twist(linear, angular, config):
@@ -310,6 +348,13 @@ def fill_odometry(msg, payload, node, config):
         twist_linear, twist_angular = camera_twist_to_base_twist(
             twist_linear, twist_angular, config
         )
+
+    if config["planarize_output"]:
+        pose_position, pose_orientation = planarize_pose(
+            pose_position, pose_orientation
+        )
+        twist_linear = (twist_linear[0], twist_linear[1], 0.0)
+        twist_angular = (0.0, 0.0, twist_angular[2])
 
     msg.pose.pose.position.x = pose_position[0]
     msg.pose.pose.position.y = pose_position[1]
@@ -437,7 +482,9 @@ def main():
         f"camera={transform_config['camera_frame']} "
         f"base={transform_config['base_frame']} "
         f"extrinsic_t={transform_config['t_base_camera']} "
-        f"extrinsic_q={transform_config['q_base_camera']}"
+        f"extrinsic_q={transform_config['q_base_camera']} "
+        f"world_rebase={transform_config['camera_world_rebase']} "
+        f"planarize={transform_config['planarize_output']}"
     )
     verify = [0]
 
