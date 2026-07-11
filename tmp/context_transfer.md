@@ -110,7 +110,7 @@ placement_A/B/C/D: y=600mm
 ### 相机TF
 ```
 base_link → camera_link:
-  x=0.080, y=0, z=0.493, roll=0, pitch=-30°, yaw=0
+  x=0.080, y=0, z=0.493, roll=0, pitch=+30°, yaw=0
 ```
 
 ## whz 检测

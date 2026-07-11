@@ -154,10 +154,10 @@ def generate_launch_description() -> LaunchDescription:
         executable="static_transform_publisher",
         name="base_to_camera_tf",
         # base_link -> camera_link: x=0.080m forward, z=0.493m up,
-        # pitch=-30 deg. Use quaternion form to avoid yaw/pitch/roll ambiguity.
+        # pitch=+30 deg tilts the camera X axis downward in ROS frames.
         arguments=[
             "0.080", "0.000", "0.493",
-            "0.000000", "-0.258819", "0.000000", "0.965926",
+            "0.000000", "0.258819", "0.000000", "0.965926",
             "base_link", "camera_link",
         ],
         output="screen",

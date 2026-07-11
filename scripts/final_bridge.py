@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Bridge Docker cuVSLAM UDP odometry to host /odom and odom->base_link TF."""
 import argparse
+import csv
 import json
+import math
 import os
 import socket
 import subprocess
@@ -43,6 +45,33 @@ def parse_args():
         "--no-start-exporter",
         action="store_true",
         help="Only listen on UDP; assume exporter is already running in Docker.",
+    )
+    parser.add_argument("--camera-frame", default="camera_link")
+    parser.add_argument("--base-frame", default="base_link")
+    parser.add_argument("--odom-frame", default="odom")
+    parser.add_argument(
+        "--transform-camera-pose-to-base",
+        dest="transform_camera_pose_to_base",
+        action="store_true",
+        default=True,
+        help="Convert camera-frame odometry to the robot base frame.",
+    )
+    parser.add_argument(
+        "--no-transform-camera-pose-to-base",
+        dest="transform_camera_pose_to_base",
+        action="store_false",
+        help="Reject camera-frame odometry instead of converting it.",
+    )
+    parser.add_argument("--base-to-camera-x", type=float, default=0.080)
+    parser.add_argument("--base-to-camera-y", type=float, default=0.000)
+    parser.add_argument("--base-to-camera-z", type=float, default=0.493)
+    parser.add_argument("--base-to-camera-roll", type=float, default=0.0)
+    parser.add_argument("--base-to-camera-pitch", type=float, default=0.523599)
+    parser.add_argument("--base-to-camera-yaw", type=float, default=0.0)
+    parser.add_argument(
+        "--comparison-csv",
+        default="/tmp/final_bridge_odom_compare.csv",
+        help="Write source and bridged poses from each accepted UDP packet.",
     )
     return parser.parse_args()
 
@@ -118,25 +147,143 @@ def payload_stamp_seconds(payload):
     return float(stamp["sec"]) + float(stamp.get("nanosec") or 0) / 1e9
 
 
-def fill_odometry(msg, payload, node):
+def normalize_quat(q):
+    norm = math.sqrt(sum(value * value for value in q))
+    if norm == 0.0:
+        return (0.0, 0.0, 0.0, 1.0)
+    return tuple(value / norm for value in q)
+
+
+def quat_conjugate(q):
+    x, y, z, w = q
+    return (-x, -y, -z, w)
+
+
+def quat_multiply_raw(a, b):
+    ax, ay, az, aw = a
+    bx, by, bz, bw = b
+    return (
+        aw * bx + ax * bw + ay * bz - az * by,
+        aw * by - ax * bz + ay * bw + az * bx,
+        aw * bz + ax * by - ay * bx + az * bw,
+        aw * bw - ax * bx - ay * by - az * bz,
+    )
+
+
+def quat_multiply(a, b):
+    return normalize_quat(quat_multiply_raw(a, b))
+
+
+def rotate_vector(q, vector):
+    qv = (vector[0], vector[1], vector[2], 0.0)
+    rotated = quat_multiply_raw(
+        quat_multiply_raw(q, qv),
+        quat_conjugate(q),
+    )
+    return (rotated[0], rotated[1], rotated[2])
+
+
+def quat_from_rpy(roll, pitch, yaw):
+    cr = math.cos(roll * 0.5)
+    sr = math.sin(roll * 0.5)
+    cp = math.cos(pitch * 0.5)
+    sp = math.sin(pitch * 0.5)
+    cy = math.cos(yaw * 0.5)
+    sy = math.sin(yaw * 0.5)
+    return normalize_quat((
+        sr * cp * cy - cr * sp * sy,
+        cr * sp * cy + sr * cp * sy,
+        cr * cp * sy - sr * sp * cy,
+        cr * cp * cy + sr * sp * sy,
+    ))
+
+
+def cross(a, b):
+    return (
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    )
+
+
+def make_transform_config(args):
+    t_base_camera = (
+        args.base_to_camera_x,
+        args.base_to_camera_y,
+        args.base_to_camera_z,
+    )
+    q_base_camera = quat_from_rpy(
+        args.base_to_camera_roll,
+        args.base_to_camera_pitch,
+        args.base_to_camera_yaw,
+    )
+    q_camera_base = quat_conjugate(q_base_camera)
+    t_camera_base = rotate_vector(
+        q_camera_base,
+        tuple(-value for value in t_base_camera),
+    )
+    return {
+        "camera_frame": args.camera_frame,
+        "base_frame": args.base_frame,
+        "odom_frame": args.odom_frame,
+        "transform_camera_pose_to_base": args.transform_camera_pose_to_base,
+        "t_base_camera": t_base_camera,
+        "q_base_camera": q_base_camera,
+        "q_camera_base": q_camera_base,
+        "t_camera_base": t_camera_base,
+    }
+
+
+def camera_pose_to_base_pose(position, orientation, config):
+    offset_odom = rotate_vector(orientation, config["t_camera_base"])
+    position_base = tuple(position[i] + offset_odom[i] for i in range(3))
+    orientation_base = quat_multiply(orientation, config["q_camera_base"])
+    return position_base, orientation_base
+
+
+def camera_twist_to_base_twist(linear, angular, config):
+    angular_base = rotate_vector(config["q_base_camera"], angular)
+    camera_linear_base = rotate_vector(config["q_base_camera"], linear)
+    correction = cross(angular_base, config["t_base_camera"])
+    linear_base = tuple(camera_linear_base[i] - correction[i] for i in range(3))
+    return linear_base, angular_base
+
+
+def fill_odometry(msg, payload, node, config):
     stamp_source = set_stamp(msg.header.stamp, payload)
     if stamp_source == "host_now":
         msg.header.stamp = node.get_clock().now().to_msg()
 
-    # Keep the host-side frame contract stable for the current Foxy stack.
-    msg.header.frame_id = "odom"
-    msg.child_frame_id = "base_link"
+    source_child = str(payload.get("child_frame_id") or "").strip()
+    if source_child == config["base_frame"]:
+        transform_mode = "base_passthrough"
+    elif source_child == config["camera_frame"]:
+        if not config["transform_camera_pose_to_base"]:
+            raise ValueError("camera-frame odometry conversion is disabled")
+        transform_mode = "camera_to_base"
+    else:
+        raise ValueError(
+            f"unexpected child_frame_id={source_child!r}; expected "
+            f"{config['base_frame']!r} or {config['camera_frame']!r}"
+        )
+
+    msg.header.frame_id = config["odom_frame"]
+    msg.child_frame_id = config["base_frame"]
 
     pose = payload.get("pose") or {}
     position = pose.get("position") or {}
     orientation = pose.get("orientation") or {}
-    msg.pose.pose.position.x = float(position.get("x") or 0.0)
-    msg.pose.pose.position.y = float(position.get("y") or 0.0)
-    msg.pose.pose.position.z = float(position.get("z") or 0.0)
-    msg.pose.pose.orientation.x = float(orientation.get("x") or 0.0)
-    msg.pose.pose.orientation.y = float(orientation.get("y") or 0.0)
-    msg.pose.pose.orientation.z = float(orientation.get("z") or 0.0)
-    msg.pose.pose.orientation.w = float(orientation.get("w") or 1.0)
+    pose_position = (
+        float(position.get("x") or 0.0),
+        float(position.get("y") or 0.0),
+        float(position.get("z") or 0.0),
+    )
+    pose_orientation = normalize_quat((
+        float(orientation.get("x") or 0.0),
+        float(orientation.get("y") or 0.0),
+        float(orientation.get("z") or 0.0),
+        float(orientation.get("w") or 1.0),
+    ))
 
     pose_covariance = payload.get("pose_covariance") or []
     for idx, value in enumerate(pose_covariance[:36]):
@@ -145,28 +292,109 @@ def fill_odometry(msg, payload, node):
     twist = payload.get("twist") or {}
     linear = twist.get("linear") or {}
     angular = twist.get("angular") or {}
-    msg.twist.twist.linear.x = float(linear.get("x") or 0.0)
-    msg.twist.twist.linear.y = float(linear.get("y") or 0.0)
-    msg.twist.twist.linear.z = float(linear.get("z") or 0.0)
-    msg.twist.twist.angular.x = float(angular.get("x") or 0.0)
-    msg.twist.twist.angular.y = float(angular.get("y") or 0.0)
-    msg.twist.twist.angular.z = float(angular.get("z") or 0.0)
+    twist_linear = (
+        float(linear.get("x") or 0.0),
+        float(linear.get("y") or 0.0),
+        float(linear.get("z") or 0.0),
+    )
+    twist_angular = (
+        float(angular.get("x") or 0.0),
+        float(angular.get("y") or 0.0),
+        float(angular.get("z") or 0.0),
+    )
+
+    if transform_mode == "camera_to_base":
+        pose_position, pose_orientation = camera_pose_to_base_pose(
+            pose_position, pose_orientation, config
+        )
+        twist_linear, twist_angular = camera_twist_to_base_twist(
+            twist_linear, twist_angular, config
+        )
+
+    msg.pose.pose.position.x = pose_position[0]
+    msg.pose.pose.position.y = pose_position[1]
+    msg.pose.pose.position.z = pose_position[2]
+    msg.pose.pose.orientation.x = pose_orientation[0]
+    msg.pose.pose.orientation.y = pose_orientation[1]
+    msg.pose.pose.orientation.z = pose_orientation[2]
+    msg.pose.pose.orientation.w = pose_orientation[3]
+    msg.twist.twist.linear.x = twist_linear[0]
+    msg.twist.twist.linear.y = twist_linear[1]
+    msg.twist.twist.linear.z = twist_linear[2]
+    msg.twist.twist.angular.x = twist_angular[0]
+    msg.twist.twist.angular.y = twist_angular[1]
+    msg.twist.twist.angular.z = twist_angular[2]
 
     twist_covariance = payload.get("twist_covariance") or []
     for idx, value in enumerate(twist_covariance[:36]):
         msg.twist.covariance[idx] = float(value)
 
-    return stamp_source
+    return stamp_source, source_child, transform_mode
 
 
 def fill_transform(transform, msg):
     transform.header.stamp = msg.header.stamp
-    transform.header.frame_id = "odom"
-    transform.child_frame_id = "base_link"
+    transform.header.frame_id = msg.header.frame_id
+    transform.child_frame_id = msg.child_frame_id
     transform.transform.translation.x = msg.pose.pose.position.x
     transform.transform.translation.y = msg.pose.pose.position.y
     transform.transform.translation.z = msg.pose.pose.position.z
     transform.transform.rotation = msg.pose.pose.orientation
+
+
+def open_comparison_csv(path):
+    if not path:
+        return None, None
+    parent = os.path.dirname(os.path.abspath(path))
+    os.makedirs(parent, exist_ok=True)
+    handle = open(path, "w", newline="")
+    writer = csv.writer(handle)
+    writer.writerow([
+        "sequence",
+        "source_stamp",
+        "source_frame_id",
+        "source_child_frame_id",
+        "transform_mode",
+        "raw_x", "raw_y", "raw_z",
+        "raw_qx", "raw_qy", "raw_qz", "raw_qw",
+        "host_x", "host_y", "host_z",
+        "host_qx", "host_qy", "host_qz", "host_qw",
+    ])
+    handle.flush()
+    return handle, writer
+
+
+def write_comparison_row(writer, handle, sequence, payload, msg, stamp_source,
+                         source_child, transform_mode):
+    if writer is None:
+        return
+    pose = payload.get("pose") or {}
+    position = pose.get("position") or {}
+    orientation = pose.get("orientation") or {}
+    out_position = msg.pose.pose.position
+    out_orientation = msg.pose.pose.orientation
+    writer.writerow([
+        sequence,
+        stamp_source,
+        payload.get("frame_id") or "",
+        source_child,
+        transform_mode,
+        float(position.get("x") or 0.0),
+        float(position.get("y") or 0.0),
+        float(position.get("z") or 0.0),
+        float(orientation.get("x") or 0.0),
+        float(orientation.get("y") or 0.0),
+        float(orientation.get("z") or 0.0),
+        float(orientation.get("w") or 1.0),
+        out_position.x,
+        out_position.y,
+        out_position.z,
+        out_orientation.x,
+        out_orientation.y,
+        out_orientation.z,
+        out_orientation.w,
+    ])
+    handle.flush()
 
 
 def recv_latest_datagram(sock, packet_size, timeout_sec):
@@ -203,7 +431,14 @@ def main():
     node = rclpy.create_node("final_bridge")
     pub = node.create_publisher(Odometry, "/odom", qos)
     tf_broadcaster = TransformBroadcaster(node)
-
+    transform_config = make_transform_config(args)
+    node.get_logger().info(
+        "frame policy: "
+        f"camera={transform_config['camera_frame']} "
+        f"base={transform_config['base_frame']} "
+        f"extrinsic_t={transform_config['t_base_camera']} "
+        f"extrinsic_q={transform_config['q_base_camera']}"
+    )
     verify = [0]
 
     def self_cb(msg):
@@ -234,6 +469,9 @@ def main():
         ) from exc
     sock.settimeout(0.2)
     node.get_logger().info(f"listening on udp://{args.host}:{args.port}")
+    comparison_handle, comparison_writer = open_comparison_csv(args.comparison_csv)
+    if comparison_handle is not None:
+        node.get_logger().info(f"comparison CSV: {args.comparison_csv}")
 
     count = 0
     received = 0
@@ -284,9 +522,26 @@ def main():
 
             count += 1
             msg = Odometry()
-            stamp_source = fill_odometry(msg, payload, node)
+            try:
+                stamp_source, source_child, transform_mode = fill_odometry(
+                    msg, payload, node, transform_config
+                )
+            except ValueError as exc:
+                dropped_invalid += 1
+                node.get_logger().warn(f"dropping odom packet: {exc}")
+                rclpy.spin_once(node, timeout_sec=0.0)
+                continue
             pub.publish(msg)
-
+            write_comparison_row(
+                comparison_writer,
+                comparison_handle,
+                count,
+                payload,
+                msg,
+                stamp_source,
+                source_child,
+                transform_mode,
+            )
             transform = TransformStamped()
             fill_transform(transform, msg)
             tf_broadcaster.sendTransform(transform)
@@ -304,6 +559,8 @@ def main():
                         'qz': msg.pose.pose.orientation.z,
                         'qw': msg.pose.pose.orientation.w,
                         'stamp': stamp_source if stamp_source else time.time(),
+                        'source_child_frame_id': source_child,
+                        'transform_mode': transform_mode,
                     }, f)
             except Exception:
                 pass
@@ -319,9 +576,12 @@ def main():
                     f"({stamp_source}) | latency={latency_text} | recv={received} "
                     f"drained_old={drained_old} stale_drop={dropped_stale} "
                     f"invalid_drop={dropped_invalid} | self-verify: {verify[0]}"
+                    f" | source_child={source_child} mode={transform_mode}"
                 )
     finally:
         sock.close()
+        if comparison_handle is not None:
+            comparison_handle.close()
         if exporter is not None and exporter.poll() is None:
             exporter.terminate()
             try:

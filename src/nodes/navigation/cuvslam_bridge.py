@@ -100,7 +100,7 @@ class CuvslamBridge(Node):
         self.declare_parameter("base_to_camera_y", 0.000)
         self.declare_parameter("base_to_camera_z", 0.493)
         self.declare_parameter("base_to_camera_roll", 0.0)
-        self.declare_parameter("base_to_camera_pitch", -0.523599)
+        self.declare_parameter("base_to_camera_pitch", 0.523599)
         self.declare_parameter("base_to_camera_yaw", 0.0)
 
         slam_odom = self.get_parameter("slam_odom_topic").value
