@@ -30,6 +30,7 @@ def generate_launch_description() -> LaunchDescription:
     enable_speech = LaunchConfiguration("enable_speech", default="false")
     enable_navigation = LaunchConfiguration("enable_navigation", default="false")
     enable_cmd_vel_bridge = LaunchConfiguration("enable_cmd_vel_bridge", default="false")
+    enable_depth_publisher = LaunchConfiguration("enable_depth_publisher", default="false")
     enable_whz = LaunchConfiguration("enable_whz", default="false")
     auto_advance = LaunchConfiguration("auto_advance", default="false")
 
@@ -57,6 +58,10 @@ def generate_launch_description() -> LaunchDescription:
     declare_enable_cmd_vel_bridge = DeclareLaunchArgument(
         "enable_cmd_vel_bridge", default_value="false",
         description="启动 /cmd_vel -> Lite3 UDP 桥接。默认关闭，用于安全 dry-run。"
+    )
+    declare_enable_depth_publisher = DeclareLaunchArgument(
+        "enable_depth_publisher", default_value="false",
+        description="启动 Host D455 depth publisher。默认关闭，避免和 Docker/cuVSLAM 抢占 D455。"
     )
     declare_enable_whz = DeclareLaunchArgument(
         "enable_whz", default_value="false",
@@ -169,7 +174,7 @@ def generate_launch_description() -> LaunchDescription:
         executable="depth_publisher",
         name="d455_depth_publisher",
         output="screen",
-        condition=IfCondition(enable_navigation),
+        condition=IfCondition(enable_depth_publisher),
     )
 
     # Optional fallback bridge. The preferred dog path remains Nav2 /cmd_vel
@@ -206,6 +211,7 @@ def generate_launch_description() -> LaunchDescription:
             "║ speech           : ", enable_speech, "  ║\n",
             "║ navigation (Nav2): ", enable_navigation, "  ║\n",
             "║ cmd_vel_bridge   : ", enable_cmd_vel_bridge, "  ║\n",
+            "║ depth_publisher  : ", enable_depth_publisher, "  ║\n",
             "╚════════════════════════════════════════╝\n",
         ]
     )
@@ -217,6 +223,7 @@ def generate_launch_description() -> LaunchDescription:
         declare_enable_speech,
         declare_enable_navigation,
         declare_enable_cmd_vel_bridge,
+        declare_enable_depth_publisher,
         declare_enable_whz,
         declare_auto_advance,
         startup_info,

@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================
 #  四足机器人竞赛 — 鲁棒一键启动
-#  用法: bash scripts/start_competition.sh [--dog] [--yolo] [--whz]
+#  用法: bash scripts/start_competition.sh [--dog] [--yolo] [--whz] [--task-manager] [--auto-advance]
 # ==============================================
 # 注意: 不用 set -e，每个步骤自行容错
 
@@ -16,12 +16,15 @@ echo "日志: $LOGFILE"
 trap 'echo ""; echo "Ctrl+C → 清理..."; bash scripts/stop_all.sh' INT TERM
 
 # ── 参数解析 ──────────────────────────────
-ENABLE_YOLO=false; ENABLE_WHZ=false; ENABLE_DOG=false; SKIP_YOLO=true; DO_STAND=false
+ENABLE_YOLO=false; ENABLE_WHZ=false; ENABLE_DOG=false
+ENABLE_TASK_MANAGER=false; AUTO_ADVANCE=false; DO_STAND=false
 for arg in "$@"; do
     case $arg in
-        --yolo)  ENABLE_YOLO=true; SKIP_YOLO=false ;;
+        --yolo)  ENABLE_YOLO=true ;;
         --whz)   ENABLE_WHZ=true ;;
         --dog)   ENABLE_DOG=true ;;
+        --task-manager|--mission) ENABLE_TASK_MANAGER=true ;;
+        --auto-advance) ENABLE_TASK_MANAGER=true; AUTO_ADVANCE=true ;;
         --stand) DO_STAND=true ;;   # force stand toggle (dog lying down)
     esac
 done
@@ -30,7 +33,11 @@ echo ''
 echo '==================================='
 echo ' 四足机器人竞赛系统 v2 — 鲁棒启动'
 echo '==================================='
-echo " DOG=$ENABLE_DOG  YOLO=$ENABLE_YOLO  WHZ=$ENABLE_WHZ"
+echo " DOG=$ENABLE_DOG  YOLO=$ENABLE_YOLO  WHZ=$ENABLE_WHZ  TASK_MANAGER=$ENABLE_TASK_MANAGER  AUTO_ADVANCE=$AUTO_ADVANCE"
+
+CUVSLAM_MOUNT_MODE="${CUVSLAM_MOUNT_MODE:-bench}"
+CUVSLAM_PROFILE="${CUVSLAM_PROFILE:-planar_60fps}"
+FINAL_BRIDGE_CAMERA_WORLD_REBASE="${FINAL_BRIDGE_CAMERA_WORLD_REBASE:-base_start}"
 
 # ═══════════════════════════════════════════
 # [0] 清理旧进程
@@ -48,7 +55,8 @@ echo '[1/6] Docker cuVSLAM...'
 CN=$(docker ps --format '{{.Names}}' 2>/dev/null | grep cuvslam || true)
 if [ -z "$CN" ]; then
     echo "  启动 Docker (需要 ~90s)..."
-    CUVSLAM_MOUNT_MODE=robot CUVSLAM_PROFILE=planar_60fps \
+    PROJECT_DIR="$PROJECT_ROOT" \
+    CUVSLAM_MOUNT_MODE="$CUVSLAM_MOUNT_MODE" CUVSLAM_PROFILE="$CUVSLAM_PROFILE" \
       CUVSLAM_PUBLISH_ODOM_TO_BASE_TF=false CUVSLAM_PUBLISH_MAP_TO_ODOM_TF=false \
       bash scripts/start_cuvslam_rviz_gui.sh --no-rviz > /tmp/cuvslam_start.log 2>&1 &
     # 轮询等待 Docker 容器出现 + cuVSLAM 节点起来
@@ -132,7 +140,9 @@ if [ -f "$PROJECT_ROOT/configs/ros/fastrtps_no_shm.xml" ]; then
 fi
 export PYTHONPATH=/opt/ros/foxy/lib/python3.8/site-packages
 
-nohup python3 scripts/final_bridge.py > /tmp/fb.log 2>&1 &
+nohup python3 scripts/final_bridge.py \
+  --camera-world-rebase "$FINAL_BRIDGE_CAMERA_WORLD_REBASE" \
+  --planarize-output > /tmp/fb.log 2>&1 &
 BRIDGE_PID=$!
 # 等待第一个 odom 消息
 for i in $(seq 1 30); do
@@ -195,20 +205,23 @@ YF=false; WF=false
 $ENABLE_YOLO && YF=true
 $ENABLE_WHZ  && WF=true
 ros2 launch quadruped_robot_competition competition.launch.py \
-  enable_task_manager:=true enable_navigation:=true \
+  enable_task_manager:=$ENABLE_TASK_MANAGER enable_navigation:=true \
   enable_cmd_vel_bridge:=false \
+  enable_depth_publisher:=false \
   enable_yolo:=$YF enable_whz:=$WF \
-  auto_advance:=$SKIP_YOLO > /tmp/competition.log 2>&1 &
+  auto_advance:=$AUTO_ADVANCE > /tmp/competition.log 2>&1 &
 COMP_PID=$!
-echo "  Launch PID=$COMP_PID YOLO=$YF WHZ=$WF SKIP_YOLO=$SKIP_YOLO"
-# 等待 task_manager 节点出现
-for i in $(seq 1 15); do
-    sleep 1
-    if ros2 node list 2>/dev/null | grep -q task_manager; then
-        echo "  task_manager 就绪"
-        break
-    fi
-done
+echo "  Launch PID=$COMP_PID YOLO=$YF WHZ=$WF TASK_MANAGER=$ENABLE_TASK_MANAGER AUTO_ADVANCE=$AUTO_ADVANCE"
+if $ENABLE_TASK_MANAGER; then
+    # 等待 task_manager 节点出现
+    for i in $(seq 1 15); do
+        sleep 1
+        if ros2 node list 2>/dev/null | grep -q task_manager; then
+            echo "  task_manager 就绪"
+            break
+        fi
+    done
+fi
 
 # ═══════════════════════════════════════════
 # [6] 验证
