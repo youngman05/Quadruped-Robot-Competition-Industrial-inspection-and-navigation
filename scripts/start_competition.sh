@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================
 #  四足机器人竞赛 — 鲁棒一键启动
-#  用法: bash scripts/start_competition.sh [--dog] [--yolo] [--whz] [--task-manager] [--auto-advance]
+#  用法: bash scripts/start_competition.sh [--dog] [--cmd-vel-bridge] [--bridge-init-dog] [--yolo] [--whz] [--task-manager] [--auto-advance]
 # ==============================================
 # 注意: 不用 set -e，每个步骤自行容错
 
@@ -16,13 +16,15 @@ echo "日志: $LOGFILE"
 trap 'echo ""; echo "Ctrl+C → 清理..."; bash scripts/stop_all.sh' INT TERM
 
 # ── 参数解析 ──────────────────────────────
-ENABLE_YOLO=false; ENABLE_WHZ=false; ENABLE_DOG=false
+ENABLE_YOLO=false; ENABLE_WHZ=false; ENABLE_DOG=false; ENABLE_CMD_VEL_BRIDGE=false; ENABLE_CMD_VEL_BRIDGE_INIT=false
 ENABLE_TASK_MANAGER=false; AUTO_ADVANCE=false; DO_STAND=false
 for arg in "$@"; do
     case $arg in
         --yolo)  ENABLE_YOLO=true ;;
         --whz)   ENABLE_WHZ=true ;;
         --dog)   ENABLE_DOG=true ;;
+        --cmd-vel-bridge) ENABLE_CMD_VEL_BRIDGE=true ;;
+        --bridge-init-dog|--init-dog) ENABLE_CMD_VEL_BRIDGE_INIT=true ;;
         --task-manager|--mission) ENABLE_TASK_MANAGER=true ;;
         --auto-advance) ENABLE_TASK_MANAGER=true; AUTO_ADVANCE=true ;;
         --stand) DO_STAND=true ;;   # force stand toggle (dog lying down)
@@ -33,7 +35,7 @@ echo ''
 echo '==================================='
 echo ' 四足机器人竞赛系统 v2 — 鲁棒启动'
 echo '==================================='
-echo " DOG=$ENABLE_DOG  YOLO=$ENABLE_YOLO  WHZ=$ENABLE_WHZ  TASK_MANAGER=$ENABLE_TASK_MANAGER  AUTO_ADVANCE=$AUTO_ADVANCE"
+echo " DOG=$ENABLE_DOG  CMD_VEL_BRIDGE=$ENABLE_CMD_VEL_BRIDGE  BRIDGE_INIT_DOG=$ENABLE_CMD_VEL_BRIDGE_INIT  YOLO=$ENABLE_YOLO  WHZ=$ENABLE_WHZ  TASK_MANAGER=$ENABLE_TASK_MANAGER  AUTO_ADVANCE=$AUTO_ADVANCE"
 
 CUVSLAM_MOUNT_MODE="${CUVSLAM_MOUNT_MODE:-bench}"
 CUVSLAM_PROFILE="${CUVSLAM_PROFILE:-planar_60fps}"
@@ -166,19 +168,15 @@ if $ENABLE_DOG; then
     if ! ping -c 1 -W 1 192.168.1.120 > /dev/null 2>&1; then
         echo "  ⚠ 狗网络不通 (192.168.1.120) — 继续但狗不会动"
     else
-        # 仅自动模式+心跳（你手动站立）
-        python3 -u scripts/lite3_init.py --no-stand > /tmp/lite3_init.log 2>&1 &
-        sleep 6
-        if grep -q 'Heartbeat' /tmp/lite3_init.log 2>/dev/null; then
-            echo "  狗就绪: $(tail -1 /tmp/lite3_init.log)"
-        else
-            echo "  ⚠ 狗初始化可能失败, 日志: /tmp/lite3_init.log"
-        fi
-
-
-        # Dedicated driver node: subscribe /cmd_vel, then talk to Lite3.
-        # Navigator publishes /cmd_vel only by default and no longer bypasses this node.
-        if [ -f Lite3_ROS-ros2-foxy/install/setup.bash ]; then
+        if $ENABLE_CMD_VEL_BRIDGE; then
+            if $ENABLE_CMD_VEL_BRIDGE_INIT; then
+                echo "  使用备用 cmd_vel_bridge，并显式初始化狗 (auto + motion mode)"
+            else
+                echo "  使用备用 cmd_vel_bridge；不自动初始化狗，避免改变当前站立/趴下状态"
+            fi
+        elif [ -f Lite3_ROS-ros2-foxy/install/setup.bash ]; then
+            # Dedicated driver node: subscribe /cmd_vel, then talk to Lite3.
+            # Navigator publishes /cmd_vel only by default and no longer bypasses this node.
             source Lite3_ROS-ros2-foxy/install/setup.bash
             nohup ros2 launch transfer transfer_launch.py > /tmp/transfer.log 2>&1 &
             TRANSFER_PID=$!
@@ -189,7 +187,7 @@ if $ENABLE_DOG; then
                 echo "  WARN: transfer driver not visible yet, log: /tmp/transfer.log"
             fi
         else
-            echo "  WARN: Lite3 transfer workspace is not built; /cmd_vel will not reach the dog"
+            echo "  WARN: Lite3 transfer workspace is not built; /cmd_vel will not reach the dog unless --cmd-vel-bridge is used"
         fi
     fi
 fi
@@ -206,7 +204,8 @@ $ENABLE_YOLO && YF=true
 $ENABLE_WHZ  && WF=true
 ros2 launch quadruped_robot_competition competition.launch.py \
   enable_task_manager:=$ENABLE_TASK_MANAGER enable_navigation:=true \
-  enable_cmd_vel_bridge:=false \
+  enable_cmd_vel_bridge:=$ENABLE_CMD_VEL_BRIDGE \
+  cmd_vel_bridge_init_dog:=$ENABLE_CMD_VEL_BRIDGE_INIT \
   enable_depth_publisher:=false \
   enable_yolo:=$YF enable_whz:=$WF \
   auto_advance:=$AUTO_ADVANCE > /tmp/competition.log 2>&1 &

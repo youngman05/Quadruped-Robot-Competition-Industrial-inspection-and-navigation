@@ -30,6 +30,7 @@ def generate_launch_description() -> LaunchDescription:
     enable_speech = LaunchConfiguration("enable_speech", default="false")
     enable_navigation = LaunchConfiguration("enable_navigation", default="false")
     enable_cmd_vel_bridge = LaunchConfiguration("enable_cmd_vel_bridge", default="false")
+    cmd_vel_bridge_init_dog = LaunchConfiguration("cmd_vel_bridge_init_dog", default="false")
     enable_depth_publisher = LaunchConfiguration("enable_depth_publisher", default="false")
     enable_whz = LaunchConfiguration("enable_whz", default="false")
     auto_advance = LaunchConfiguration("auto_advance", default="false")
@@ -58,6 +59,10 @@ def generate_launch_description() -> LaunchDescription:
     declare_enable_cmd_vel_bridge = DeclareLaunchArgument(
         "enable_cmd_vel_bridge", default_value="false",
         description="启动 /cmd_vel -> Lite3 UDP 桥接。默认关闭，用于安全 dry-run。"
+    )
+    declare_cmd_vel_bridge_init_dog = DeclareLaunchArgument(
+        "cmd_vel_bridge_init_dog", default_value="false",
+        description="cmd_vel_bridge 启动时是否发送 Lite3 auto/motion 初始化。默认关闭，避免改变站立/趴下状态。"
     )
     declare_enable_depth_publisher = DeclareLaunchArgument(
         "enable_depth_publisher", default_value="false",
@@ -184,6 +189,9 @@ def generate_launch_description() -> LaunchDescription:
         executable="cmd_vel_bridge",
         name="cmd_vel_bridge_node",
         output="screen",
+        parameters=[{
+            "init_dog": cmd_vel_bridge_init_dog,
+        }],
         condition=IfCondition(enable_cmd_vel_bridge),
     )
 
@@ -223,6 +231,7 @@ def generate_launch_description() -> LaunchDescription:
         declare_enable_speech,
         declare_enable_navigation,
         declare_enable_cmd_vel_bridge,
+        declare_cmd_vel_bridge_init_dog,
         declare_enable_depth_publisher,
         declare_enable_whz,
         declare_auto_advance,

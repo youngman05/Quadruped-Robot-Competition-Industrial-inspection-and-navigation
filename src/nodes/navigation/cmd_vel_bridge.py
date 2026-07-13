@@ -49,9 +49,10 @@ class CmdVelBridge(Node):
         # ── 参数 ──────────────────────────────────
         self.declare_parameter("dog_ip", DOG_IP)
         self.declare_parameter("dog_port", DOG_PORT)
-        self.declare_parameter("init_dog", True)   # 是否自动初始化狗 (auto mode + motion mode)
+        self.declare_parameter("init_dog", False)  # 是否自动初始化狗 (auto mode + motion mode)
         self.declare_parameter("send_rate_hz", 40.0)
         self.declare_parameter("command_timeout_sec", 0.35)
+        self.declare_parameter("idle_stop_duration_sec", 0.5)
         self.declare_parameter("send_combined_axes", False)
         self.declare_parameter("vx_deadband", 0.005)
         self.declare_parameter("vy_deadband", 0.005)
@@ -64,6 +65,10 @@ class CmdVelBridge(Node):
         self._command_timeout_sec = max(
             0.1,
             float(self.get_parameter("command_timeout_sec").value),
+        )
+        self._idle_stop_duration_sec = max(
+            0.0,
+            float(self.get_parameter("idle_stop_duration_sec").value),
         )
         self._send_combined_axes = bool(
             self.get_parameter("send_combined_axes").value
@@ -88,6 +93,7 @@ class CmdVelBridge(Node):
 
         # ── 固定频率输出: ZOH + heartbeat + timeout stop ──
         self._last_cmd_time = 0.0
+        self._has_seen_motion_cmd = False
         self._last_vx = 0.0
         self._last_vy = 0.0
         self._last_az = 0.0
@@ -100,6 +106,7 @@ class CmdVelBridge(Node):
             f"CmdVelBridge 就绪 → {dog_ip}:{dog_port} | "
             f"init_dog={init_dog} | send_rate={self._send_rate_hz:.1f}Hz | "
             f"timeout={self._command_timeout_sec:.2f}s | "
+            f"idle_stop={self._idle_stop_duration_sec:.2f}s | "
             f"combined_axes={self._send_combined_axes}"
         )
 
@@ -121,10 +128,21 @@ class CmdVelBridge(Node):
 
     def _on_cmd_vel(self, msg: Twist) -> None:
         """收到速度指令后只更新保持值，实际发送由固定频率 timer 完成。"""
+        vx = float(msg.linear.x)
+        vy = float(msg.linear.y)
+        az = float(msg.angular.z)
+        is_motion = (
+            abs(vx) > self._vx_deadband
+            or abs(vy) > self._vy_deadband
+            or abs(az) > self._az_deadband
+        )
+        if not self._has_seen_motion_cmd and not is_motion:
+            return
+        self._has_seen_motion_cmd = True
         self._last_cmd_time = time.time()
-        self._last_vx = float(msg.linear.x)
-        self._last_vy = float(msg.linear.y)
-        self._last_az = float(msg.angular.z)
+        self._last_vx = vx
+        self._last_vy = vy
+        self._last_az = az
 
     # ── 固定频率 ZOH 输出 ─────────────────────────
 
@@ -135,6 +153,12 @@ class CmdVelBridge(Node):
             self._last_cmd_time <= 0.0
             or now - self._last_cmd_time > self._command_timeout_sec
         )
+        if not self._has_seen_motion_cmd:
+            return
+        if stale and now - self._last_cmd_time > (
+            self._command_timeout_sec + self._idle_stop_duration_sec
+        ):
+            return
 
         vx = 0.0 if stale else self._last_vx
         vy = 0.0 if stale else self._last_vy
