@@ -18,6 +18,7 @@ from __future__ import annotations
 import socket
 import struct
 import time
+import os
 
 import rclpy
 from rclpy.node import Node
@@ -57,6 +58,7 @@ class CmdVelBridge(Node):
         self.declare_parameter("vx_deadband", 0.005)
         self.declare_parameter("vy_deadband", 0.005)
         self.declare_parameter("az_deadband", 0.005)
+        self.declare_parameter("diag_log_period_sec", 1.0)
 
         dog_ip = str(self.get_parameter("dog_ip").value)
         dog_port = int(self.get_parameter("dog_port").value)
@@ -76,11 +78,38 @@ class CmdVelBridge(Node):
         self._vx_deadband = abs(float(self.get_parameter("vx_deadband").value))
         self._vy_deadband = abs(float(self.get_parameter("vy_deadband").value))
         self._az_deadband = abs(float(self.get_parameter("az_deadband").value))
+        self._diag_log_period_sec = max(
+            0.2,
+            float(self.get_parameter("diag_log_period_sec").value),
+        )
         self._dog_addr = (dog_ip, dog_port)
 
         # ── UDP socket ────────────────────────────
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.settimeout(0.1)
+
+        # ── 运行诊断计数 ────────────────────────────
+        self._last_cmd_time = 0.0
+        self._has_seen_motion_cmd = False
+        self._last_vx = 0.0
+        self._last_vy = 0.0
+        self._last_az = 0.0
+        self._recv_count = 0
+        self._recv_motion_count = 0
+        self._recv_ignored_zero_count = 0
+        self._send_tick_count = 0
+        self._send_stale_tick_count = 0
+        self._udp_simple_count = 0
+        self._udp_complex_count = 0
+        self._udp_error_count = 0
+        self._last_recv_vx = 0.0
+        self._last_recv_vy = 0.0
+        self._last_recv_az = 0.0
+        self._last_send_vx = 0.0
+        self._last_send_vy = 0.0
+        self._last_send_az = 0.0
+        self._last_diag_time = time.time()
+        self._last_diag_snapshot = None
 
         # ── 狗初始化 (心跳 + auto mode + motion mode) ──
         if init_dog:
@@ -92,11 +121,6 @@ class CmdVelBridge(Node):
         )
 
         # ── 固定频率输出: ZOH + heartbeat + timeout stop ──
-        self._last_cmd_time = 0.0
-        self._has_seen_motion_cmd = False
-        self._last_vx = 0.0
-        self._last_vy = 0.0
-        self._last_az = 0.0
         self._send_timer = self.create_timer(
             1.0 / self._send_rate_hz,
             self._send_held_command,
@@ -107,7 +131,14 @@ class CmdVelBridge(Node):
             f"init_dog={init_dog} | send_rate={self._send_rate_hz:.1f}Hz | "
             f"timeout={self._command_timeout_sec:.2f}s | "
             f"idle_stop={self._idle_stop_duration_sec:.2f}s | "
-            f"combined_axes={self._send_combined_axes}"
+            f"combined_axes={self._send_combined_axes} | "
+            f"diag_period={self._diag_log_period_sec:.1f}s"
+        )
+        self.get_logger().info(
+            "CmdVelBridge ROS env | "
+            f"ROS_DOMAIN_ID={os.environ.get('ROS_DOMAIN_ID', '<unset>')} | "
+            f"RMW_IMPLEMENTATION={os.environ.get('RMW_IMPLEMENTATION', '<unset>')} | "
+            f"FASTRTPS_DEFAULT_PROFILES_FILE={os.environ.get('FASTRTPS_DEFAULT_PROFILES_FILE', '<unset>')}"
         )
 
     # ── 狗初始化 ─────────────────────────────────
@@ -131,18 +162,27 @@ class CmdVelBridge(Node):
         vx = float(msg.linear.x)
         vy = float(msg.linear.y)
         az = float(msg.angular.z)
+        self._recv_count += 1
+        self._last_recv_vx = vx
+        self._last_recv_vy = vy
+        self._last_recv_az = az
         is_motion = (
             abs(vx) > self._vx_deadband
             or abs(vy) > self._vy_deadband
             or abs(az) > self._az_deadband
         )
         if not self._has_seen_motion_cmd and not is_motion:
+            self._recv_ignored_zero_count += 1
+            self._maybe_log_diag(force=False)
             return
+        if is_motion:
+            self._recv_motion_count += 1
         self._has_seen_motion_cmd = True
         self._last_cmd_time = time.time()
         self._last_vx = vx
         self._last_vy = vy
         self._last_az = az
+        self._maybe_log_diag(force=False)
 
     # ── 固定频率 ZOH 输出 ─────────────────────────
 
@@ -166,11 +206,56 @@ class CmdVelBridge(Node):
 
         # 心跳和运动指令必须从同一个 socket 发出。
         self._send_simple(CMD_HEARTBEAT)
+        self._send_tick_count += 1
+        if stale:
+            self._send_stale_tick_count += 1
+        self._last_send_vx = vx
+        self._last_send_vy = vy
+        self._last_send_az = az
 
         if self._send_combined_axes:
             self._send_combined(vx, vy, az)
         else:
             self._send_single_axis(vx, vy, az)
+        self._maybe_log_diag(force=False)
+
+    def _maybe_log_diag(self, force: bool = False) -> None:
+        """按节流周期输出 ROS 接收与 UDP 发送摘要，避免逐帧刷屏。"""
+        now = time.time()
+        if not force and now - self._last_diag_time < self._diag_log_period_sec:
+            return
+        snapshot = (
+            self._recv_count,
+            self._recv_motion_count,
+            self._recv_ignored_zero_count,
+            self._send_tick_count,
+            self._send_stale_tick_count,
+            self._udp_simple_count,
+            self._udp_complex_count,
+            self._udp_error_count,
+            round(self._last_recv_vx, 4),
+            round(self._last_recv_vy, 4),
+            round(self._last_recv_az, 4),
+            round(self._last_send_vx, 4),
+            round(self._last_send_vy, 4),
+            round(self._last_send_az, 4),
+            self._has_seen_motion_cmd,
+        )
+        if not force and snapshot == self._last_diag_snapshot:
+            return
+        self._last_diag_time = now
+        self._last_diag_snapshot = snapshot
+        self.get_logger().info(
+            "[diag] "
+            f"recv={self._recv_count} motion={self._recv_motion_count} "
+            f"ignored_zero={self._recv_ignored_zero_count} "
+            f"send_ticks={self._send_tick_count} stale_ticks={self._send_stale_tick_count} "
+            f"udp_simple={self._udp_simple_count} udp_complex={self._udp_complex_count} "
+            f"udp_errors={self._udp_error_count} "
+            f"last_recv=({self._last_recv_vx:.3f},{self._last_recv_vy:.3f},{self._last_recv_az:.3f}) "
+            f"last_send=({self._last_send_vx:.3f},{self._last_send_vy:.3f},{self._last_send_az:.3f}) "
+            f"seen_motion={self._has_seen_motion_cmd}"
+        )
 
     def _send_single_axis(self, vx: float, vy: float, az: float) -> None:
         """保守模式：每周期只发一个主运动轴，避免后发覆盖导致行为不确定。"""
@@ -197,7 +282,9 @@ class CmdVelBridge(Node):
             self._sock.sendto(
                 struct.pack("<3i", code, p1, p2), self._dog_addr,
             )
+            self._udp_simple_count += 1
         except OSError:
+            self._udp_error_count += 1
             pass
 
     def _send_complex(self, code: int, data: float) -> None:
@@ -206,12 +293,15 @@ class CmdVelBridge(Node):
             self._sock.sendto(
                 struct.pack(PACK_FMT, code, 8, 1, data), self._dog_addr,
             )
+            self._udp_complex_count += 1
         except OSError:
+            self._udp_error_count += 1
             pass
 
     # ── 清理 ─────────────────────────────────────
 
     def destroy_node(self) -> bool:
+        self._maybe_log_diag(force=True)
         self.get_logger().info("CmdVelBridge 关闭中，停狗...")
         self._send_complex(CODE_FWD, 0.0)
         time.sleep(0.1)

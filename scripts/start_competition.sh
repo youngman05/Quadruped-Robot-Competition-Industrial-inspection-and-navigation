@@ -244,6 +244,12 @@ if $ENABLE_DOG; then
     tail -1 /tmp/lite3_init.log 2>/dev/null || echo "  (无)"
     ping -c 1 -W 1 192.168.1.120 > /dev/null 2>&1 && echo "  狗网络: ✅" || echo "  狗网络: ❌"
 fi
+if $ENABLE_CMD_VEL_BRIDGE; then
+    echo "  === cmd_vel bridge ==="
+    ros2 node list 2>/dev/null | grep 'cmd_vel_bridge' || echo "  cmd_vel_bridge 节点未出现"
+    ros2 topic info /cmd_vel --verbose 2>/dev/null | sed -n '1,35p' || echo "  /cmd_vel topic info 不可用"
+    grep -E 'CmdVelBridge 就绪|CmdVelBridge ROS env|\[diag\]' /tmp/competition.log 2>/dev/null | tail -8 || true
+fi
 
 echo "  === CPU TOP5 ==="
 ps -eo pcpu,pid,comm --sort=-pcpu 2>/dev/null | head -6 | tail -5
