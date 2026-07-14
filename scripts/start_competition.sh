@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================
 #  四足机器人竞赛 — 鲁棒一键启动
-#  用法: bash scripts/start_competition.sh [--dog] [--cmd-vel-bridge] [--bridge-init-dog] [--yolo] [--whz] [--task-manager] [--auto-advance]
+#  用法: bash scripts/start_competition.sh [--dog] [--cmd-vel-bridge] [--prepare-lite3-motion] [--yolo] [--whz] [--task-manager] [--auto-advance]
 # ==============================================
 # 注意: 不用 set -e，每个步骤自行容错
 
@@ -16,7 +16,7 @@ echo "日志: $LOGFILE"
 trap 'echo ""; echo "Ctrl+C → 清理..."; bash scripts/stop_all.sh' INT TERM
 
 # ── 参数解析 ──────────────────────────────
-ENABLE_YOLO=false; ENABLE_WHZ=false; ENABLE_DOG=false; ENABLE_CMD_VEL_BRIDGE=false; ENABLE_CMD_VEL_BRIDGE_INIT=false
+ENABLE_YOLO=false; ENABLE_WHZ=false; ENABLE_DOG=false; ENABLE_CMD_VEL_BRIDGE=false; ENABLE_CMD_VEL_BRIDGE_INIT=false; PREPARE_LITE3_MOTION=false
 ENABLE_TASK_MANAGER=false; AUTO_ADVANCE=false; DO_STAND=false
 for arg in "$@"; do
     case $arg in
@@ -25,6 +25,7 @@ for arg in "$@"; do
         --dog)   ENABLE_DOG=true ;;
         --cmd-vel-bridge) ENABLE_CMD_VEL_BRIDGE=true ;;
         --bridge-init-dog|--init-dog) ENABLE_CMD_VEL_BRIDGE_INIT=true ;;
+        --prepare-lite3-motion) PREPARE_LITE3_MOTION=true ;;
         --task-manager|--mission) ENABLE_TASK_MANAGER=true ;;
         --auto-advance) ENABLE_TASK_MANAGER=true; AUTO_ADVANCE=true ;;
         --stand) DO_STAND=true ;;   # force stand toggle (dog lying down)
@@ -35,7 +36,7 @@ echo ''
 echo '==================================='
 echo ' 四足机器人竞赛系统 v2 — 鲁棒启动'
 echo '==================================='
-echo " DOG=$ENABLE_DOG  CMD_VEL_BRIDGE=$ENABLE_CMD_VEL_BRIDGE  BRIDGE_INIT_DOG=$ENABLE_CMD_VEL_BRIDGE_INIT  YOLO=$ENABLE_YOLO  WHZ=$ENABLE_WHZ  TASK_MANAGER=$ENABLE_TASK_MANAGER  AUTO_ADVANCE=$AUTO_ADVANCE"
+echo " DOG=$ENABLE_DOG  CMD_VEL_BRIDGE=$ENABLE_CMD_VEL_BRIDGE  BRIDGE_INIT_DOG=$ENABLE_CMD_VEL_BRIDGE_INIT  PREPARE_LITE3_MOTION=$PREPARE_LITE3_MOTION  YOLO=$ENABLE_YOLO  WHZ=$ENABLE_WHZ  TASK_MANAGER=$ENABLE_TASK_MANAGER  AUTO_ADVANCE=$AUTO_ADVANCE"
 
 CUVSLAM_MOUNT_MODE="${CUVSLAM_MOUNT_MODE:-bench}"
 CUVSLAM_PROFILE="${CUVSLAM_PROFILE:-planar_60fps}"
@@ -169,6 +170,17 @@ if $ENABLE_DOG; then
         echo "  ⚠ 狗网络不通 (192.168.1.120) — 继续但狗不会动"
     else
         if $ENABLE_CMD_VEL_BRIDGE; then
+            if $PREPARE_LITE3_MOTION; then
+                echo "  准备 Lite3 motion mode：heartbeat + auto/nav + motion；不发送起立/趴下 toggle"
+                python3 scripts/prepare_lite3_motion_mode.py > /tmp/prepare_lite3_motion_mode.log 2>&1
+                PREPARE_RC=$?
+                if [ $PREPARE_RC -ne 0 ]; then
+                    echo "  ERROR: Lite3 motion mode 准备失败 (rc=$PREPARE_RC)，log: /tmp/prepare_lite3_motion_mode.log"
+                    tail -40 /tmp/prepare_lite3_motion_mode.log 2>/dev/null || true
+                    exit 1
+                fi
+                tail -8 /tmp/prepare_lite3_motion_mode.log 2>/dev/null || true
+            fi
             if $ENABLE_CMD_VEL_BRIDGE_INIT; then
                 echo "  使用备用 cmd_vel_bridge，并显式初始化狗 (auto + motion mode)"
             else
