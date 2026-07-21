@@ -1,0 +1,35 @@
+# Runtime contract for the D455 red/green/obstacle segmentation model.
+# The source model remains in the repository; Docker uses container_path.
+schema_version: 1
+
+model:
+  source_path: "src/cv/depth_detector/projects/combined/model/best.pt"
+  container_path: "/opt/quadruped/perception/models/red_green_obstacle.pt"
+  classes:
+    0: red
+    1: green
+    2: obstacle
+
+inference:
+  image_size: 640
+  confidence: 0.5
+  iou: 0.5
+  device: "0"
+  max_fps: 5.0
+  retina_masks: true
+
+depth:
+  min_m: 0.2
+  max_m: 4.0
+  trim_fraction: 0.1
+  mask_erosion_iterations: 2
+  min_valid_pixels: 20
+  min_valid_ratio: 0.6
+
+transport:
+  bind_host: "127.0.0.1"
+  detection_port: 19002
+  control_port: 19003
+  heartbeat_hz: 1.0
+  stale_after_ms: 200.0
+

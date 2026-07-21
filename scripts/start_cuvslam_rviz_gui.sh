@@ -17,6 +17,8 @@ RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"
 CUVSLAM_CAMERA_PROFILE="${CUVSLAM_CAMERA_PROFILE:-640x360x60}"
 CUVSLAM_IMG_JITTER_THRESHOLD_MS="${CUVSLAM_IMG_JITTER_THRESHOLD_MS:-35.0}"
 ENABLE_COLOR="${ENABLE_COLOR:-0}"  # set to 1 to enable RGB for YOLO
+ENABLE_DEPTH="${ENABLE_DEPTH:-0}"  # set to 1 to expose D455 depth consumers
+ENABLE_ALIGN_DEPTH="${ENABLE_ALIGN_DEPTH:-0}"  # align depth pixels to color
 ENABLE_SLAM_VISUALIZATION="${ENABLE_SLAM_VISUALIZATION:-true}"
 ENABLE_LANDMARKS_VIEW="${ENABLE_LANDMARKS_VIEW:-true}"
 ENABLE_OBSERVATIONS_VIEW="${ENABLE_OBSERVATIONS_VIEW:-true}"
@@ -50,6 +52,9 @@ Environment overrides:
   RMW_IMPLEMENTATION  ROS 2 middleware implementation. Default: rmw_fastrtps_cpp
   CUVSLAM_CAMERA_PROFILE       RealSense IR profile. Default: 640x360x60
   CUVSLAM_IMG_JITTER_THRESHOLD_MS  cuVSLAM image jitter threshold. Default: 35.0
+  ENABLE_COLOR                     Enable D455 color stream. Default: 0
+  ENABLE_DEPTH                     Enable D455 depth stream. Default: 0
+  ENABLE_ALIGN_DEPTH               Align depth to color. Default: 0
   ENABLE_SLAM_VISUALIZATION    Publish SLAM visualization topics. Default: true
   ENABLE_LANDMARKS_VIEW        Publish landmarks view. Default: true
   ENABLE_OBSERVATIONS_VIEW     Publish observations cloud. Default: true
@@ -502,24 +507,31 @@ from launch_ros.descriptions import ComposableNode
 
 
 def generate_launch_description():
+    camera_parameters = {
+        'enable_infra1': True,
+        'enable_infra2': True,
+        'enable_color': ${ENABLE_COLOR_BOOL},
+        'enable_depth': ${ENABLE_DEPTH_BOOL},
+        'depth_module.emitter_enabled': 0,
+        'depth_module.profile': '${CUVSLAM_CAMERA_PROFILE}',
+        'enable_gyro': True,
+        'enable_accel': True,
+        'gyro_fps': 200,
+        'accel_fps': 200,
+        'unite_imu_method': 2,
+    }
+    # Keep the original cuVSLAM-only camera configuration untouched unless
+    # depth was explicitly requested for an additional consumer.
+    if ${ENABLE_DEPTH_BOOL}:
+        camera_parameters['enable_sync'] = True
+        camera_parameters['align_depth.enable'] = ${ENABLE_ALIGN_DEPTH_BOOL}
+
     realsense_camera_node = Node(
         name='camera',
         namespace='camera',
         package='realsense2_camera',
         executable='realsense2_camera_node',
-        parameters=[{
-            'enable_infra1': True,
-            'enable_infra2': True,
-            'enable_color': ${ENABLE_COLOR_BOOL},
-            'enable_depth': False,
-            'depth_module.emitter_enabled': 0,
-            'depth_module.profile': '${CUVSLAM_CAMERA_PROFILE}',
-            'enable_gyro': True,
-            'enable_accel': True,
-            'gyro_fps': 200,
-            'accel_fps': 200,
-            'unite_imu_method': 2,
-        }],
+        parameters=[camera_parameters],
     )
 
     visual_slam_node = ComposableNode(
@@ -626,6 +638,10 @@ CUVSLAM_LAUNCH_RUNNER="$LOG_DIR/run_cuvslam_launch.py"
 RVIZ_HEAVY_ENABLED="$(rviz_bool "$RVIZ_HEAVY_DISPLAYS")"
 COLOR_ENABLED_PY="$(py_bool "$ENABLE_COLOR")"
 ENABLE_COLOR_BOOL="$COLOR_ENABLED_PY"
+DEPTH_ENABLED_PY="$(py_bool "$ENABLE_DEPTH")"
+ENABLE_DEPTH_BOOL="$DEPTH_ENABLED_PY"
+ALIGN_DEPTH_ENABLED_PY="$(py_bool "$ENABLE_ALIGN_DEPTH")"
+ENABLE_ALIGN_DEPTH_BOOL="$ALIGN_DEPTH_ENABLED_PY"
 mkdir -p "$LOG_DIR"
 write_rviz_config
 write_cuvslam_launch
@@ -684,6 +700,9 @@ echo "ROS_DOMAIN_ID=$ROS_DOMAIN_ID"
 echo "RMW_IMPLEMENTATION=$RMW_IMPLEMENTATION"
 echo "CUVSLAM_CAMERA_PROFILE=$CUVSLAM_CAMERA_PROFILE"
 echo "CUVSLAM_IMG_JITTER_THRESHOLD_MS=$CUVSLAM_IMG_JITTER_THRESHOLD_MS"
+echo "ENABLE_COLOR=$ENABLE_COLOR"
+echo "ENABLE_DEPTH=$ENABLE_DEPTH"
+echo "ENABLE_ALIGN_DEPTH=$ENABLE_ALIGN_DEPTH"
 echo "ENABLE_LANDMARKS_VIEW=$ENABLE_LANDMARKS_VIEW"
 echo "ENABLE_OBSERVATIONS_VIEW=$ENABLE_OBSERVATIONS_VIEW"
 echo "RVIZ_HEAVY_DISPLAYS=$RVIZ_HEAVY_DISPLAYS"
