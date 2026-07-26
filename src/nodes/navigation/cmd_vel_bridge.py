@@ -8,9 +8,9 @@ cmd_vel_bridge.py — 将 Nav2 的 /cmd_vel 转成 Lite3 狗的 UDP MotionComple
 设计要点:
     - 心跳 + 速度指令从同一个 UDP socket 发出（狗 SDK 要求）
     - 固定频率重发最近一次速度指令（Zero-Order Hold）
-    - 默认每次只发一种运动指令（实测前更保守）
+    - 默认每周期发送 FWD/LAT/YAW 三轴完整状态，避免底层锁存旧轴速度
     - 角速度取反（ROS 左转为正，狗 SDK 右转为正）
-    - 超过 command_timeout_sec 未收到新 /cmd_vel 时主动发 stop
+    - 超过 command_timeout_sec 未收到新 /cmd_vel 时持续发送三轴 stop
 """
 
 from __future__ import annotations
@@ -54,7 +54,9 @@ class CmdVelBridge(Node):
         self.declare_parameter("send_rate_hz", 40.0)
         self.declare_parameter("command_timeout_sec", 0.35)
         self.declare_parameter("idle_stop_duration_sec", 0.5)
-        self.declare_parameter("send_combined_axes", False)
+        self.declare_parameter("send_combined_axes", True)
+        self.declare_parameter("shutdown_stop_burst_count", 12)
+        self.declare_parameter("shutdown_stop_burst_interval_sec", 0.05)
         self.declare_parameter("vx_deadband", 0.005)
         self.declare_parameter("vy_deadband", 0.005)
         self.declare_parameter("az_deadband", 0.005)
@@ -74,6 +76,14 @@ class CmdVelBridge(Node):
         )
         self._send_combined_axes = bool(
             self.get_parameter("send_combined_axes").value
+        )
+        self._shutdown_stop_burst_count = max(
+            1,
+            int(self.get_parameter("shutdown_stop_burst_count").value),
+        )
+        self._shutdown_stop_burst_interval_sec = max(
+            0.01,
+            float(self.get_parameter("shutdown_stop_burst_interval_sec").value),
         )
         self._vx_deadband = abs(float(self.get_parameter("vx_deadband").value))
         self._vy_deadband = abs(float(self.get_parameter("vy_deadband").value))
@@ -132,6 +142,7 @@ class CmdVelBridge(Node):
             f"timeout={self._command_timeout_sec:.2f}s | "
             f"idle_stop={self._idle_stop_duration_sec:.2f}s | "
             f"combined_axes={self._send_combined_axes} | "
+            f"shutdown_stop_burst={self._shutdown_stop_burst_count} | "
             f"diag_period={self._diag_log_period_sec:.1f}s"
         )
         self.get_logger().info(
@@ -194,10 +205,6 @@ class CmdVelBridge(Node):
             or now - self._last_cmd_time > self._command_timeout_sec
         )
         if not self._has_seen_motion_cmd:
-            return
-        if stale and now - self._last_cmd_time > (
-            self._command_timeout_sec + self._idle_stop_duration_sec
-        ):
             return
 
         vx = 0.0 if stale else self._last_vx
@@ -269,10 +276,16 @@ class CmdVelBridge(Node):
             self._send_complex(CODE_FWD, 0.0)
 
     def _send_combined(self, vx: float, vy: float, az: float) -> None:
-        """实验模式：按官方 transfer driver 顺序发送三个轴。"""
+        """按官方 transfer driver 顺序发送三个轴，完整覆盖底层速度状态。"""
         self._send_complex(CODE_FWD, 0.0 if abs(vx) <= self._vx_deadband else float(vx))
         self._send_complex(CODE_LAT, 0.0 if abs(vy) <= self._vy_deadband else float(vy))
         self._send_complex(CODE_YAW, 0.0 if abs(az) <= self._az_deadband else float(-az))
+
+    def _send_full_stop(self) -> None:
+        """发送三轴零速，避免只清掉单个运动轴。"""
+        self._send_complex(CODE_FWD, 0.0)
+        self._send_complex(CODE_LAT, 0.0)
+        self._send_complex(CODE_YAW, 0.0)
 
     # ── 底层 UDP 发送 ────────────────────────────
 
@@ -303,8 +316,10 @@ class CmdVelBridge(Node):
     def destroy_node(self) -> bool:
         self._maybe_log_diag(force=True)
         self.get_logger().info("CmdVelBridge 关闭中，停狗...")
-        self._send_complex(CODE_FWD, 0.0)
-        time.sleep(0.1)
+        for _ in range(self._shutdown_stop_burst_count):
+            self._send_simple(CMD_HEARTBEAT)
+            self._send_full_stop()
+            time.sleep(self._shutdown_stop_burst_interval_sec)
         if self._sock:
             self._sock.close()
         return super().destroy_node()
