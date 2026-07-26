@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================
 #  四足机器人竞赛 — 鲁棒一键启动
-#  用法: bash scripts/start_competition.sh [--dog] [--cmd-vel-bridge] [--prepare-lite3-motion] [--yolo] [--whz] [--task-manager] [--auto-advance]
+#  用法: bash scripts/start_competition.sh [--dog] [--cmd-vel-bridge] [--prepare-lite3-motion] [--yolo] [--whz] [--task-manager] [--auto-advance] [--camera-relay] [--depth-relay]
 # ==============================================
 # 注意: 不用 set -e，每个步骤自行容错
 
@@ -17,6 +17,7 @@ trap 'echo ""; echo "Ctrl+C → 清理..."; bash scripts/stop_all.sh' INT TERM
 
 # ── 参数解析 ──────────────────────────────
 ENABLE_YOLO=false; ENABLE_WHZ=false; ENABLE_DOG=false; ENABLE_CMD_VEL_BRIDGE=false; ENABLE_CMD_VEL_BRIDGE_INIT=false; PREPARE_LITE3_MOTION=false
+ENABLE_CAMERA_RELAY=false; ENABLE_DEPTH_RELAY=false
 ENABLE_TASK_MANAGER=false; AUTO_ADVANCE=false; DO_STAND=false
 for arg in "$@"; do
     case $arg in
@@ -28,6 +29,9 @@ for arg in "$@"; do
         --prepare-lite3-motion) PREPARE_LITE3_MOTION=true ;;
         --task-manager|--mission) ENABLE_TASK_MANAGER=true ;;
         --auto-advance) ENABLE_TASK_MANAGER=true; AUTO_ADVANCE=true ;;
+        --camera-relay) ENABLE_CAMERA_RELAY=true ;;
+        --depth-relay) ENABLE_DEPTH_RELAY=true ;;
+        --relays) ENABLE_CAMERA_RELAY=true; ENABLE_DEPTH_RELAY=true ;;
         --stand) DO_STAND=true ;;   # force stand toggle (dog lying down)
     esac
 done
@@ -36,7 +40,7 @@ echo ''
 echo '==================================='
 echo ' 四足机器人竞赛系统 v2 — 鲁棒启动'
 echo '==================================='
-echo " DOG=$ENABLE_DOG  CMD_VEL_BRIDGE=$ENABLE_CMD_VEL_BRIDGE  BRIDGE_INIT_DOG=$ENABLE_CMD_VEL_BRIDGE_INIT  PREPARE_LITE3_MOTION=$PREPARE_LITE3_MOTION  YOLO=$ENABLE_YOLO  WHZ=$ENABLE_WHZ  TASK_MANAGER=$ENABLE_TASK_MANAGER  AUTO_ADVANCE=$AUTO_ADVANCE"
+echo " DOG=$ENABLE_DOG  CMD_VEL_BRIDGE=$ENABLE_CMD_VEL_BRIDGE  BRIDGE_INIT_DOG=$ENABLE_CMD_VEL_BRIDGE_INIT  PREPARE_LITE3_MOTION=$PREPARE_LITE3_MOTION  YOLO=$ENABLE_YOLO  WHZ=$ENABLE_WHZ  CAMERA_RELAY=$ENABLE_CAMERA_RELAY  DEPTH_RELAY=$ENABLE_DEPTH_RELAY  TASK_MANAGER=$ENABLE_TASK_MANAGER  AUTO_ADVANCE=$AUTO_ADVANCE"
 
 CUVSLAM_MOUNT_MODE="${CUVSLAM_MOUNT_MODE:-bench}"
 CUVSLAM_PROFILE="${CUVSLAM_PROFILE:-planar_60fps}"
@@ -94,37 +98,42 @@ docker exec $CN pkill -f loop_metrics_recorder 2>/dev/null && echo "  loop_metri
 # ═══════════════════════════════════════════
 echo ''
 echo '[2/6] 中继...'
-docker cp scripts/camera_relay_docker.py $CN:/tmp/ 2>/dev/null || true
-docker cp scripts/depth_relay_docker.py $CN:/tmp/ 2>/dev/null || true
 docker exec $CN pkill -f camera_relay 2>/dev/null || true
 docker exec $CN pkill -f depth_relay  2>/dev/null || true
 sleep 1
 
-# 启动 camera relay
-docker exec -d $CN bash -c \
-  "source /opt/ros/humble/setup.bash && \
-   source /workspaces/isaac_ros-dev/install/setup.bash && \
-   mkdir -p /workspaces/isaac_ros-dev/camera_frames && \
-   python3 /tmp/camera_relay_docker.py > /tmp/cam.log 2>&1"
-# 等待 camera relay 开始写入
-for i in $(seq 1 10); do
-    sleep 1
-    FRAMES=$(docker exec $CN bash -c 'cat /tmp/cam.log 2>/dev/null' | grep -c 'Saved' || true)
-    if [ "$FRAMES" -gt 0 ]; then break; fi
-done
-echo "  Camera: $(docker exec $CN tail -1 /tmp/cam.log 2>/dev/null || echo 'OK')"
+if $ENABLE_CAMERA_RELAY; then
+    docker cp scripts/camera_relay_docker.py $CN:/tmp/ 2>/dev/null || true
+    docker exec -d $CN bash -c \
+      "source /opt/ros/humble/setup.bash && \
+       source /workspaces/isaac_ros-dev/install/setup.bash && \
+       mkdir -p /workspaces/isaac_ros-dev/camera_frames && \
+       python3 /tmp/camera_relay_docker.py > /tmp/cam.log 2>&1"
+    for i in $(seq 1 10); do
+        sleep 1
+        FRAMES=$(docker exec $CN bash -c 'cat /tmp/cam.log 2>/dev/null' | grep -c 'Saved' || true)
+        if [ "$FRAMES" -gt 0 ]; then break; fi
+    done
+    echo "  Camera: $(docker exec $CN tail -1 /tmp/cam.log 2>/dev/null || echo 'OK')"
+else
+    echo "  Camera relay: skipped"
+fi
 
-# 启动 depth relay
-docker exec -d $CN bash -c \
-  "source /opt/ros/humble/setup.bash && \
-   source /workspaces/isaac_ros-dev/install/setup.bash && \
-   python3 /tmp/depth_relay_docker.py > /tmp/dep.log 2>&1"
-for i in $(seq 1 10); do
-    sleep 1
-    FRAMES=$(docker exec $CN bash -c 'cat /tmp/dep.log 2>/dev/null' | grep -c 'Depth' || true)
-    if [ "$FRAMES" -gt 0 ]; then break; fi
-done
-echo "  Depth:  $(docker exec $CN tail -1 /tmp/dep.log 2>/dev/null || echo 'OK')"
+if $ENABLE_DEPTH_RELAY; then
+    docker cp scripts/depth_relay_docker.py $CN:/tmp/ 2>/dev/null || true
+    docker exec -d $CN bash -c \
+      "source /opt/ros/humble/setup.bash && \
+       source /workspaces/isaac_ros-dev/install/setup.bash && \
+       python3 /tmp/depth_relay_docker.py > /tmp/dep.log 2>&1"
+    for i in $(seq 1 10); do
+        sleep 1
+        FRAMES=$(docker exec $CN bash -c 'cat /tmp/dep.log 2>/dev/null' | grep -c 'Depth' || true)
+        if [ "$FRAMES" -gt 0 ]; then break; fi
+    done
+    echo "  Depth:  $(docker exec $CN tail -1 /tmp/dep.log 2>/dev/null || echo 'OK')"
+else
+    echo "  Depth relay: skipped"
+fi
 
 # ═══════════════════════════════════════════
 # [3] UDP 桥接 (odom)

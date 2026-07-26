@@ -83,6 +83,8 @@ class Nav2WaypointSequenceProbe(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.latest_odom = None
         self.segment_cmd = None
+        self.segment_cmd_samples = None
+        self.segment_start_time = None
         self.segment_trace = None
         self.segments = []
 
@@ -103,16 +105,42 @@ class Nav2WaypointSequenceProbe(Node):
         if self.segment_cmd is None:
             return
         linear_x = float(msg.linear.x)
+        linear_y = float(msg.linear.y)
+        linear_z = float(msg.linear.z)
+        angular_x = float(msg.angular.x)
+        angular_y = float(msg.angular.y)
         angular_z = float(msg.angular.z)
+        now = time.time()
         self.segment_cmd["cmd_count"] += 1
         if abs(linear_x) > 1e-5 or abs(angular_z) > 1e-5:
             self.segment_cmd["nonzero_count"] += 1
+        if abs(linear_x) > 1e-5:
+            self.segment_cmd["linear_x_nonzero_count"] += 1
+        if abs(angular_z) > 1e-5:
+            self.segment_cmd["angular_z_nonzero_count"] += 1
         self.segment_cmd["max_linear_x"] = max(
             self.segment_cmd["max_linear_x"], abs(linear_x)
         )
         self.segment_cmd["max_abs_angular_z"] = max(
             self.segment_cmd["max_abs_angular_z"], abs(angular_z)
         )
+        if self.segment_cmd_samples is not None:
+            self.segment_cmd_samples.append(
+                {
+                    "segment_elapsed_sec": (
+                        now - self.segment_start_time
+                        if self.segment_start_time is not None
+                        else 0.0
+                    ),
+                    "host_time_unix": now,
+                    "linear_x": linear_x,
+                    "linear_y": linear_y,
+                    "linear_z": linear_z,
+                    "angular_x": angular_x,
+                    "angular_y": angular_y,
+                    "angular_z": angular_z,
+                }
+            )
 
     def _odom_callback(self, msg):
         self.latest_odom = msg
@@ -284,9 +312,13 @@ class Nav2WaypointSequenceProbe(Node):
         self.segment_cmd = {
             "cmd_count": 0,
             "nonzero_count": 0,
+            "linear_x_nonzero_count": 0,
+            "angular_z_nonzero_count": 0,
             "max_linear_x": 0.0,
             "max_abs_angular_z": 0.0,
         }
+        self.segment_cmd_samples = []
+        self.segment_start_time = time.time()
         self.segment_trace = []
         goal = self.resolve_segment_goal(goal)
         start_pose = self.wait_for_map_pose()
@@ -308,6 +340,7 @@ class Nav2WaypointSequenceProbe(Node):
                 "start_pose": start_pose,
                 "end_pose": end_pose,
                 "cmd_vel": self.segment_cmd,
+                "cmd_vel_samples": self.segment_cmd_samples,
                 "trace": self.segment_trace,
             }
 
@@ -354,9 +387,12 @@ class Nav2WaypointSequenceProbe(Node):
             "end_pose": end_pose,
             "delta": delta,
             "cmd_vel": self.segment_cmd,
+            "cmd_vel_samples": self.segment_cmd_samples,
             "trace": self.segment_trace,
         }
         self.segment_cmd = None
+        self.segment_cmd_samples = None
+        self.segment_start_time = None
         self.segment_trace = None
         return segment
 
@@ -381,7 +417,7 @@ class Nav2WaypointSequenceProbe(Node):
 def write_outputs(summary, output_dir):
     summary_path = output_dir / "summary.json"
     trace_path = output_dir / "trace.csv"
-    summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+    cmd_vel_path = output_dir / "cmd_vel.csv"
 
     fieldnames = (
         "segment_index",
@@ -403,8 +439,33 @@ def write_outputs(summary, output_dir):
             for sample in segment.get("trace", []):
                 writer.writerow(sample)
 
+    cmd_fieldnames = (
+        "segment_index",
+        "sample_index",
+        "segment_elapsed_sec",
+        "host_time_unix",
+        "linear_x",
+        "linear_y",
+        "linear_z",
+        "angular_x",
+        "angular_y",
+        "angular_z",
+    )
+    with cmd_vel_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=cmd_fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        for segment in summary["segments"]:
+            samples = segment.pop("cmd_vel_samples", [])
+            segment["cmd_vel_sample_count"] = len(samples)
+            for sample_index, sample in enumerate(samples, start=1):
+                row = dict(sample)
+                row["segment_index"] = segment["index"]
+                row["sample_index"] = sample_index
+                writer.writerow(row)
+
     summary["summary_path"] = str(summary_path)
     summary["trace_path"] = str(trace_path)
+    summary["cmd_vel_path"] = str(cmd_vel_path)
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
     return summary
 

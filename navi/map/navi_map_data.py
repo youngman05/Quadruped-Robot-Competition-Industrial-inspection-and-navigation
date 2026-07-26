@@ -441,10 +441,10 @@ OBSTACLE_CONES_EXAMPLE: list[dict] = [
 
 ROBOT_START_POSE = {
     "label_zh": "出发位姿",
-    "x_mm": 5350.0,
+    "x_mm": 4650.0,
     "y_mm": 5250.0,
     "yaw_deg": 180,            # 在 mm 坐标系中: 0=右, 90=下, 180=左
-    "note": "出发区中心，面朝左(-x)进入场地",
+    "note": "主场地内部右侧起点，稍离右边线，面朝左(-x)前进",
 }
 
 
