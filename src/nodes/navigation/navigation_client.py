@@ -31,28 +31,29 @@ def _mm_to_ros(x_mm: float, y_mm: float) -> tuple[float, float]:
 
 
 def _deg_to_quat(yaw_deg: float) -> tuple[float, float, float, float]:
-    """Yaw in degrees (0=right, mm coords) → quaternion (qx, qy, qz, qw)."""
-    half = math.radians(yaw_deg) / 2.0
+    """Field yaw in degrees (0=right, 90=down) -> ROS quaternion."""
+    ros_yaw_deg = -yaw_deg
+    half = math.radians(ros_yaw_deg) / 2.0
     return (0.0, 0.0, math.sin(half), math.cos(half))
 
 
 # yaw=None means Nav2 only needs to reach the position.
 
 _RAW_WAYPOINTS: dict[str, dict] = {
-    "start":                   {"x_mm": 5350, "y_mm": 5250, "yaw_deg": None, "label": "出发区"},
+    # Coordinates below are base_link navigation centers, not task-object centers.
+    "start":                   {"x_mm": 4650, "y_mm": 5250, "yaw_deg": 180,  "label": "出发区"},
     "pos1_middle":             {"x_mm": 1500, "y_mm": 2750, "yaw_deg": -90,  "label": "观察位① 仰头看上柜底面"},
     "pos1_middle_turned":      {"x_mm": 1500, "y_mm": 2750, "yaw_deg":  90,  "label": "观察位① 转身看下柜顶面"},
-    "pos2a_upper_right":       {"x_mm": 2200, "y_mm": 1500, "yaw_deg": 180,  "label": "观察位②a 看上柜右侧面"},
-    "pos2b_lower_right":       {"x_mm": 2200, "y_mm": 4000, "yaw_deg": 180,  "label": "观察位②b 看下柜右侧面"},
-    "grab_area":               {"x_mm": 4250, "y_mm": 4000, "yaw_deg": None, "label": "抓取区"},
-    "placement_A":             {"x_mm": 3250, "y_mm": 250,  "yaw_deg": None, "label": "A放置区"},
-    "placement_B":             {"x_mm": 3750, "y_mm": 250,  "yaw_deg": None, "label": "B放置区"},
-    "placement_C":             {"x_mm": 4250, "y_mm": 250,  "yaw_deg": None, "label": "C放置区"},
-    "placement_D":             {"x_mm": 4750, "y_mm": 250,  "yaw_deg": None, "label": "D放置区"},
-    # The obstacle-crossing target is in the left-side safe corridor.
-    # Nav2 handles global planning and local control.
-    # x=500mm (ROS 0.5m) 在安全走廊中部, 避开障碍区 (x≥1000mm)
-    "obstacle_cross_target":   {"x_mm": 500,  "y_mm": 5250, "yaw_deg": None, "label": "穿越障碍区 → 安全走廊"},
+    "pos2a_upper_right":       {"x_mm": 2600, "y_mm": 1500, "yaw_deg": 180,  "label": "观察位②a 看上柜右侧面"},
+    "pos2b_lower_right":       {"x_mm": 2600, "y_mm": 4000, "yaw_deg": 180,  "label": "观察位②b 看下柜右侧面"},
+    "grab_area":               {"x_mm": 3100, "y_mm": 4000, "yaw_deg": 0,    "label": "抓取区左侧接近点"},
+    "placement_A":             {"x_mm": 3250, "y_mm": 1050, "yaw_deg": -90,  "label": "A放置区接近点"},
+    "placement_B":             {"x_mm": 3750, "y_mm": 1050, "yaw_deg": -90,  "label": "B放置区接近点"},
+    "placement_C":             {"x_mm": 4250, "y_mm": 1050, "yaw_deg": -90,  "label": "C放置区接近点"},
+    "placement_D":             {"x_mm": 4650, "y_mm": 1050, "yaw_deg": -90,  "label": "D放置区接近点"},
+    # 原 x=500mm 适合作为前缘/通过语义点，不适合作为 Nav2 base_link 中心目标。
+    # 2026-07-27 真机验证 x=1050mm / ROS x=1.05m 可成功到达。
+    "obstacle_cross_target":   {"x_mm": 1050, "y_mm": 5250, "yaw_deg": 180,  "label": "穿越障碍区 → 左侧安全走廊接近点"},
 }
 
 # Build ROS-coordinate waypoint dict

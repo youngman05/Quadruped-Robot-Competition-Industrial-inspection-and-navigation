@@ -40,6 +40,31 @@ STATUS_NAMES = {
 }
 
 
+ROUTE_PRESETS = {
+    # Navigation-only route using base_link-safe approach poses.
+    # Camera perception/depth relay/task_manager stay out of this probe.
+    "nav-only-full": [
+        ("obstacle_cross_target", 1.05, 0.75, math.pi),
+        ("pos1_middle", 1.50, 3.25, math.pi / 2.0),
+        ("pos1_middle_turned", 1.50, 3.25, -math.pi / 2.0),
+        ("pos2a_upper_right", 2.60, 4.50, math.pi),
+        ("pos2b_lower_right", 2.60, 2.00, math.pi),
+        ("grab_area_approach", 3.10, 2.00, 0.0),
+        ("placement_A_approach", 3.25, 4.95, math.pi / 2.0),
+        ("placement_B_approach", 3.75, 4.95, math.pi / 2.0),
+        ("placement_C_approach", 4.25, 4.95, math.pi / 2.0),
+        ("placement_D_approach", 4.65, 4.95, math.pi / 2.0),
+    ],
+    "nav-only-inspection": [
+        ("obstacle_cross_target", 1.05, 0.75, math.pi),
+        ("pos1_middle", 1.50, 3.25, math.pi / 2.0),
+        ("pos1_middle_turned", 1.50, 3.25, -math.pi / 2.0),
+        ("pos2a_upper_right", 2.60, 4.50, math.pi),
+        ("pos2b_lower_right", 2.60, 2.00, math.pi),
+    ],
+}
+
+
 def yaw_to_quaternion(yaw):
     half = yaw * 0.5
     return {
@@ -279,6 +304,19 @@ class Nav2WaypointSequenceProbe(Node):
         }
 
     def resolve_goals(self):
+        if self.args.route_preset:
+            return [
+                {
+                    "x": x,
+                    "y": y,
+                    "yaw": yaw,
+                    "source": "route_preset",
+                    "preset": self.args.route_preset,
+                    "label": label,
+                }
+                for label, x, y, yaw in ROUTE_PRESETS[self.args.route_preset]
+            ]
+
         if self.args.goal:
             return [
                 {"x": values[0], "y": values[1], "yaw": values[2], "source": "absolute"}
@@ -291,7 +329,7 @@ class Nav2WaypointSequenceProbe(Node):
         ]
 
     def resolve_segment_goal(self, goal):
-        if goal["source"] == "absolute":
+        if goal["source"] in ("absolute", "route_preset"):
             return goal
 
         pose = self.wait_for_map_pose()
@@ -488,6 +526,11 @@ def parse_args():
         type=float,
         help="Generate goals forward from the current map->base_link pose.",
     )
+    parser.add_argument(
+        "--route-preset",
+        choices=sorted(ROUTE_PRESETS),
+        help="Run a built-in absolute waypoint sequence.",
+    )
     parser.add_argument("--target-yaw", type=float, default=None)
     parser.add_argument("--frame-id", default="map")
     parser.add_argument("--base-frame", default="base_link")
@@ -512,8 +555,9 @@ def parse_args():
 
 
 def validate_args(args):
-    if bool(args.goal) == bool(args.forward_distances):
-        raise SystemExit("Provide exactly one of --goal or --forward-distances")
+    goal_sources = [bool(args.goal), bool(args.forward_distances), bool(args.route_preset)]
+    if sum(goal_sources) != 1:
+        raise SystemExit("Provide exactly one of --goal, --forward-distances, or --route-preset")
     if args.goal_timeout <= 0.0:
         raise SystemExit("--goal-timeout must be > 0")
     if args.trace_rate <= 0.0:

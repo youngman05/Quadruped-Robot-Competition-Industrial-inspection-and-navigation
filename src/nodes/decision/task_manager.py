@@ -276,8 +276,7 @@ class TaskManagerNode(Node):
 
             if self._nav.is_done():
                 if self._nav.succeeded():
-                    self.get_logger().info("已穿过障碍区，切换地图+进入安全区域")
-                    self._switch_to_phase2_map()
+                    self.get_logger().info("已到达越障接近点，继续进入观察位")
                     self._obstacle_step = 1
                     self._nav.reset()
                 else:
@@ -292,7 +291,8 @@ class TaskManagerNode(Node):
 
             if self._nav.is_done():
                 if self._nav.succeeded():
-                    self.get_logger().info("已到达观察位①，进入仪表检测")
+                    self.get_logger().info("已到达观察位①，切换任务地图并进入仪表检测")
+                    self._switch_to_phase2_map()
                     del self._obstacle_step
                     self._advance_to_next_phase()
                 else:

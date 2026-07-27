@@ -148,7 +148,7 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.05
-      footprint: "[[0.50, 0.25], [0.50, -0.25], [-0.50, -0.25], [-0.50, 0.25]]"
+      footprint: "[[0.35, 0.25], [0.35, -0.25], [-0.35, -0.25], [-0.35, 0.25]]"
       footprint_padding: 0.02
       plugins: ["inflation_layer"]
       inflation_layer:
@@ -173,7 +173,7 @@ global_costmap:
       use_sim_time: false
       resolution: 0.025
       track_unknown_space: true
-      footprint: "[[0.50, 0.25], [0.50, -0.25], [-0.50, -0.25], [-0.50, 0.25]]"
+      footprint: "[[0.35, 0.25], [0.35, -0.25], [-0.35, -0.25], [-0.35, 0.25]]"
       footprint_padding: 0.02
       plugins: ["static_layer", "inflation_layer"]
       static_layer:
