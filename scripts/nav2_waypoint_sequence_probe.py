@@ -40,28 +40,45 @@ STATUS_NAMES = {
 }
 
 
+_INSPECTION_PREFIX_STAGED_TURN = [
+    ("obstacle_cross_target", 1.05, 0.75, math.pi),
+    ("pos1_middle", 1.50, 3.25, math.pi / 2.0),
+    # Lite3 yaw turns drift in XY, so avoid a same-spot 180 deg RotateToGoal.
+    ("pos1_turnout_right", 1.90, 3.45, None),
+    ("pos1_middle_turned", 1.90, 3.25, -math.pi / 2.0),
+]
+
+_INSPECTION_PREFIX_LEGACY_SAME_SPOT_TURN = [
+    ("obstacle_cross_target", 1.05, 0.75, math.pi),
+    ("pos1_middle", 1.50, 3.25, math.pi / 2.0),
+    ("pos1_middle_turned_same_spot", 1.50, 3.25, -math.pi / 2.0),
+]
+
+_INSPECTION_TAIL = [
+    ("pos2a_upper_right", 2.60, 4.50, math.pi),
+    ("pos2b_lower_right", 2.60, 2.00, math.pi),
+]
+
+_FULL_TAIL = [
+    ("grab_area_approach", 3.10, 2.00, 0.0),
+    ("placement_A_approach", 3.25, 4.95, math.pi / 2.0),
+    ("placement_B_approach", 3.75, 4.95, math.pi / 2.0),
+    ("placement_C_approach", 4.25, 4.95, math.pi / 2.0),
+    ("placement_D_approach", 4.65, 4.95, math.pi / 2.0),
+]
+
 ROUTE_PRESETS = {
     # Navigation-only route using base_link-safe approach poses.
     # Camera perception/depth relay/task_manager stay out of this probe.
-    "nav-only-full": [
-        ("obstacle_cross_target", 1.05, 0.75, math.pi),
-        ("pos1_middle", 1.50, 3.25, math.pi / 2.0),
-        ("pos1_middle_turned", 1.50, 3.25, -math.pi / 2.0),
-        ("pos2a_upper_right", 2.60, 4.50, math.pi),
-        ("pos2b_lower_right", 2.60, 2.00, math.pi),
-        ("grab_area_approach", 3.10, 2.00, 0.0),
-        ("placement_A_approach", 3.25, 4.95, math.pi / 2.0),
-        ("placement_B_approach", 3.75, 4.95, math.pi / 2.0),
-        ("placement_C_approach", 4.25, 4.95, math.pi / 2.0),
-        ("placement_D_approach", 4.65, 4.95, math.pi / 2.0),
-    ],
-    "nav-only-inspection": [
-        ("obstacle_cross_target", 1.05, 0.75, math.pi),
-        ("pos1_middle", 1.50, 3.25, math.pi / 2.0),
-        ("pos1_middle_turned", 1.50, 3.25, -math.pi / 2.0),
-        ("pos2a_upper_right", 2.60, 4.50, math.pi),
-        ("pos2b_lower_right", 2.60, 2.00, math.pi),
-    ],
+    "nav-only-full": _INSPECTION_PREFIX_STAGED_TURN + _INSPECTION_TAIL + _FULL_TAIL,
+    "nav-only-inspection": _INSPECTION_PREFIX_STAGED_TURN + _INSPECTION_TAIL,
+    # Keep the old same-XY 180 deg turn available only for regression diagnosis.
+    "nav-only-full-legacy-same-spot-turn": (
+        _INSPECTION_PREFIX_LEGACY_SAME_SPOT_TURN + _INSPECTION_TAIL + _FULL_TAIL
+    ),
+    "nav-only-inspection-legacy-same-spot-turn": (
+        _INSPECTION_PREFIX_LEGACY_SAME_SPOT_TURN + _INSPECTION_TAIL
+    ),
 }
 
 
@@ -328,9 +345,19 @@ class Nav2WaypointSequenceProbe(Node):
             for distance in self.args.forward_distances
         ]
 
-    def resolve_segment_goal(self, goal):
+    def resolve_segment_goal(self, goal, start_pose=None):
         if goal["source"] in ("absolute", "route_preset"):
-            return goal
+            resolved = dict(goal)
+            if resolved.get("yaw") is None:
+                if start_pose is None:
+                    pose = self.wait_for_map_pose()
+                else:
+                    pose = start_pose
+                if not pose.get("ok"):
+                    raise RuntimeError("cannot resolve current map pose: %s" % pose.get("error"))
+                resolved["yaw"] = pose["yaw"]
+                resolved["yaw_source"] = "current_pose"
+            return resolved
 
         pose = self.wait_for_map_pose()
         if not pose.get("ok"):
@@ -358,10 +385,10 @@ class Nav2WaypointSequenceProbe(Node):
         self.segment_cmd_samples = []
         self.segment_start_time = time.time()
         self.segment_trace = []
-        goal = self.resolve_segment_goal(goal)
         start_pose = self.wait_for_map_pose()
         if not start_pose.get("ok"):
             raise RuntimeError("cannot capture start map pose: %s" % start_pose.get("error"))
+        goal = self.resolve_segment_goal(goal, start_pose=start_pose)
         goal_msg = self.build_goal_from_pose(goal["x"], goal["y"], goal["yaw"])
 
         send_future = self.action_client.send_goal_async(goal_msg)
