@@ -188,17 +188,14 @@ class TaskManagerNode(Node):
 
         # ── 导航客户端 (Nav2 NavigateToPose) ─────
         self._nav = NavigationClient(self)
-        # 4 个观察动作 + 1 个导航过渡点；过渡点不触发拍照/识别。
+        # 4 个观察子步骤: 位置 + 朝向 + 说明
         self._inspection_steps = [
             {"waypoint": "pos1_middle",        "desc": "仰头看上柜底面 (上区仪表)"},
-            # Lite3 原地 180° 转身会漂移 XY，触发 DWB RotateToGoal abort。
-            # 插入过渡航点让狗边走边转，不在同一点做纯旋转。
-            {"waypoint": "pos1_turnout_right", "desc": "[过渡] 右移转身", "transit": True},
-            {"waypoint": "pos1_middle_turned", "desc": "转身看下柜顶面 (下区仪表)"},
+            {"waypoint": "pos1_middle_turned", "desc": "180°转身看下柜顶面 (下区仪表)"},
             {"waypoint": "pos2a_upper_right",  "desc": "看上柜右侧面 (上区字母)"},
             {"waypoint": "pos2b_lower_right",  "desc": "看下柜右侧面 (下区字母)"},
         ]
-        self._inspection_step: int = 0           # 当前观察/过渡子步骤
+        self._inspection_step: int = 0           # 当前子步骤 (0-3)
         self._gauges_filled_count: int = 0       # 已填入的仪表数量
 
         # ── 主循环定时器 ──────────────────────────
@@ -303,11 +300,11 @@ class TaskManagerNode(Node):
                     self._nav.reset()
 
     def _tick_inspect_gauges(self, elapsed: float) -> None:
-        """INSPECT_GAUGES: 观察位序列（含过渡），到位置后拍一帧→识别→播报→关。"""
+        """INSPECT_GAUGES: 4 个观察位，到位置后拍一帧→识别→播报→关。"""
         if self._handle_timeout(elapsed):
             return
 
-        # ── 全部子步骤完成 → 收尾 ──────────────
+        # ── 全部 4 个子步骤完成 → 收尾 ──────────
         if self._inspection_step >= len(self._inspection_steps):
             abnormal = [
                 info for info in self._gauge_info.values()
@@ -333,26 +330,17 @@ class TaskManagerNode(Node):
 
         # ── 导航到当前观察位 ──────────────────────
         if not self._nav.goal_sent and not self._nav.is_done():
-            n = len(self._inspection_steps)
             self.get_logger().info(
-                f"[观察 {self._inspection_step+1}/{n}] {step_info['desc']}"
+                f"[观察 {self._inspection_step+1}/4] {step_info['desc']}"
             )
             self._nav.navigate_to_waypoint(wp)
 
-        if not self._nav.is_done():
-            return
-
         # 导航失败 → 重试
-        if not self._nav.succeeded():
-            self.get_logger().warn(f"到{wp}导航失败，重试...")
-            self._nav.reset()
-            return
-
-        # ── 过渡航点：到达后直接推进，不做识别 ──
-        if step_info.get("transit"):
-            self.get_logger().info(f"[过渡] {step_info['desc']} 到位，直接进下一步")
-            self._advance_step()
-            return
+        if self._nav.is_done():
+            if not self._nav.succeeded():
+                self.get_logger().warn(f"到{wp}导航失败，重试...")
+                self._nav.reset()
+                return
 
         # ── 已到达 → 拍一帧, 识别, 播报, 关 ──────
         if not hasattr(self, "_inspect_done"):
@@ -464,8 +452,7 @@ class TaskManagerNode(Node):
         self._inspect_done = False
         self._inspection_step += 1
         self._nav.reset()
-        n = len(self._inspection_steps)
-        self.get_logger().info(f"观察子步骤完成 → {self._inspection_step}/{n}")
+        self.get_logger().info(f"观察子步骤完成 → {self._inspection_step}/4")
 
     def _tick_find_red_bar(self, elapsed: float) -> None:
         """FIND_RED_BAR: 导航到抓取区，寻找并定位红色条。"""

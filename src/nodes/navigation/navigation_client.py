@@ -43,11 +43,7 @@ _RAW_WAYPOINTS: dict[str, dict] = {
     # Coordinates below are base_link navigation centers, not task-object centers.
     "start":                   {"x_mm": 4650, "y_mm": 5250, "yaw_deg": 180,  "label": "出发区"},
     "pos1_middle":             {"x_mm": 1500, "y_mm": 2750, "yaw_deg": -90,  "label": "观察位① 仰头看上柜底面"},
-    # Lite3 原地转身会漂移 XY，DWB RotateToGoal 禁止平移纠偏导致 abort。
-    # 拆成 turnout_right 过渡点让狗边走边转，再到 turned 位置朝下观察。
-    "pos1_turnout_right":      {"x_mm": 1900, "y_mm": 2550, "yaw_deg": None, "label": "观察位① 转身过渡（右移）"},
-    "pos1_middle_turned":      {"x_mm": 1900, "y_mm": 2750, "yaw_deg":  90,  "label": "观察位① 转身看下柜顶面"},
-    "pos1_middle_turned_same_spot": {"x_mm": 1500, "y_mm": 2750, "yaw_deg": 90, "label": "诊断用同点180度转身"},
+    "pos1_middle_turned":      {"x_mm": 1500, "y_mm": 2750, "yaw_deg":  90,  "label": "观察位① 转身看下柜顶面"},
     "pos2a_upper_right":       {"x_mm": 2600, "y_mm": 1500, "yaw_deg": 180,  "label": "观察位②a 看上柜右侧面"},
     "pos2b_lower_right":       {"x_mm": 2600, "y_mm": 4000, "yaw_deg": 180,  "label": "观察位②b 看下柜右侧面"},
     "grab_area":               {"x_mm": 3100, "y_mm": 4000, "yaw_deg": 0,    "label": "抓取区左侧接近点"},
