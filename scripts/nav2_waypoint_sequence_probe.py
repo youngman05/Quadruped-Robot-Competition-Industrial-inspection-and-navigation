@@ -40,28 +40,41 @@ STATUS_NAMES = {
 }
 
 
+_INSPECTION_PREFIX_LEGACY = [
+    ("obstacle_cross_target", 1.05, 0.75, math.pi),
+    ("pos1_middle", 1.50, 3.25, math.pi / 2.0),
+    ("pos1_middle_turned", 1.50, 3.25, -math.pi / 2.0),
+]
+
+_INSPECTION_PREFIX_STAGED = [
+    ("obstacle_cross_target", 1.05, 0.75, math.pi),
+    ("pos1_middle", 1.50, 3.25, math.pi / 2.0),
+    # Split the Lite3's drifting 180 deg pivot into two moving turns.
+    ("pos1_turnout_right", 1.90, 3.45, 0.0),
+    ("pos1_middle_turned", 1.90, 3.25, -math.pi / 2.0),
+]
+
+_INSPECTION_TAIL = [
+    ("pos2a_upper_right", 2.60, 4.50, math.pi),
+    ("pos2b_lower_right", 2.60, 2.00, math.pi),
+]
+
+_FULL_TAIL = [
+    ("grab_area_approach", 3.10, 2.00, 0.0),
+    ("placement_A_approach", 3.25, 4.95, math.pi / 2.0),
+    ("placement_B_approach", 3.75, 4.95, math.pi / 2.0),
+    ("placement_C_approach", 4.25, 4.95, math.pi / 2.0),
+    ("placement_D_approach", 4.65, 4.95, math.pi / 2.0),
+]
+
+
 ROUTE_PRESETS = {
-    # Navigation-only route using base_link-safe approach poses.
-    # Camera perception/depth relay/task_manager stay out of this probe.
-    "nav-only-full": [
-        ("obstacle_cross_target", 1.05, 0.75, math.pi),
-        ("pos1_middle", 1.50, 3.25, math.pi / 2.0),
-        ("pos1_middle_turned", 1.50, 3.25, -math.pi / 2.0),
-        ("pos2a_upper_right", 2.60, 4.50, math.pi),
-        ("pos2b_lower_right", 2.60, 2.00, math.pi),
-        ("grab_area_approach", 3.10, 2.00, 0.0),
-        ("placement_A_approach", 3.25, 4.95, math.pi / 2.0),
-        ("placement_B_approach", 3.75, 4.95, math.pi / 2.0),
-        ("placement_C_approach", 4.25, 4.95, math.pi / 2.0),
-        ("placement_D_approach", 4.65, 4.95, math.pi / 2.0),
-    ],
-    "nav-only-inspection": [
-        ("obstacle_cross_target", 1.05, 0.75, math.pi),
-        ("pos1_middle", 1.50, 3.25, math.pi / 2.0),
-        ("pos1_middle_turned", 1.50, 3.25, -math.pi / 2.0),
-        ("pos2a_upper_right", 2.60, 4.50, math.pi),
-        ("pos2b_lower_right", 2.60, 2.00, math.pi),
-    ],
+    # Keep the proven same-spot route unchanged as the regression baseline.
+    "nav-only-full": _INSPECTION_PREFIX_LEGACY + _INSPECTION_TAIL + _FULL_TAIL,
+    "nav-only-inspection": _INSPECTION_PREFIX_LEGACY + _INSPECTION_TAIL,
+    # Opt-in staged-turn routes avoid the same-XY 180 deg RotateToGoal.
+    "nav-only-full-staged": _INSPECTION_PREFIX_STAGED + _INSPECTION_TAIL + _FULL_TAIL,
+    "nav-only-inspection-staged": _INSPECTION_PREFIX_STAGED + _INSPECTION_TAIL,
 }
 
 
