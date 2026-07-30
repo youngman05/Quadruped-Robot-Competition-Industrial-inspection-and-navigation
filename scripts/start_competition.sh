@@ -146,6 +146,10 @@ docker exec $CN pkill -f udp_exporter 2>/dev/null || true
 sleep 1
 
 source /opt/ros/foxy/setup.bash 2>/dev/null || true
+NAV2_OVERLAY_SETUP="${NAV2_OVERLAY_SETUP:-$HOME/nav2_foxy_overlay_ws/install/setup.bash}"
+if [ -f "$NAV2_OVERLAY_SETUP" ]; then
+    source "$NAV2_OVERLAY_SETUP"
+fi
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp ROS_DOMAIN_ID=0
 if [ -f "$PROJECT_ROOT/configs/ros/fastrtps_no_shm.xml" ]; then
     export FASTRTPS_DEFAULT_PROFILES_FILE="$PROJECT_ROOT/configs/ros/fastrtps_no_shm.xml"

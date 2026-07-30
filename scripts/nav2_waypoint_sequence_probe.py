@@ -48,10 +48,15 @@ _INSPECTION_PREFIX_LEGACY = [
 
 _INSPECTION_PREFIX_STAGED = [
     ("obstacle_cross_target", 1.05, 0.75, math.pi),
+    # Stay left until the full footprint clears the lower cabinet's upper-left
+    # corner at (1.0, 2.5), then enter the middle inspection corridor.
+    ("pos1_left_clear", 0.60, 2.90, math.pi / 2.0),
     ("pos1_middle", 1.50, 3.25, math.pi / 2.0),
-    # Split the Lite3's drifting 180 deg pivot into two moving turns.
-    ("pos1_turnout_right", 1.90, 3.45, 0.0),
-    ("pos1_middle_turned", 1.90, 3.25, -math.pi / 2.0),
+    # Approximate the Lite3's drifting clockwise U-turn with two empirically
+    # sized quarter turns, then approach the observation pose heading south.
+    ("pos1_turn_quarter_1", 1.72, 3.50, 0.0),
+    ("pos1_turn_quarter_2", 2.10, 3.50, -math.pi / 2.0),
+    ("pos1_middle_turned", 2.10, 3.25, -math.pi / 2.0),
 ]
 
 _INSPECTION_TAIL = [
@@ -289,6 +294,7 @@ class Nav2WaypointSequenceProbe(Node):
         goal_msg.pose.pose.orientation.y = q["y"]
         goal_msg.pose.pose.orientation.z = q["z"]
         goal_msg.pose.pose.orientation.w = q["w"]
+        goal_msg.behavior_tree = self.args.behavior_tree
         return goal_msg
 
     def run(self):
@@ -313,6 +319,7 @@ class Nav2WaypointSequenceProbe(Node):
             and all(segment.get("succeeded") for segment in self.segments),
             "frame_id": self.args.frame_id,
             "base_frame": self.args.base_frame,
+            "behavior_tree": self.args.behavior_tree or None,
             "segments": self.segments,
         }
 
@@ -559,6 +566,11 @@ def parse_args():
     parser.add_argument("--tf-timeout", type=float, default=0.2)
     parser.add_argument("--inter-goal-pause", type=float, default=2.0)
     parser.add_argument("--post-cancel-spin", type=float, default=1.0)
+    parser.add_argument(
+        "--behavior-tree",
+        default="",
+        help="Optional NavigateToPose behavior-tree XML path for every goal.",
+    )
     parser.add_argument("--cancel-on-timeout", action="store_true", default=True)
     parser.add_argument("--no-cancel-on-timeout", dest="cancel_on_timeout", action="store_false")
     parser.add_argument("--stop-on-failure", action="store_true", default=True)
