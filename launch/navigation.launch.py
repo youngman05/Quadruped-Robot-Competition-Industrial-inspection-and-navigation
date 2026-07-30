@@ -4,7 +4,7 @@
 Prerequisites:
   - /odom and odom -> base_link TF are published by the cuVSLAM bridge.
   - base_link -> camera_link static TF is published by competition.launch.py.
-  - This launch does not command the dog directly; it only produces /cmd_vel.
+  - Nav2 and precision control are arbitrated into one /cmd_vel output.
 """
 
 from pathlib import Path
@@ -68,6 +68,7 @@ def generate_launch_description() -> LaunchDescription:
         name="controller_server",
         output="screen",
         parameters=[params_file],
+        remappings=[("/cmd_vel", "/cmd_vel_nav2")],
     )
 
     recoveries = Node(
@@ -76,6 +77,14 @@ def generate_launch_description() -> LaunchDescription:
         name="recoveries_server",
         output="screen",
         parameters=[params_file],
+        remappings=[("/cmd_vel", "/cmd_vel_nav2")],
+    )
+
+    cmd_vel_arbiter = Node(
+        package="quadruped_robot_competition",
+        executable="cmd_vel_arbiter",
+        name="cmd_vel_arbiter",
+        output="screen",
     )
 
     bt_navigator = Node(
@@ -100,6 +109,7 @@ def generate_launch_description() -> LaunchDescription:
             map_yaml,
             " | params: ",
             params_file,
+            " | cmd_vel: /cmd_vel_nav2 + /cmd_vel_precision -> /cmd_vel",
         ]
     )
 
@@ -108,6 +118,7 @@ def generate_launch_description() -> LaunchDescription:
         declare_map,
         startup_info,
         map_server,
+        cmd_vel_arbiter,
         planner,
         controller,
         recoveries,

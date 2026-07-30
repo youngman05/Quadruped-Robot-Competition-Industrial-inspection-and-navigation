@@ -269,6 +269,10 @@ if $ENABLE_DOG; then
     tail -1 /tmp/lite3_init.log 2>/dev/null || echo "  (无)"
     ping -c 1 -W 1 192.168.1.120 > /dev/null 2>&1 && echo "  狗网络: ✅" || echo "  狗网络: ❌"
 fi
+echo "  === cmd_vel arbitration ==="
+ros2 node list 2>/dev/null | grep 'cmd_vel_arbiter' || echo "  ERROR: cmd_vel_arbiter 节点未出现"
+ros2 topic info /cmd_vel_nav2 2>/dev/null || echo "  /cmd_vel_nav2 topic info 不可用"
+ros2 topic info /cmd_vel_precision 2>/dev/null || echo "  /cmd_vel_precision topic info 不可用"
 if $ENABLE_CMD_VEL_BRIDGE; then
     echo "  === cmd_vel bridge ==="
     ros2 node list 2>/dev/null | grep 'cmd_vel_bridge' || echo "  cmd_vel_bridge 节点未出现"

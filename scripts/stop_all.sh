@@ -4,6 +4,14 @@
 # ==============================================
 echo "=== 停止比赛进程 ==="
 
+# Ask both the precision lease and the final output to stop before any SIGKILL.
+if command -v ros2 >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
+    timeout 0.5s ros2 topic pub --rate 20 /cmd_vel_precision geometry_msgs/msg/Twist '{}' \
+        >/dev/null 2>&1 || true
+    timeout 0.3s ros2 topic pub --rate 20 /cmd_vel geometry_msgs/msg/Twist '{}' \
+        >/dev/null 2>&1 || true
+fi
+
 # 1. 先杀 ros2 launch（防止它复活子进程）—— 最关键！
 echo "[1] 停止 launch..."
 pkill -9 -f "ros2 launch"          2>/dev/null
@@ -16,7 +24,7 @@ echo "[2] 停止比赛节点..."
 for name in task_manager initial_pose_publisher depth_publisher \
             gauge_status_publisher inspection_node whz_standalone \
             color_image_publisher yolo_detect_publisher \
-            static_transform_publisher test_logger cmd_vel_bridge \
+            static_transform_publisher test_logger cmd_vel_arbiter cmd_vel_bridge \
             map_server planner_server controller_server bt_navigator \
             recoveries_server lifecycle_manager; do
     pkill -9 -f "$name" 2>/dev/null

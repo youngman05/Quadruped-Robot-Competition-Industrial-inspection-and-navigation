@@ -7,6 +7,7 @@ motion layer before Nav2 or task_manager is involved.
 Safety:
   - By default it is dry-run and sends nothing.
   - Pass --armed to send packets.
+  - Stop the ROS navigation/transfer stack before arming this direct UDP probe.
   - It always sends stop packets on exit.
 """
 
@@ -79,11 +80,15 @@ class Lite3Udp:
             self.complex(CODE_LAT, cmd.vy)
         else:
             self.complex(CODE_FWD, 0.0)
+            self.complex(CODE_LAT, 0.0)
+            self.complex(CODE_YAW, 0.0)
 
     def stop_burst(self) -> None:
         for _ in range(8):
             self.simple(CMD_HEARTBEAT)
             self.complex(CODE_FWD, 0.0)
+            self.complex(CODE_LAT, 0.0)
+            self.complex(CODE_YAW, 0.0)
             time.sleep(0.05)
 
 
@@ -114,10 +119,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dog-port", type=int, default=43893)
     parser.add_argument("--rate-hz", type=float, default=40.0)
     parser.add_argument("--forward-vx", type=float, default=0.04)
+    parser.add_argument("--lateral-vy", type=float, default=0.03)
     parser.add_argument("--yaw-az", type=float, default=0.12)
     parser.add_argument("--move-sec", type=float, default=1.0)
     parser.add_argument("--stop-sec", type=float, default=1.0)
     parser.add_argument("--combined-axes", action="store_true")
+    parser.add_argument(
+        "--test-lateral",
+        action="store_true",
+        help=(
+            "Run only one positive ROS-Y lateral pulse for sign calibration; "
+            "skip the forward and yaw probes."
+        ),
+    )
     parser.add_argument(
         "--armed",
         action="store_true",
@@ -138,24 +152,49 @@ def main() -> int:
         print(f"Lite3 UDP target: {args.dog_ip}:{args.dog_port}")
         client.init_motion()
         hold(client, "stop", HeldCommand(), args.stop_sec, rate_hz, args.combined_axes)
-        hold(
-            client,
-            "slow_forward",
-            HeldCommand(vx=args.forward_vx),
-            args.move_sec,
-            rate_hz,
-            args.combined_axes,
-        )
-        hold(client, "stop", HeldCommand(), args.stop_sec, rate_hz, args.combined_axes)
-        hold(
-            client,
-            "slow_yaw_left",
-            HeldCommand(az=args.yaw_az),
-            args.move_sec,
-            rate_hz,
-            args.combined_axes,
-        )
-        hold(client, "final_stop", HeldCommand(), args.stop_sec, rate_hz, args.combined_axes)
+        if args.test_lateral:
+            hold(
+                client,
+                "slow_lateral_positive",
+                HeldCommand(vy=args.lateral_vy),
+                args.move_sec,
+                rate_hz,
+                args.combined_axes,
+            )
+            hold(
+                client,
+                "stop_after_lateral",
+                HeldCommand(),
+                args.stop_sec,
+                rate_hz,
+                args.combined_axes,
+            )
+        else:
+            hold(
+                client,
+                "slow_forward",
+                HeldCommand(vx=args.forward_vx),
+                args.move_sec,
+                rate_hz,
+                args.combined_axes,
+            )
+            hold(client, "stop", HeldCommand(), args.stop_sec, rate_hz, args.combined_axes)
+            hold(
+                client,
+                "slow_yaw_left",
+                HeldCommand(az=args.yaw_az),
+                args.move_sec,
+                rate_hz,
+                args.combined_axes,
+            )
+            hold(
+                client,
+                "final_stop",
+                HeldCommand(),
+                args.stop_sec,
+                rate_hz,
+                args.combined_axes,
+            )
     except KeyboardInterrupt:
         print("Interrupted; sending stop.")
     finally:

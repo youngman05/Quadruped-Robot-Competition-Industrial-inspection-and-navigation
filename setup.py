@@ -35,6 +35,7 @@ setup(
             "initial_pose_publisher = nodes.navigation.initial_pose_publisher:main",
             "cuvslam_bridge = nodes.navigation.cuvslam_bridge:main",
             "ir_imu_bridge = nodes.navigation.ir_imu_bridge:main",
+            "cmd_vel_arbiter = nodes.navigation.cmd_vel_arbiter:main",
             "cmd_vel_bridge = nodes.navigation.cmd_vel_bridge:main",
         ],
     },

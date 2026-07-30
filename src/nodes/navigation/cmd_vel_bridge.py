@@ -3,7 +3,7 @@
 cmd_vel_bridge.py — 将 Nav2 的 /cmd_vel 转成 Lite3 狗的 UDP MotionComplexCMD。
 
 链路:
-    Nav2 → /cmd_vel (Twist) → CmdVelBridge → UDP MotionComplexCMD → 狗 (192.168.1.120:43893)
+    Nav2/SE2 → CmdVelArbiter → /cmd_vel → CmdVelBridge → UDP → Lite3
 
 设计要点:
     - 心跳 + 速度指令从同一个 UDP socket 发出（狗 SDK 要求）
@@ -19,6 +19,7 @@ import socket
 import struct
 import time
 import os
+import math
 
 import rclpy
 from rclpy.node import Node
@@ -60,6 +61,10 @@ class CmdVelBridge(Node):
         self.declare_parameter("vx_deadband", 0.005)
         self.declare_parameter("vy_deadband", 0.005)
         self.declare_parameter("az_deadband", 0.005)
+        self.declare_parameter("hard_max_vx", 0.10)
+        self.declare_parameter("hard_max_vy", 0.05)
+        self.declare_parameter("hard_max_az", 0.15)
+        self.declare_parameter("hard_max_speed_xy", 0.10)
         self.declare_parameter("diag_log_period_sec", 1.0)
 
         dog_ip = str(self.get_parameter("dog_ip").value)
@@ -88,6 +93,12 @@ class CmdVelBridge(Node):
         self._vx_deadband = abs(float(self.get_parameter("vx_deadband").value))
         self._vy_deadband = abs(float(self.get_parameter("vy_deadband").value))
         self._az_deadband = abs(float(self.get_parameter("az_deadband").value))
+        self._hard_max_vx = abs(float(self.get_parameter("hard_max_vx").value))
+        self._hard_max_vy = abs(float(self.get_parameter("hard_max_vy").value))
+        self._hard_max_az = abs(float(self.get_parameter("hard_max_az").value))
+        self._hard_max_speed_xy = abs(
+            float(self.get_parameter("hard_max_speed_xy").value)
+        )
         self._diag_log_period_sec = max(
             0.2,
             float(self.get_parameter("diag_log_period_sec").value),
@@ -100,13 +111,14 @@ class CmdVelBridge(Node):
 
         # ── 运行诊断计数 ────────────────────────────
         self._last_cmd_time = 0.0
-        self._has_seen_motion_cmd = False
+        self._has_seen_cmd = False
         self._last_vx = 0.0
         self._last_vy = 0.0
         self._last_az = 0.0
         self._recv_count = 0
         self._recv_motion_count = 0
-        self._recv_ignored_zero_count = 0
+        self._recv_initial_zero_count = 0
+        self._recv_invalid_count = 0
         self._send_tick_count = 0
         self._send_stale_tick_count = 0
         self._udp_simple_count = 0
@@ -174,6 +186,20 @@ class CmdVelBridge(Node):
         vy = float(msg.linear.y)
         az = float(msg.angular.z)
         self._recv_count += 1
+        if not all(math.isfinite(value) for value in (vx, vy, az)):
+            self._recv_invalid_count += 1
+            vx = 0.0
+            vy = 0.0
+            az = 0.0
+            self.get_logger().error("拒绝 NaN/Inf cmd_vel，锁定本周期三轴零速")
+        vx = max(-self._hard_max_vx, min(self._hard_max_vx, vx))
+        vy = max(-self._hard_max_vy, min(self._hard_max_vy, vy))
+        az = max(-self._hard_max_az, min(self._hard_max_az, az))
+        speed_xy = math.hypot(vx, vy)
+        if speed_xy > self._hard_max_speed_xy > 0.0:
+            scale = self._hard_max_speed_xy / speed_xy
+            vx *= scale
+            vy *= scale
         self._last_recv_vx = vx
         self._last_recv_vy = vy
         self._last_recv_az = az
@@ -182,13 +208,11 @@ class CmdVelBridge(Node):
             or abs(vy) > self._vy_deadband
             or abs(az) > self._az_deadband
         )
-        if not self._has_seen_motion_cmd and not is_motion:
-            self._recv_ignored_zero_count += 1
-            self._maybe_log_diag(force=False)
-            return
+        if not self._has_seen_cmd and not is_motion:
+            self._recv_initial_zero_count += 1
         if is_motion:
             self._recv_motion_count += 1
-        self._has_seen_motion_cmd = True
+        self._has_seen_cmd = True
         self._last_cmd_time = time.time()
         self._last_vx = vx
         self._last_vy = vy
@@ -204,7 +228,7 @@ class CmdVelBridge(Node):
             self._last_cmd_time <= 0.0
             or now - self._last_cmd_time > self._command_timeout_sec
         )
-        if not self._has_seen_motion_cmd:
+        if not self._has_seen_cmd:
             return
 
         vx = 0.0 if stale else self._last_vx
@@ -234,7 +258,8 @@ class CmdVelBridge(Node):
         snapshot = (
             self._recv_count,
             self._recv_motion_count,
-            self._recv_ignored_zero_count,
+            self._recv_initial_zero_count,
+            self._recv_invalid_count,
             self._send_tick_count,
             self._send_stale_tick_count,
             self._udp_simple_count,
@@ -246,7 +271,7 @@ class CmdVelBridge(Node):
             round(self._last_send_vx, 4),
             round(self._last_send_vy, 4),
             round(self._last_send_az, 4),
-            self._has_seen_motion_cmd,
+            self._has_seen_cmd,
         )
         if not force and snapshot == self._last_diag_snapshot:
             return
@@ -255,25 +280,26 @@ class CmdVelBridge(Node):
         self.get_logger().info(
             "[diag] "
             f"recv={self._recv_count} motion={self._recv_motion_count} "
-            f"ignored_zero={self._recv_ignored_zero_count} "
+            f"initial_zero={self._recv_initial_zero_count} "
+            f"invalid={self._recv_invalid_count} "
             f"send_ticks={self._send_tick_count} stale_ticks={self._send_stale_tick_count} "
             f"udp_simple={self._udp_simple_count} udp_complex={self._udp_complex_count} "
             f"udp_errors={self._udp_error_count} "
             f"last_recv=({self._last_recv_vx:.3f},{self._last_recv_vy:.3f},{self._last_recv_az:.3f}) "
             f"last_send=({self._last_send_vx:.3f},{self._last_send_vy:.3f},{self._last_send_az:.3f}) "
-            f"seen_motion={self._has_seen_motion_cmd}"
+            f"seen_cmd={self._has_seen_cmd}"
         )
 
     def _send_single_axis(self, vx: float, vy: float, az: float) -> None:
         """保守模式：每周期只发一个主运动轴，避免后发覆盖导致行为不确定。"""
+        # Clear every latched axis before selecting the single active one.
+        self._send_full_stop()
         if abs(az) > self._az_deadband:
             self._send_complex(CODE_YAW, float(-az))
         elif abs(vx) > self._vx_deadband:
             self._send_complex(CODE_FWD, float(vx))
         elif abs(vy) > self._vy_deadband:
             self._send_complex(CODE_LAT, float(vy))
-        else:
-            self._send_complex(CODE_FWD, 0.0)
 
     def _send_combined(self, vx: float, vy: float, az: float) -> None:
         """按官方 transfer driver 顺序发送三个轴，完整覆盖底层速度状态。"""
