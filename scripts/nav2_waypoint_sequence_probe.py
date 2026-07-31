@@ -78,9 +78,25 @@ _INSPECTION_PREFIX_SE2 = [
         "target_yaw": -math.pi / 2.0,
         "direction": "clockwise",
         # The controller refuses to start outside this known-clear corridor.
-        "anchor_bounds": [1.25, 1.75, 3.05, 3.35],
+        "anchor_bounds": [1.25, 1.75, 3.05, 3.36],
         # Keeps the 0.70 x 0.50m footprint inside the 2.5m..4.0m corridor.
         "control_bounds": [1.10, 1.90, 3.00, 3.50],
+    },
+]
+
+# Same-stack recovery after Nav2's approach goal drifts left while trying to
+# satisfy terminal yaw.  The y bounds keep the padded footprint inside the
+# 1.5m open band between the two inspection cabinets at every orientation.
+_INSPECTION_SE2_CORRIDOR_RECOVERY = [
+    {
+        "kind": "se2_pose",
+        "label": "pos1_middle_turned_corridor_recovery",
+        "target_x": 1.50,
+        "target_y": 3.25,
+        "target_yaw": -math.pi / 2.0,
+        "direction": "clockwise",
+        "anchor_bounds": [0.95, 1.30, 3.10, 3.35],
+        "control_bounds": [0.90, 1.90, 3.10, 3.40],
     },
 ]
 
@@ -112,6 +128,8 @@ ROUTE_PRESETS = {
     # to the start when an SE(2) safety gate stops a live run.
     "nav-only-full-se2-resume": _INSPECTION_PREFIX_SE2[3:] + _INSPECTION_TAIL + _FULL_TAIL,
     "nav-only-inspection-se2-resume": _INSPECTION_PREFIX_SE2[3:] + _INSPECTION_TAIL,
+    "nav-only-full-se2-recover": _INSPECTION_SE2_CORRIDOR_RECOVERY + _INSPECTION_TAIL + _FULL_TAIL,
+    "nav-only-inspection-se2-recover": _INSPECTION_SE2_CORRIDOR_RECOVERY + _INSPECTION_TAIL,
 }
 
 
@@ -1053,6 +1071,8 @@ def validate_args(args):
         "nav-only-inspection-se2",
         "nav-only-full-se2-resume",
         "nav-only-inspection-se2-resume",
+        "nav-only-full-se2-recover",
+        "nav-only-inspection-se2-recover",
     ):
         if not args.behavior_tree:
             # Lite3's turn-induced XY drift makes Nav2's in-place Spin recovery unsafe.
