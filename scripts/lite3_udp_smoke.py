@@ -124,12 +124,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--move-sec", type=float, default=1.0)
     parser.add_argument("--stop-sec", type=float, default=1.0)
     parser.add_argument("--combined-axes", action="store_true")
-    parser.add_argument(
+    test_mode = parser.add_mutually_exclusive_group()
+    test_mode.add_argument(
         "--test-lateral",
         action="store_true",
         help=(
             "Run only one positive ROS-Y lateral pulse for sign calibration; "
             "skip the forward and yaw probes."
+        ),
+    )
+    test_mode.add_argument(
+        "--test-yaw",
+        action="store_true",
+        help=(
+            "Run only one positive ROS angular-Z pulse; skip the forward and "
+            "lateral probes."
+        ),
+    )
+    test_mode.add_argument(
+        "--test-closed-yaw",
+        action="store_true",
+        help=(
+            "Run a positive ROS angular-Z pulse, stop, then a negative pulse to close the loop."
         ),
     )
     parser.add_argument(
@@ -164,6 +180,56 @@ def main() -> int:
             hold(
                 client,
                 "stop_after_lateral",
+                HeldCommand(),
+                args.stop_sec,
+                rate_hz,
+                args.combined_axes,
+            )
+        elif args.test_yaw:
+            hold(
+                client,
+                "slow_yaw_left",
+                HeldCommand(az=args.yaw_az),
+                args.move_sec,
+                rate_hz,
+                args.combined_axes,
+            )
+            hold(
+                client,
+                "stop_after_yaw",
+                HeldCommand(),
+                args.stop_sec,
+                rate_hz,
+                args.combined_axes,
+            )
+        elif args.test_closed_yaw:
+            hold(
+                client,
+                "slow_yaw_left",
+                HeldCommand(az=args.yaw_az),
+                args.move_sec,
+                rate_hz,
+                args.combined_axes,
+            )
+            hold(
+                client,
+                "stop_mid",
+                HeldCommand(),
+                args.stop_sec,
+                rate_hz,
+                args.combined_axes,
+            )
+            hold(
+                client,
+                "slow_yaw_right",
+                HeldCommand(az=-args.yaw_az),
+                args.move_sec,
+                rate_hz,
+                args.combined_axes,
+            )
+            hold(
+                client,
+                "stop_after_closed_yaw",
                 HeldCommand(),
                 args.stop_sec,
                 rate_hz,

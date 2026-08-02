@@ -20,7 +20,7 @@ class FakeLite3Udp:
         self.closed = True
 
 
-def make_args(test_lateral):
+def make_args(test_lateral=False, test_yaw=False):
     return SimpleNamespace(
         dog_ip="192.168.1.120",
         dog_port=43893,
@@ -32,18 +32,23 @@ def make_args(test_lateral):
         stop_sec=1.0,
         combined_axes=False,
         test_lateral=test_lateral,
+        test_yaw=test_yaw,
         armed=False,
     )
 
 
 class Lite3UdpSmokeSequenceTests(unittest.TestCase):
-    def run_sequence(self, test_lateral):
+    def run_sequence(self, test_lateral=False, test_yaw=False):
         labels = []
 
         def record_hold(client, label, cmd, duration, rate_hz, combined_axes):
             labels.append((label, cmd.vx, cmd.vy, cmd.az))
 
-        with patch.object(lite3_udp_smoke, "parse_args", return_value=make_args(test_lateral)):
+        with patch.object(
+            lite3_udp_smoke,
+            "parse_args",
+            return_value=make_args(test_lateral=test_lateral, test_yaw=test_yaw),
+        ):
             with patch.object(lite3_udp_smoke, "Lite3Udp", FakeLite3Udp):
                 with patch.object(lite3_udp_smoke, "hold", side_effect=record_hold):
                     self.assertEqual(lite3_udp_smoke.main(), 0)
@@ -68,6 +73,16 @@ class Lite3UdpSmokeSequenceTests(unittest.TestCase):
                 ("stop", 0.0, 0.0, 0.0),
                 ("slow_yaw_left", 0.0, 0.0, 0.12),
                 ("final_stop", 0.0, 0.0, 0.0),
+            ],
+        )
+
+    def test_yaw_calibration_skips_forward_and_lateral_probes(self):
+        self.assertEqual(
+            self.run_sequence(test_yaw=True),
+            [
+                ("stop", 0.0, 0.0, 0.0),
+                ("slow_yaw_left", 0.0, 0.0, 0.12),
+                ("stop_after_yaw", 0.0, 0.0, 0.0),
             ],
         )
 
