@@ -5,6 +5,8 @@ from nodes.navigation.se2_pose_control import (
     DirectedYawTracker,
     Se2ControllerConfig,
     Se2PoseController,
+    YawOnlyController,
+    YawOnlyControllerConfig,
 )
 
 
@@ -88,6 +90,96 @@ class Se2PoseControlTests(unittest.TestCase):
         self.assertTrue(output.reached)
         self.assertEqual(output.mode, "settle")
         self.assertEqual((output.vx, output.vy, output.wz), (0.0, 0.0, 0.0))
+
+
+class YawOnlyControlTests(unittest.TestCase):
+    def test_clockwise_turn_stays_clockwise_across_wrap(self):
+        controller = YawOnlyController(
+            YawOnlyControllerConfig(max_angular_accel=100.0)
+        )
+        controller.start(
+            start_yaw=math.radians(105.0),
+            target_yaw=-math.pi / 2.0,
+            direction="clockwise",
+        )
+
+        first = controller.compute(math.radians(105.0), 0.1)
+        after_wrap = controller.compute(math.radians(-175.0), 0.1)
+
+        self.assertLess(first.wz, 0.0)
+        self.assertLess(after_wrap.wz, 0.0)
+
+    def test_angular_acceleration_limit_is_applied(self):
+        controller = YawOnlyController(
+            YawOnlyControllerConfig(
+                coarse_max_wz=1.0,
+                max_angular_accel=0.4,
+            )
+        )
+        controller.start(0.0, 1.0)
+
+        output = controller.compute(0.0, 0.1)
+
+        self.assertLessEqual(abs(output.wz), 0.04 + 1e-12)
+
+    def test_controller_switches_to_fine_speed(self):
+        controller = YawOnlyController(
+            YawOnlyControllerConfig(
+                ktheta=10.0,
+                coarse_max_wz=0.12,
+                fine_max_wz=0.06,
+                fine_yaw_error=0.35,
+                max_angular_accel=100.0,
+            )
+        )
+        controller.start(0.0, 0.30)
+
+        output = controller.compute(0.0, 0.1)
+
+        self.assertEqual(output.mode, "fine_yaw")
+        self.assertAlmostEqual(output.wz, 0.06)
+
+    def test_controller_outputs_zero_inside_yaw_tolerance(self):
+        controller = YawOnlyController()
+        controller.start(0.0, 1.0)
+
+        output = controller.compute(0.90, 0.1)
+
+        self.assertTrue(output.reached)
+        self.assertEqual(output.mode, "settle")
+        self.assertEqual(output.wz, 0.0)
+
+    def test_hold_restarts_acceleration_from_zero(self):
+        controller = YawOnlyController(
+            YawOnlyControllerConfig(
+                coarse_max_wz=1.0,
+                max_angular_accel=0.4,
+            )
+        )
+        controller.start(0.0, 1.0)
+        controller.compute(0.0, 1.0)
+        controller.hold()
+
+        output = controller.compute(0.0, 0.1)
+
+        self.assertLessEqual(abs(output.wz), 0.04 + 1e-12)
+
+    def test_controller_converges_on_competition_clockwise_turn(self):
+        controller = YawOnlyController()
+        yaw = math.radians(75.0)
+        controller.start(yaw, -math.pi / 2.0, direction="clockwise")
+
+        dt = 0.05
+        output = None
+        for _ in range(int(40.0 / dt)):
+            output = controller.compute(yaw, dt)
+            yaw += output.wz * dt
+            if output.reached:
+                break
+
+        self.assertIsNotNone(output)
+        self.assertTrue(output.reached)
+        self.assertLessEqual(abs(output.error_yaw), controller.config.yaw_tolerance)
 
 
 if __name__ == "__main__":
