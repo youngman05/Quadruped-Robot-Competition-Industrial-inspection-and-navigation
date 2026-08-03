@@ -11,6 +11,7 @@ import argparse
 import csv
 import json
 import math
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +24,7 @@ from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import Odometry
 from rclpy.action import ActionClient
 from rclpy.duration import Duration
+from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
@@ -54,12 +56,18 @@ NO_RECOVERY_REPLANNING_BT = (
 
 _INSPECTION_PREFIX_LEGACY = [
     ("obstacle_cross_target", 1.05, 0.75, math.pi),
+    # Hold the center of the narrow left passage until the full footprint has
+    # cleared the lower cabinet's upper-left corner at (1.0, 2.5).
+    ("pos1_left_clear", 0.60, 2.90, math.pi / 2.0),
     ("pos1_middle", 1.50, 3.25, math.pi / 2.0),
     ("pos1_middle_turned", 1.50, 3.25, -math.pi / 2.0),
 ]
 
 _INSPECTION_PREFIX_YAW_ONLY = [
     ("obstacle_cross_target", 1.05, 0.75, math.pi),
+    # Prevent the planner from cutting toward the cabinet before the robot has
+    # completely exited the narrow passage.
+    ("pos1_left_clear", 0.60, 2.90, math.pi / 2.0),
     ("pos1_middle", 1.50, 3.25, math.pi / 2.0),
     {
         "kind": "yaw_only",
@@ -136,6 +144,8 @@ ROUTE_PRESETS = {
     # Production routes hand the same-spot U-turn to precision yaw control.
     "nav-only-full": _INSPECTION_PREFIX_YAW_ONLY + _INSPECTION_TAIL + _FULL_TAIL,
     "nav-only-inspection": _INSPECTION_PREFIX_YAW_ONLY + _INSPECTION_TAIL,
+    # Stop immediately after the yaw-only U-turn for controlled validation.
+    "nav-only-turn-validation": _INSPECTION_PREFIX_YAW_ONLY,
     # Preserve the old same-XY DWB turn for explicit regression comparisons.
     "nav-only-full-dwb-baseline": _INSPECTION_PREFIX_LEGACY + _INSPECTION_TAIL + _FULL_TAIL,
     "nav-only-inspection-dwb-baseline": _INSPECTION_PREFIX_LEGACY + _INSPECTION_TAIL,
@@ -220,8 +230,14 @@ class Nav2WaypointSequenceProbe(Node):
         super().__init__("nav2_waypoint_sequence_probe")
         self.args = args
         self.action_client = ActionClient(self, NavigateToPose, "navigate_to_pose")
+        # TF and odometry arrive faster than the control loop.  Keep each on a
+        # dedicated executor so action/cmd_vel/odom callbacks cannot starve TF.
+        self.tf_node = rclpy.create_node("nav2_waypoint_sequence_tf_listener")
+        self.odom_node = rclpy.create_node("nav2_waypoint_sequence_odom_listener")
         self.tf_buffer = Buffer()
-        self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.tf_listener = None
+        self.odom_executor = SingleThreadedExecutor()
+        self.odom_thread = None
         self.latest_odom = None
         self.segment_cmd = None
         self.segment_cmd_samples = None
@@ -239,13 +255,61 @@ class Nav2WaypointSequenceProbe(Node):
             depth=10,
             reliability=ReliabilityPolicy.BEST_EFFORT,
         )
-        self.create_subscription(Twist, "/cmd_vel", self._cmd_callback, cmd_qos)
-        self.create_subscription(Odometry, args.odom_topic, self._odom_callback, odom_qos)
+        self.odom_node.create_subscription(
+            Odometry, args.odom_topic, self._odom_callback, odom_qos
+        )
+        self.odom_executor.add_node(self.odom_node)
+        self.odom_thread = threading.Thread(
+            target=self.odom_executor.spin,
+            name="nav2-waypoint-odom-listener",
+            daemon=True,
+        )
+        self.odom_thread.start()
+        self.tf_listener = TransformListener(
+            self.tf_buffer,
+            self.tf_node,
+            spin_thread=True,
+        )
+        self.create_subscription(
+            Twist, args.cmd_vel_topic, self._cmd_callback, cmd_qos
+        )
         self.precision_cmd_pub = self.create_publisher(
             Twist,
             args.se2_cmd_topic,
             cmd_qos,
         )
+
+    def shutdown_background_listeners(self):
+        listener = self.tf_listener
+        if listener is not None:
+            executor = getattr(listener, "executor", None)
+            if executor is not None:
+                executor.shutdown()
+            thread = getattr(listener, "dedicated_listener_thread", None)
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=2.0)
+            self.tf_listener = None
+            # Foxy unregisters subscriptions in TransformListener.__del__.
+            del listener
+
+        tf_node = self.tf_node
+        if tf_node is not None:
+            tf_node.destroy_node()
+            self.tf_node = None
+
+        odom_executor = self.odom_executor
+        odom_node = self.odom_node
+        if odom_executor is not None:
+            odom_executor.shutdown()
+        if self.odom_thread is not None and self.odom_thread.is_alive():
+            self.odom_thread.join(timeout=2.0)
+        self.odom_thread = None
+        if odom_executor is not None and odom_node is not None:
+            odom_executor.remove_node(odom_node)
+        self.odom_executor = None
+        if odom_node is not None:
+            odom_node.destroy_node()
+            self.odom_node = None
 
     def _cmd_callback(self, msg):
         if self.segment_cmd is None:
@@ -735,6 +799,34 @@ class Nav2WaypointSequenceProbe(Node):
                             last_control_time = cycle_started
                             settle_started = None
                             self._publish_precision_command(0.0, 0.0, 0.0)
+                            hold_sample = dict(pose)
+                            hold_sample.update(
+                                {
+                                    "segment_index": index,
+                                    "segment_kind": "yaw_only",
+                                    "control_mode": "tf_hold",
+                                    "target_x": anchor_pose["x"],
+                                    "target_y": anchor_pose["y"],
+                                    "target_yaw": goal["target_yaw"],
+                                    "error_x_body": 0.0,
+                                    "error_y_body": 0.0,
+                                    "error_yaw": None,
+                                    "position_error": (
+                                        math.hypot(
+                                            pose["x"] - anchor_pose["x"],
+                                            pose["y"] - anchor_pose["y"],
+                                        )
+                                        if pose.get("ok")
+                                        else None
+                                    ),
+                                    "command_vx": 0.0,
+                                    "command_vy": 0.0,
+                                    "command_wz": 0.0,
+                                    "tf_error": pose_error,
+                                    "hold_elapsed_sec": cycle_started - stale_started,
+                                }
+                            )
+                            self.segment_trace.append(hold_sample)
                             if (
                                 cycle_started - stale_started
                                 > self.args.yaw_only_tf_hold_timeout
@@ -1179,6 +1271,8 @@ def write_outputs(summary, output_dir):
         "command_vx",
         "command_vy",
         "command_wz",
+        "tf_error",
+        "hold_elapsed_sec",
         "error",
     )
     with trace_path.open("w", newline="", encoding="utf-8") as handle:
@@ -1259,6 +1353,11 @@ def parse_args():
     parser.add_argument("--frame-id", default="map")
     parser.add_argument("--base-frame", default="base_link")
     parser.add_argument("--odom-topic", default="/odom")
+    parser.add_argument(
+        "--cmd-vel-topic",
+        default="/cmd_vel",
+        help="Final velocity topic monitored for unexpected linear motion.",
+    )
     parser.add_argument("--odom-file", default="/tmp/odom_latest.json")
     parser.add_argument("--map-from-odom-x", type=float, default=5.35)
     parser.add_argument("--map-from-odom-y", type=float, default=0.75)
@@ -1373,6 +1472,7 @@ def validate_args(args):
     if args.route_preset in (
         "nav-only-full",
         "nav-only-inspection",
+        "nav-only-turn-validation",
         "nav-only-full-se2",
         "nav-only-inspection-se2",
         "nav-only-full-se2-resume",
@@ -1460,6 +1560,7 @@ def main():
         if not summary.get("ok"):
             raise SystemExit(2)
     finally:
+        node.shutdown_background_listeners()
         node.action_client.destroy()
         node.destroy_node()
         rclpy.shutdown()
