@@ -77,6 +77,8 @@ ros2 topic echo /gauge/status
 ## 2. YOLO 检测节点 (yolo_detect)
 
 > **平台: Linux (Jetson, 需 ultralytics + torch, GPU 推荐)**
+>
+> 此节点是旧 Host/离线调试入口，不是当前 D455 正式链路。正式链路使用 Docker 内 `/d455_object_yolo_3d`：订阅 RealSense RGB、Raw Depth、CameraInfo 和 TF，输出 `camera_link` 三维结果至 UDP `127.0.0.1:19002`。运行 Docker RealSense 时不得用本节点直接打开 D455，Host bridge 也尚未实现。详见 `docs/Docker_Yolo_Combine_0720.md`。
 
 发布 YOLO 实例分割结果到 `/yolo/detections`、`/yolo/image`、`/yolo/instance_count`。
 

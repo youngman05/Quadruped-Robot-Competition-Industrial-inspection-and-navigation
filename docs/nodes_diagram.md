@@ -1,10 +1,27 @@
 # 项目节点关系图
 
-> 更新时间: 2026-06-26
+> 当前 Docker D455 感知链路更新时间: 2026-08-02。本文下半部分保留 2026-06-26 的 Host 节点图作为历史参考，不代表当前正式 D455 YOLO 运行方式。
 
 ---
 
-## 总览
+## 当前 D455 YOLO 链路
+
+```text
+D455
+  -> Docker 内唯一 /camera/camera (RealSense)
+       |- IR1 + IR2 + IMU -> cuVSLAM
+       `- RGB + Raw Depth + CameraInfo + TF
+            -> /d455_object_yolo_3d
+            -> camera_link XYZ UDP 127.0.0.1:19002
+
+后续 Host d455_detection_bridge（尚未实现）
+  -> base_link
+  -> /yolo/detections、/block/target_pose、/cone/detections
+```
+
+当前节点订阅 `/camera/depth/image_rect_raw` 并在 5 FPS 工作周期执行 Raw Depth 稀疏投影；不使用 `/camera/aligned_depth_to_color/image_raw`，不直接打开 D455，也尚不输出 Host ROS detection topic。详见 `docs/Docker_Yolo_Combine_0720.md`。
+
+## 历史 Host 节点图（不作为当前 D455 YOLO 部署依据）
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -71,7 +88,7 @@ src/nodes/perception/gauge_status.py
   /gauge/detected        Bool          当前帧是否有效
 ```
 
-#### `yolo_detect_publisher` — YOLO 实例分割
+#### `yolo_detect_publisher` — 旧 Host YOLO 调试节点
 ```
 src/nodes/perception/yolo_detect_publisher.py
 
@@ -125,7 +142,7 @@ src/nodes/decision/task_manager.py
   NavigationClient → Nav2 action 服务器
 ```
 
-#### `depth_publisher` — D455 深度发布
+#### `depth_publisher` — 旧 Host 深度发布节点
 ```
 src/nodes/navigation/depth_publisher.py
 
@@ -332,7 +349,7 @@ cuVSLAM (Isaac ROS Humble)
 
 ---
 
-## 数据流总结
+## 历史数据流总结
 
 | 发布者 | 话题 | 类型 | 订阅者 |
 |--------|------|------|--------|

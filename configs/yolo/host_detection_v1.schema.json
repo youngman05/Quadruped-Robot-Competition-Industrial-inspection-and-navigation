@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quadruped.local/schemas/host-detection-v1.json",
+  "title": "Host base_link YOLO detection packet",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source_schema_version",
+    "sequence",
+    "stamp",
+    "frame_id",
+    "inference_ms",
+    "detections"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "source_schema_version": {"const": 1},
+    "sequence": {"type": "integer", "minimum": 0},
+    "stamp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sec", "nanosec"],
+      "properties": {
+        "sec": {"type": "integer", "minimum": 0},
+        "nanosec": {"type": "integer", "minimum": 0, "maximum": 999999999}
+      }
+    },
+    "frame_id": {"const": "base_link"},
+    "inference_ms": {"type": "number", "minimum": 0},
+    "detections": {
+      "type": "array",
+      "items": {"$ref": "detection_v1.schema.json#/$defs/detection"}
+    }
+  }
+}

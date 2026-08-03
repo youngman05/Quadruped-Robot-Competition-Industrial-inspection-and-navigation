@@ -13,7 +13,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
 
@@ -25,7 +25,8 @@ PARAMS_FILE = PROJECT_ROOT / "configs" / "ros" / "competition_params.yaml"
 def generate_launch_description() -> LaunchDescription:
     # ─── 启动参数 ───────────────────────────────────
     enable_gauge = LaunchConfiguration("enable_gauge", default="false")
-    enable_yolo = LaunchConfiguration("enable_yolo", default="true")
+    enable_yolo = LaunchConfiguration("enable_yolo", default="false")
+    enable_yolo_udp_bridge = LaunchConfiguration("enable_yolo_udp_bridge", default="false")
     enable_task_manager = LaunchConfiguration("enable_task_manager", default="false")
     enable_speech = LaunchConfiguration("enable_speech", default="false")
     enable_navigation = LaunchConfiguration("enable_navigation", default="false")
@@ -37,8 +38,12 @@ def generate_launch_description() -> LaunchDescription:
         description="启动仪表检测节点"
     )
     declare_enable_yolo = DeclareLaunchArgument(
-        "enable_yolo", default_value="true",
-        description="启动 YOLO 检测节点"
+        "enable_yolo", default_value="false",
+        description="启动旧 Host YOLO 调试节点（不能与 UDP bridge 同时使用）"
+    )
+    declare_enable_yolo_udp_bridge = DeclareLaunchArgument(
+        "enable_yolo_udp_bridge", default_value="false",
+        description="Start Host UDP bridge for Docker D455 YOLO 3-D detections",
     )
     declare_enable_task_manager = DeclareLaunchArgument(
         "enable_task_manager", default_value="false",
@@ -133,15 +138,6 @@ def generate_launch_description() -> LaunchDescription:
         condition=IfCondition(enable_navigation),
     )
 
-    base_to_camera_tf = Node(
-        package="tf2_ros",
-        executable="static_transform_publisher",
-        name="base_to_camera_tf",
-        arguments=["0.080", "0.000", "0.493", "0", "-0.523599", "0", "base_link", "camera_link"],
-        output="screen",
-        condition=IfCondition(enable_navigation),
-    )
-
     depth_pub_node = Node(
         package="quadruped_robot_competition",
         executable="depth_publisher",
@@ -167,7 +163,22 @@ def generate_launch_description() -> LaunchDescription:
         PythonLaunchDescriptionSource(
             str(PROJECT_ROOT / "launch" / "navigation.launch.py")
         ),
+        launch_arguments={"publish_static_transforms": "false"}.items(),
         condition=IfCondition(enable_navigation),
+    )
+
+    static_transform_needed = PythonExpression([
+        "'", enable_navigation, "' in ['true', 'True', '1'] or '",
+        enable_yolo_udp_bridge, "' in ['true', 'True', '1']",
+    ])
+    static_transforms = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(str(PROJECT_ROOT / "launch" / "static_transforms.launch.py")),
+        condition=IfCondition(static_transform_needed),
+    )
+    yolo_udp_bridge = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(str(PROJECT_ROOT / "launch" / "yolo_udp_bridge.launch.py")),
+        launch_arguments={"publish_static_transforms": "false"}.items(),
+        condition=IfCondition(enable_yolo_udp_bridge),
     )
 
     # ── 启动说明 ────────────────────────────────────
@@ -179,6 +190,7 @@ def generate_launch_description() -> LaunchDescription:
             "╠════════════════════════════════════════╣\n",
             "║ gauge_status     : ", enable_gauge, "  ║\n",
             "║ yolo_detect      : ", enable_yolo, "  ║\n",
+            "║ yolo_udp_bridge  : ", enable_yolo_udp_bridge, "  ║\n",
             "║ task_manager     : ", enable_task_manager, "  ║\n",
             "║ speech           : ", enable_speech, "  ║\n",
             "║ navigation (Nav2): ", enable_navigation, "  ║\n",
@@ -190,6 +202,7 @@ def generate_launch_description() -> LaunchDescription:
     return LaunchDescription([
         declare_enable_gauge,
         declare_enable_yolo,
+        declare_enable_yolo_udp_bridge,
         declare_enable_task_manager,
         declare_enable_speech,
         declare_enable_navigation,
@@ -202,8 +215,9 @@ def generate_launch_description() -> LaunchDescription:
         task_manager_node,
         speech_node,
         initial_pose_node,
-        base_to_camera_tf,
         depth_pub_node,
         cmd_vel_bridge_node,
         navigation_launch,
+        static_transforms,
+        yolo_udp_bridge,
     ])

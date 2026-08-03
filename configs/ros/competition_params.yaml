@@ -48,6 +48,18 @@ yolo_detect_publisher_node:
     image_topic: "/yolo/image"
     count_topic: "/yolo/instance_count"
 
+yolo_udp_bridge_node:
+  ros__parameters:
+    udp_bind_host: "127.0.0.1"
+    udp_port: 19002
+    source_frame: "camera_link"
+    target_frame: "base_link"
+    poll_period_s: 0.05
+    max_packets_per_poll: 4
+    max_packet_age_s: 0.5
+    min_depth_valid_ratio: 0.60
+    tf_timeout_s: 0.05
+
 task_manager_node:
   ros__parameters:
     phases: ["start", "pass_obstacle", "inspect_gauges", "report_status", "find_red_bar", "grasp_bar", "place_to_abnormal_zone", "finish"]

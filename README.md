@@ -30,11 +30,11 @@
 
 ```text
 Intel RealSense D455
-  ├─ RGB 图像
-  │   ├─ OpenCV 仪表盘识别 -> /gauge/status
-  │   └─ YOLOv8 实例分割  -> /yolo/detections
-  ├─ Depth 图像
-  │   └─ depth_publisher -> PointCloud2 -> Nav2 costmap
+  ├─ Docker 内唯一 RealSense ROS 驱动
+  │   ├─ RGB 30 Hz + Raw Depth 60 Hz + CameraInfo + TF
+  │   │   └─ Docker YOLOv8 实例分割 + 稀疏三维投影
+  │   │       -> camera_link XYZ -> UDP 127.0.0.1:19002
+  │   └─ Raw Depth -> 后续 PointCloud2 / Nav2 局部避障
   └─ IR 双目 + IMU
       └─ Isaac ROS Visual SLAM / cuVSLAM -> odom / TF
 
@@ -61,7 +61,7 @@ Task Manager
 | 相机与传感器 | Intel RealSense D455，RGB / Depth / IR stereo / IMU | 已有 Python 封装和输入检查脚本 |
 | SLAM / 定位 | NVIDIA Isaac ROS Visual SLAM / cuVSLAM，D455 IR 双目 + IMU | 已跑通容器启动、topic/RViz、初步 loop metrics；仍在调精度和 TF 语义 |
 | 导航 | ROS2 Nav2，PGM 静态地图 + D455 点云局部避障 | 参数、地图、launch 和节点已建；需继续实车联调 |
-| 目标识别 | YOLOv8 实例分割 | 已有训练/推理工作区和 ROS2 publisher；类别映射仍需统一 |
+| 目标识别 | Docker 内 YOLOv8 实例分割 + Raw Depth 稀疏投影 | 已完成 `camera_link` UDP 三维输出；Host bridge、`base_link` 和任务接口待接入 |
 | 仪表识别 | OpenCV 传统视觉，Hough 圆/线 + HSV 颜色判定 | 已实现并接入 ROS2 `/gauge/status` |
 | 任务管理 | ROS2 状态机 | 已实现主流程和导航客户端调用 |
 | 语音播报 | `/speech/text` 接口，TTS 节点占位 | 接口已有，实际 TTS 待实现 |
@@ -91,7 +91,7 @@ D455 由 `src/cv/realsense_camera/` 封装，提供三类常用预设：
 | 预设 | 输入流 | 用途 |
 |---|---|---|
 | `for_gauge()` | RGB | OpenCV 仪表盘识别 |
-| `for_yolo()` | RGB + aligned depth | YOLO 检测和目标距离估计 |
+| `for_yolo()` | RGB + aligned depth | 旧 Host 调试封装；当前 Docker YOLO 使用 ROS Raw Depth 稀疏投影 |
 | `for_cuvslam()` | IR1 + IR2 + IMU，关闭 projector | cuVSLAM 视觉惯性定位 |
 
 cuVSLAM 使用红外双目时需要关闭 D455 红外投影器，避免散斑干扰立体视觉跟踪。
@@ -182,27 +182,18 @@ Nav2 配置要点：
 
 ### YOLO 实例分割
 
-YOLO 用于国赛中的语义目标识别：
+当前 Docker YOLO 三维节点订阅 RealSense 的 RGB、Raw Depth、两路 CameraInfo 和 TF，以 5 FPS 的最新帧策略输出 `camera_link` 下的 `red / green / obstacle` 检测结果到 UDP `127.0.0.1:19002`。它不打开 D455，不使用驱动内 aligned depth，也不发布 Host ROS topic。
 
-- 锥桶 / obstacle：避障任务中的障碍物识别。
-- 红/绿长条：抓取任务中区分异常/正常长条。
-- A/B/C/D 字母和仪表 ROI：巡检任务中辅助把仪表状态与区域字母对应起来。
-- 物块识别：后续抓取流程中的目标候选输入。
+仓库内当前入口：
 
-仓库内相关文件：
+- `docker/d455_perception/d455_yolo_3d_node.py`
+- `docker/d455_perception/d455_yolo_3d_pipeline.py`
+- `docker/d455_perception/d455_yolo_3d_core.py`
+- `scripts/cv/yolo_live_test_xyz.py`
+- `configs/yolo/detection_v1.schema.json`
+- `docs/Docker_Yolo_Combine_0720.md`
 
-- `src/cv/yolo_detector/`
-- `src/nodes/perception/yolo_detect_publisher.py`
-- `configs/yolo/classes.yaml`
-- `scripts/cv/verify_yolo.py`
-
-当前注意点：
-
-- `src/cv/yolo_detector/projects/combined/README.md` 描述的 combined 模型类别为 `red / green / obstacle`。
-- `configs/yolo/classes.yaml` 当前写的是 `gauge / A / B / C / D / red_bar / green_bar`。
-- `src/nodes/perception/yolo_detect_publisher.py` 中的注释也需要和实际模型类别进一步统一。
-
-因此 README 中把 YOLO 定位为“实例分割工作区和 ROS2 publisher 已存在，但比赛最终类别映射仍需统一验证”。
+`src/nodes/perception/yolo_detect_publisher.py` 和旧的相机封装只保留作 Host/离线调试，不能与 Docker RealSense 同时直接打开 D455。Host detection bridge、`/yolo/detections`、`/block/target_pose`、`/cone/detections` 以及 `base_link` 坐标转换尚未实现。
 
 ### OpenCV 仪表盘识别
 
@@ -392,7 +383,7 @@ ros2 run quadruped_robot_competition gauge_status_publisher
 ros2 topic echo /gauge/status
 ```
 
-YOLO 检测：
+旧 Host YOLO 调试（不用于当前 D455 Docker 正式链路）：
 
 ```bash
 python3 scripts/cv/verify_yolo.py
@@ -455,7 +446,9 @@ ros2 topic echo /task/status
 | cuVSLAM -> Nav2 桥接 | `src/nodes/navigation/cuvslam_bridge.py` |
 | D455 深度发布 | `src/nodes/navigation/depth_publisher.py` |
 | 导航客户端 | `src/nodes/navigation/navigation_client.py` |
-| YOLO ROS2 节点 | `src/nodes/perception/yolo_detect_publisher.py` |
+| Docker YOLO ROS2 节点 | `docker/d455_perception/d455_yolo_3d_node.py` |
+| YOLO 三维验证脚本 | `scripts/cv/yolo_live_test_xyz.py` |
+| Docker YOLO 当前说明 | `docs/Docker_Yolo_Combine_0720.md` |
 | 仪表 ROS2 节点 | `src/nodes/perception/gauge_status.py` |
 | OpenCV 仪表算法 | `src/cv/gauge_detector/gauge_detector.py` |
 | D455 相机封装 | `src/cv/realsense_camera/camera.py` |

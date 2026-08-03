@@ -30,11 +30,23 @@ ros2 launch launch/competition.launch.py
 
 ### 加上 YOLO 检测
 
+> `enable_yolo:=true` 启动的是旧 Host 调试 YOLO，不是当前 Docker D455 YOLO 三维节点。正式 D455 链路由 Docker 内 `/d455_object_yolo_3d` 输出 UDP `19002`；Host detection bridge 尚未接入，因此不要把该开关作为当前整机部署入口。
+
 ```bash
 # [Linux]
 cd ~/quadruped-robot-competition
 source /opt/ros/foxy/setup.bash
 ros2 launch launch/competition.launch.py enable_yolo:=true
+```
+
+### Docker D455 YOLO 三维 UDP bridge
+
+该入口接收 Docker 的 UDP `19002` 检测，查询统一静态外参 TF，并只发布
+`base_link` 数据。默认不会启动旧 Host YOLO，二者不能同时启用。
+
+```bash
+ros2 launch launch/yolo_udp_bridge.launch.py
+# 或：ros2 launch launch/competition.launch.py enable_yolo_udp_bridge:=true
 ```
 
 ### 加上任务管理器

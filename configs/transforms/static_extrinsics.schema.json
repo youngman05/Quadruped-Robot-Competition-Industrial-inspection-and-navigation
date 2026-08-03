@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quadruped.local/schemas/static-extrinsics-v1.json",
+  "title": "Quadruped static extrinsics",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "convention", "frames", "static_transforms"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "convention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["length_unit", "quaternion_order", "axes"],
+      "properties": {
+        "length_unit": {"const": "m"},
+        "quaternion_order": {"const": "xyzw"},
+        "axes": {"type": "string"}
+      }
+    },
+    "frames": {"type": "object"},
+    "static_transforms": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/static_transform"}
+    }
+  },
+  "$defs": {
+    "vector3": {
+      "type": "array",
+      "items": {"type": "number"},
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "quaternion": {
+      "type": "array",
+      "items": {"type": "number"},
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "static_transform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "parent_frame",
+        "child_frame",
+        "translation_m",
+        "rotation_xyzw",
+        "publish",
+        "status",
+        "source",
+        "measurement"
+      ],
+      "properties": {
+        "parent_frame": {"type": "string", "minLength": 1},
+        "child_frame": {"type": "string", "minLength": 1},
+        "translation_m": {"$ref": "#/$defs/vector3"},
+        "rotation_xyzw": {"$ref": "#/$defs/quaternion"},
+        "publish": {"type": "boolean"},
+        "status": {"enum": ["provisional", "calibrated"]},
+        "source": {"type": "string", "minLength": 1},
+        "measurement": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "calibrated_at",
+            "translational_uncertainty_m",
+            "rotational_uncertainty_deg"
+          ],
+          "properties": {
+            "calibrated_at": {"type": ["string", "null"]},
+            "translational_uncertainty_m": {"$ref": "#/$defs/vector3"},
+            "rotational_uncertainty_deg": {"$ref": "#/$defs/vector3"}
+          }
+        }
+      }
+    }
+  }
+}

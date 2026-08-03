@@ -1,0 +1,32 @@
+schema_version: 1
+
+# Every transform maps a point from child_frame into parent_frame:
+# p_parent = R_parent_child * p_child + t_parent_child
+convention:
+  length_unit: m
+  quaternion_order: xyzw
+  axes: "ROS REP-103: X forward, Y left, Z up"
+
+frames:
+  base_link:
+    owner: robot_description
+    description: "Lite3 torso/body reference frame."
+  camera_link:
+    owner: project_static_extrinsics
+    description: "D455 mechanical frame; RealSense owns the child optical frames."
+  arm_base_link:
+    owner: project_static_extrinsics
+    description: "Arm mounting frame. Its static extrinsic is not measured yet."
+
+static_transforms:
+  - parent_frame: base_link
+    child_frame: camera_link
+    translation_m: [0.080, 0.000, 0.493]
+    rotation_xyzw: [0.000000, 0.258819, 0.000000, 0.965926]
+    publish: true
+    status: provisional
+    source: "Nominal D455 mount: 80 mm forward, 493 mm above Lite3 torso, 30 deg downward pitch."
+    measurement:
+      calibrated_at: null
+      translational_uncertainty_m: [0.010, 0.010, 0.010]
+      rotational_uncertainty_deg: [1.0, 1.0, 1.0]

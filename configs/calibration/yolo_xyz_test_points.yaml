@@ -1,0 +1,20 @@
+schema_version: 1
+
+# Each target truth is expressed in base_link. The reference point must be the
+# center of the visible planar surface represented by the YOLO mask, not the
+# center of a cone or a thick object's volume.
+convention:
+  truth_frame: base_link
+  length_unit: m
+  axes: "ROS REP-103: X forward, Y left, Z up"
+
+acceptance_criteria:
+  distance_range_m: [0.5, 1.6]
+  mean_error_m_max: 0.05
+  p95_error_m_max: 0.10
+  axis_stdev_m_max: 0.03
+  valid_samples_per_point: 30
+  min_depth_valid_ratio: 0.60
+  max_rgb_depth_delta_ms: 30.0
+
+test_points: []

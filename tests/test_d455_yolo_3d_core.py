@@ -94,5 +94,72 @@ class DepthGeometryTest(unittest.TestCase):
             )
 
 
+    def test_raw_depth_identity_projection(self) -> None:
+        depth = np.full((8, 10), 1000, dtype=np.uint16)
+        mask = np.zeros((8, 10), dtype=bool)
+        mask[2:6, 3:7] = True
+        intrinsics = CORE.CameraIntrinsics(100.0, 100.0, 4.5, 3.5)
+
+        estimate = CORE.estimate_mask_3d_from_raw_depth(
+            depth,
+            mask,
+            intrinsics,
+            intrinsics,
+            CORE.RigidTransform.identity(),
+            erosion_iterations=0,
+            min_valid_pixels=4,
+        )
+
+        self.assertTrue(estimate.valid)
+        self.assertEqual(estimate.center_px, (4, 3))
+        self.assertAlmostEqual(estimate.depth_m, 1.0)
+        self.assertAlmostEqual(estimate.position_m[0], 0.0)
+        self.assertAlmostEqual(estimate.position_m[1], 0.0)
+        self.assertEqual(estimate.valid_pixels, 16)
+
+    def test_raw_depth_projection_applies_extrinsics(self) -> None:
+        depth = np.full((5, 5), 1000, dtype=np.uint16)
+        mask = np.zeros((5, 5), dtype=bool)
+        # +0.1 m in color X shifts the principal depth pixel one pixel right.
+        mask[2, 3] = True
+        intrinsics = CORE.CameraIntrinsics(10.0, 10.0, 2.0, 2.0)
+        transform = CORE.RigidTransform(np.eye(3), np.array([0.1, 0.0, 0.0]))
+
+        estimate = CORE.estimate_mask_3d_from_raw_depth(
+            depth,
+            mask,
+            intrinsics,
+            intrinsics,
+            transform,
+            erosion_iterations=0,
+            min_valid_pixels=1,
+        )
+
+        self.assertTrue(estimate.valid)
+        self.assertEqual(estimate.center_px, (3, 2))
+        self.assertAlmostEqual(estimate.position_m[0], 0.1)
+        self.assertAlmostEqual(estimate.position_m[2], 1.0)
+
+    def test_raw_depth_projection_marks_empty_overlap_invalid(self) -> None:
+        depth = np.full((5, 5), 1000, dtype=np.uint16)
+        mask = np.zeros((5, 5), dtype=bool)
+        mask[0, 0] = True
+        intrinsics = CORE.CameraIntrinsics(10.0, 10.0, 2.0, 2.0)
+
+        estimate = CORE.estimate_mask_3d_from_raw_depth(
+            depth,
+            mask,
+            intrinsics,
+            intrinsics,
+            CORE.RigidTransform.identity(),
+            erosion_iterations=0,
+            min_valid_pixels=2,
+        )
+
+        self.assertFalse(estimate.valid)
+        self.assertIsNone(estimate.position_m)
+        self.assertEqual(estimate.valid_pixels, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -12,6 +12,9 @@
 | `yolo/classes.yaml` | YOLO 类别映射 |
 | `camera/d455.yaml` | D455 相机流参数 |
 | `navigation/` | Nav2 导航参数 |
+| `transforms/static_extrinsics.yaml` | 项目拥有的静态外参（`base_link -> camera_link` 等） |
+| `calibration/yolo_xyz_test_points.yaml` | D455 YOLO XYZ 标定测试点与验收阈值模板 |
+| `yolo/host_detection_v1.schema.json` | Host UDP bridge 转换后的 `base_link` 检测 JSON 协议 |
 
 ---
 
@@ -72,3 +75,15 @@ names:
 ## Navigation: navigation/
 
 Nav2 导航参数。详见 [configs/navigation/README.md](navigation/README.md)。
+
+---
+
+## Static transforms: transforms/
+
+`transforms/static_extrinsics.yaml` 是静态外参的唯一真值来源。它不包含
+RealSense 内部 optical TF、机械臂关节 TF 或 `map`/`odom` 动态 TF。启动时由
+`launch/static_transforms.launch.py` 使用标准 `static_transform_publisher` 发布。
+
+详情见 [configs/transforms/README.md](transforms/README.md)。
+后续 agent 的交接说明见
+[docs/static_transform_config_handover.md](../docs/static_transform_config_handover.md)。

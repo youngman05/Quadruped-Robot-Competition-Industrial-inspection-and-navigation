@@ -11,7 +11,9 @@ Navigation stack — 一键启动 Nav2 + 定位桥接 + 初始位姿。
 
 from pathlib import Path
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, LogInfo, ExecuteProcess
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo, ExecuteProcess
+from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -20,6 +22,7 @@ Foxy_PYTHON = "/opt/ros/foxy/lib/python3.8/site-packages"
 SRC = str(PROJECT_ROOT / "src")
 DEFAULT_PARAMS = str(PROJECT_ROOT / "configs" / "navigation" / "nav2_params.yaml")
 DEFAULT_MAP = str(PROJECT_ROOT / "src" / "navi" / "map" / "competition_field_phase1.yaml")
+STATIC_TRANSFORMS_LAUNCH = str(PROJECT_ROOT / "launch" / "static_transforms.launch.py")
 
 
 def py_node(name, script, args=""):
@@ -35,19 +38,22 @@ def py_node(name, script, args=""):
 def generate_launch_description():
     params_file = LaunchConfiguration("params_file", default=DEFAULT_PARAMS)
     map_yaml = LaunchConfiguration("map_yaml", default=DEFAULT_MAP)
+    publish_static_transforms = LaunchConfiguration("publish_static_transforms", default="true")
 
     declare_params = DeclareLaunchArgument("params_file", default_value=DEFAULT_PARAMS)
     declare_map = DeclareLaunchArgument("map_yaml", default_value=DEFAULT_MAP)
+    declare_static_transforms = DeclareLaunchArgument(
+        "publish_static_transforms", default_value="true",
+        description="Publish project-owned static extrinsics from config",
+    )
 
     # ═══ 定位层 ═══
     initial_pose = py_node("initial_pose_publisher",
                            str(PROJECT_ROOT / "src/nodes/navigation/initial_pose_publisher.py"))
 
-    base_to_camera_tf = Node(
-        package="tf2_ros", executable="static_transform_publisher",
-        name="base_to_camera_tf",
-        arguments=["0", "0", "0.3", "0", "0", "0", "base_link", "camera_link"],
-        output="screen",
+    static_transforms = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(STATIC_TRANSFORMS_LAUNCH),
+        condition=IfCondition(publish_static_transforms),
     )
 
     # ═══ 深度发布 (读 Docker relay) ═══
@@ -72,8 +78,8 @@ def generate_launch_description():
                                 f"map: {map_yaml}", f"params: {params_file}"])
 
     return LaunchDescription([
-        declare_params, declare_map,
-        initial_pose, base_to_camera_tf,
+        declare_params, declare_map, declare_static_transforms,
+        initial_pose, static_transforms,
         depth_pub,
         map_server, planner, controller,
         bt_nav, waypoint, lifecycle,
