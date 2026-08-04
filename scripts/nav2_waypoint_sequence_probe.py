@@ -28,12 +28,7 @@ from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
 from tf2_ros import Buffer, TransformException, TransformListener
 
-from nodes.navigation.se2_pose_control import (
-    Se2ControllerConfig,
-    Se2PoseController,
-    YawOnlyController,
-    YawOnlyControllerConfig,
-)
+from nodes.navigation.se2_pose_control import Se2ControllerConfig, Se2PoseController
 
 
 STATUS_NAMES = {
@@ -56,19 +51,6 @@ _INSPECTION_PREFIX_LEGACY = [
     ("obstacle_cross_target", 1.05, 0.75, math.pi),
     ("pos1_middle", 1.50, 3.25, math.pi / 2.0),
     ("pos1_middle_turned", 1.50, 3.25, -math.pi / 2.0),
-]
-
-_INSPECTION_PREFIX_YAW_ONLY = [
-    ("obstacle_cross_target", 1.05, 0.75, math.pi),
-    ("pos1_middle", 1.50, 3.25, math.pi / 2.0),
-    {
-        "kind": "yaw_only",
-        "label": "pos1_middle_turned",
-        "target_yaw": -math.pi / 2.0,
-        "direction": "clockwise",
-        "anchor_bounds": [1.25, 1.75, 3.05, 3.36],
-        "control_bounds": [1.10, 1.90, 3.00, 3.50],
-    },
 ]
 
 _INSPECTION_PREFIX_STAGED = [
@@ -133,12 +115,9 @@ _FULL_TAIL = [
 
 
 ROUTE_PRESETS = {
-    # Production routes hand the same-spot U-turn to precision yaw control.
-    "nav-only-full": _INSPECTION_PREFIX_YAW_ONLY + _INSPECTION_TAIL + _FULL_TAIL,
-    "nav-only-inspection": _INSPECTION_PREFIX_YAW_ONLY + _INSPECTION_TAIL,
-    # Preserve the old same-XY DWB turn for explicit regression comparisons.
-    "nav-only-full-dwb-baseline": _INSPECTION_PREFIX_LEGACY + _INSPECTION_TAIL + _FULL_TAIL,
-    "nav-only-inspection-dwb-baseline": _INSPECTION_PREFIX_LEGACY + _INSPECTION_TAIL,
+    # Keep the proven same-spot route unchanged as the regression baseline.
+    "nav-only-full": _INSPECTION_PREFIX_LEGACY + _INSPECTION_TAIL + _FULL_TAIL,
+    "nav-only-inspection": _INSPECTION_PREFIX_LEGACY + _INSPECTION_TAIL,
     # Opt-in staged-turn routes avoid the same-XY 180 deg RotateToGoal.
     "nav-only-full-staged": _INSPECTION_PREFIX_STAGED + _INSPECTION_TAIL + _FULL_TAIL,
     "nav-only-inspection-staged": _INSPECTION_PREFIX_STAGED + _INSPECTION_TAIL,
@@ -186,33 +165,6 @@ def make_output_dir(value):
         path = Path.home() / "competition_logs" / "nav2_waypoint_sequence" / stamp
     path.mkdir(parents=True, exist_ok=True)
     return path
-
-
-def describe_route_preset(name):
-    steps = []
-    for index, step in enumerate(ROUTE_PRESETS[name], start=1):
-        if isinstance(step, dict):
-            steps.append(
-                {
-                    "index": index,
-                    "kind": step.get("kind", "nav2"),
-                    "label": step.get("label"),
-                    "target_yaw": step.get("target_yaw"),
-                }
-            )
-            continue
-        label, x, y, yaw = step
-        steps.append(
-            {
-                "index": index,
-                "kind": "nav2",
-                "label": label,
-                "x": x,
-                "y": y,
-                "yaw": yaw,
-            }
-        )
-    return {"route_preset": name, "steps": steps}
 
 
 class Nav2WaypointSequenceProbe(Node):
@@ -514,8 +466,6 @@ class Nav2WaypointSequenceProbe(Node):
         }
 
     def run_segment(self, index, goal):
-        if goal.get("kind", "nav2") == "yaw_only":
-            return self.run_yaw_only_segment(index, goal)
         if goal.get("kind", "nav2") in ("se2_hold_turn", "se2_pose"):
             return self.run_se2_hold_turn_segment(index, goal)
         return self.run_nav2_segment(index, goal)
@@ -620,237 +570,6 @@ class Nav2WaypointSequenceProbe(Node):
             next_tick = max(next_tick + period, time.monotonic())
             self._spin_until_monotonic(min(next_tick, deadline))
         return None, "stable map TF unavailable: %s" % last_error
-
-    def run_yaw_only_segment(self, index, goal):
-        self._begin_segment_logging()
-        start_pose = self.wait_for_map_pose()
-        error = None
-        succeeded = False
-        timed_out = False
-        anchor_pose = None
-        target = dict(goal)
-        settle_started = None
-        last_pose = None
-        last_stamp = None
-        last_stamp_change_time = None
-        stale_started = None
-
-        try:
-            if not start_pose.get("ok"):
-                error = "cannot capture start map pose: %s" % start_pose.get("error")
-            else:
-                self._hold_precision_stop(self.args.se2_takeover_stop)
-                if self.precision_cmd_pub.get_subscription_count() < 1:
-                    error = "no subscriber on %s; cmd_vel arbiter is not active" % (
-                        self.args.se2_cmd_topic,
-                    )
-                else:
-                    anchor_pose, error = self._wait_for_stable_se2_anchor()
-
-            if error is None:
-                bounds = goal.get("anchor_bounds")
-                if bounds is not None:
-                    min_x, max_x, min_y, max_y = bounds
-                    if not (
-                        min_x <= anchor_pose["x"] <= max_x
-                        and min_y <= anchor_pose["y"] <= max_y
-                    ):
-                        error = (
-                            "yaw-only anchor outside safe bounds: "
-                            "(%.3f, %.3f) not in [%.2f, %.2f]x[%.2f, %.2f]"
-                            % (
-                                anchor_pose["x"],
-                                anchor_pose["y"],
-                                min_x,
-                                max_x,
-                                min_y,
-                                max_y,
-                            )
-                        )
-
-            if error is None:
-                target.update(
-                    {
-                        "x": anchor_pose["x"],
-                        "y": anchor_pose["y"],
-                        "yaw": float(goal["target_yaw"]),
-                        "anchor_pose": anchor_pose,
-                    }
-                )
-                controller = YawOnlyController(
-                    YawOnlyControllerConfig(
-                        ktheta=self.args.yaw_only_ktheta,
-                        coarse_max_wz=self.args.yaw_only_max_wz,
-                        fine_max_wz=self.args.yaw_only_fine_max_wz,
-                        fine_yaw_error=self.args.yaw_only_fine_yaw_error,
-                        yaw_tolerance=self.args.yaw_only_tolerance,
-                        max_angular_accel=self.args.yaw_only_max_angular_accel,
-                    )
-                )
-                controller.start(
-                    start_yaw=anchor_pose["yaw"],
-                    target_yaw=goal["target_yaw"],
-                    direction=goal.get("direction", "shortest"),
-                )
-
-                control_started = time.monotonic()
-                last_control_time = control_started
-                last_stamp_change_time = control_started
-                last_progress_time = control_started
-                best_yaw_error = None
-                linear_x_baseline = self.segment_cmd["linear_x_nonzero_count"]
-                linear_y_baseline = self.segment_cmd["linear_y_nonzero_count"]
-                period = 1.0 / self.args.se2_rate
-                next_tick = control_started
-                while rclpy.ok():
-                    cycle_started = time.monotonic()
-                    if cycle_started - control_started >= self.args.yaw_only_timeout:
-                        timed_out = True
-                        error = "yaw-only control timeout"
-                        break
-                    if (
-                        self.segment_cmd["linear_x_nonzero_count"]
-                        > linear_x_baseline
-                        or self.segment_cmd["linear_y_nonzero_count"]
-                        > linear_y_baseline
-                    ):
-                        error = "nonzero linear velocity observed during yaw-only lease"
-                        break
-
-                    pose = self.lookup_map_pose(allow_fallback=False)
-                    pose_error = self._validate_se2_pose(
-                        pose,
-                        previous_pose=last_pose,
-                        anchor_pose=anchor_pose,
-                    )
-                    if pose_error is not None:
-                        if (
-                            not pose.get("ok")
-                            or "stale" in pose_error
-                            or "timestamp" in pose_error
-                        ):
-                            if stale_started is None:
-                                stale_started = cycle_started
-                            controller.hold()
-                            last_control_time = cycle_started
-                            settle_started = None
-                            self._publish_precision_command(0.0, 0.0, 0.0)
-                            if (
-                                cycle_started - stale_started
-                                > self.args.yaw_only_tf_hold_timeout
-                            ):
-                                error = "yaw-only TF unavailable: %s" % pose_error
-                                break
-                            next_tick = max(next_tick + period, time.monotonic())
-                            self._spin_until_monotonic(next_tick)
-                            continue
-                        error = pose_error
-                        break
-                    stale_started = None
-
-                    control_bounds = goal.get("control_bounds")
-                    if control_bounds is not None:
-                        min_x, max_x, min_y, max_y = control_bounds
-                        if not (
-                            min_x <= pose["x"] <= max_x
-                            and min_y <= pose["y"] <= max_y
-                        ):
-                            error = "yaw-only pose left the prevalidated clear corridor"
-                            break
-
-                    stamp = (pose["tf_stamp_sec"], pose["tf_stamp_nanosec"])
-                    if stamp != last_stamp:
-                        last_stamp = stamp
-                        last_stamp_change_time = cycle_started
-                    elif (
-                        cycle_started - last_stamp_change_time
-                        > self.args.yaw_only_tf_hold_timeout
-                    ):
-                        error = "map TF timestamp stopped advancing"
-                        break
-
-                    dt = max(1e-3, cycle_started - last_control_time)
-                    output = controller.compute(pose["yaw"], dt)
-                    self._publish_precision_command(0.0, 0.0, output.wz)
-                    trace_sample = dict(pose)
-                    trace_sample.update(
-                        {
-                            "segment_index": index,
-                            "segment_kind": "yaw_only",
-                            "control_mode": output.mode,
-                            "target_x": anchor_pose["x"],
-                            "target_y": anchor_pose["y"],
-                            "target_yaw": goal["target_yaw"],
-                            "error_x_body": 0.0,
-                            "error_y_body": 0.0,
-                            "error_yaw": output.error_yaw,
-                            "position_error": math.hypot(
-                                pose["x"] - anchor_pose["x"],
-                                pose["y"] - anchor_pose["y"],
-                            ),
-                            "command_vx": 0.0,
-                            "command_vy": 0.0,
-                            "command_wz": output.wz,
-                        }
-                    )
-                    self.segment_trace.append(trace_sample)
-
-                    yaw_error = abs(output.error_yaw)
-                    if (
-                        best_yaw_error is None
-                        or yaw_error
-                        <= best_yaw_error - self.args.yaw_only_progress_delta
-                    ):
-                        best_yaw_error = yaw_error
-                        last_progress_time = cycle_started
-                    elif (
-                        not output.reached
-                        and cycle_started - last_progress_time
-                        > self.args.yaw_only_progress_timeout
-                    ):
-                        error = "yaw-only controller made no measurable progress"
-                        break
-
-                    if output.reached:
-                        if settle_started is None:
-                            settle_started = cycle_started
-                        elif cycle_started - settle_started >= self.args.se2_settle_time:
-                            succeeded = True
-                            break
-                    else:
-                        settle_started = None
-
-                    last_pose = pose
-                    last_control_time = cycle_started
-                    next_tick = max(next_tick + period, time.monotonic())
-                    self._spin_until_monotonic(next_tick)
-
-                if not rclpy.ok() and not succeeded and error is None:
-                    error = "ROS shutdown during yaw-only control"
-        finally:
-            self._hold_precision_stop(self.args.se2_release_stop)
-
-        end_pose = self.lookup_map_pose()
-        segment = {
-            "index": index,
-            "kind": "yaw_only",
-            "accepted": anchor_pose is not None,
-            "succeeded": succeeded,
-            "timed_out": timed_out,
-            "canceled": False,
-            "action_status": None,
-            "action_status_name": "YAW_ONLY_SUCCEEDED" if succeeded else "YAW_ONLY_ABORTED",
-            "error": error,
-            "goal": target,
-            "start_pose": start_pose,
-            "end_pose": end_pose,
-            "delta": self.pose_delta(start_pose, end_pose),
-            "cmd_vel": self.segment_cmd,
-            "cmd_vel_samples": self.segment_cmd_samples,
-            "trace": self.segment_trace,
-        }
-        self._clear_segment_logging()
-        return segment
 
     def run_se2_hold_turn_segment(self, index, goal):
         self._begin_segment_logging()
@@ -1250,11 +969,6 @@ def parse_args():
         choices=sorted(ROUTE_PRESETS),
         help="Run a built-in absolute waypoint sequence.",
     )
-    parser.add_argument(
-        "--describe-route",
-        action="store_true",
-        help="Print the selected route kinds and exit without initializing ROS.",
-    )
     parser.add_argument("--target-yaw", type=float, default=None)
     parser.add_argument("--frame-id", default="map")
     parser.add_argument("--base-frame", default="base_link")
@@ -1317,22 +1031,6 @@ def parse_args():
         default=1.0,
         help="Set -1 only if the Lite3 lateral-axis smoke test proves ROS +Y is reversed.",
     )
-    yaw_only = parser.add_argument_group("Yaw-only precision-control options")
-    yaw_only.add_argument("--yaw-only-timeout", type=float, default=40.0)
-    yaw_only.add_argument("--yaw-only-ktheta", type=float, default=0.8)
-    yaw_only.add_argument("--yaw-only-max-wz", type=float, default=0.12)
-    yaw_only.add_argument("--yaw-only-fine-max-wz", type=float, default=0.06)
-    yaw_only.add_argument("--yaw-only-fine-yaw-error", type=float, default=0.35)
-    yaw_only.add_argument("--yaw-only-tolerance", type=float, default=0.12)
-    yaw_only.add_argument("--yaw-only-max-angular-accel", type=float, default=0.30)
-    yaw_only.add_argument(
-        "--yaw-only-tf-hold-timeout",
-        type=float,
-        default=0.50,
-        help="Publish zero while TF is unhealthy; abort if it stays unhealthy this long.",
-    )
-    yaw_only.add_argument("--yaw-only-progress-timeout", type=float, default=5.0)
-    yaw_only.add_argument("--yaw-only-progress-delta", type=float, default=0.02)
     parser.add_argument(
         "--behavior-tree",
         default="",
@@ -1358,8 +1056,6 @@ def validate_args(args):
             "Provide exactly one of --goal, --se2-goal, --forward-distances, "
             "or --route-preset"
         )
-    if args.describe_route and not args.route_preset:
-        raise SystemExit("--describe-route requires --route-preset")
     if args.goal_timeout <= 0.0:
         raise SystemExit("--goal-timeout must be > 0")
     if args.trace_rate <= 0.0:
@@ -1371,8 +1067,6 @@ def validate_args(args):
     if args.tf_timeout <= 0.0:
         raise SystemExit("--tf-timeout must be > 0")
     if args.route_preset in (
-        "nav-only-full",
-        "nav-only-inspection",
         "nav-only-full-se2",
         "nav-only-inspection-se2",
         "nav-only-full-se2-resume",
@@ -1395,11 +1089,6 @@ def validate_args(args):
         "--se2-max-anchor-error": args.se2_max_anchor_error,
         "--se2-progress-timeout": args.se2_progress_timeout,
         "--se2-progress-delta": args.se2_progress_delta,
-        "--yaw-only-timeout": args.yaw_only_timeout,
-        "--yaw-only-tolerance": args.yaw_only_tolerance,
-        "--yaw-only-tf-hold-timeout": args.yaw_only_tf_hold_timeout,
-        "--yaw-only-progress-timeout": args.yaw_only_progress_timeout,
-        "--yaw-only-progress-delta": args.yaw_only_progress_delta,
     }
     for name, value in positive_se2_values.items():
         if not math.isfinite(value) or value <= 0.0:
@@ -1422,14 +1111,9 @@ def validate_args(args):
         args.se2_fine_yaw_error,
         args.se2_max_tf_jump_xy,
         args.se2_max_tf_jump_yaw,
-        args.yaw_only_ktheta,
-        args.yaw_only_max_wz,
-        args.yaw_only_fine_max_wz,
-        args.yaw_only_fine_yaw_error,
-        args.yaw_only_max_angular_accel,
     )
     if not all(math.isfinite(value) and value > 0.0 for value in controller_values):
-        raise SystemExit("precision gains, limits, and acceleration limits must be > 0")
+        raise SystemExit("SE(2) gains, limits, and acceleration limits must be > 0")
     if not all(
         math.isfinite(value) and value >= 0.0
         for value in (args.se2_takeover_stop, args.se2_release_stop)
@@ -1443,9 +1127,6 @@ def validate_args(args):
 def main():
     args = parse_args()
     validate_args(args)
-    if args.describe_route:
-        print(json.dumps(describe_route_preset(args.route_preset), indent=2))
-        return
     output_dir = make_output_dir(args.output_dir)
 
     rclpy.init()

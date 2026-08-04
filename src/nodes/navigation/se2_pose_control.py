@@ -64,24 +64,6 @@ class Se2ControlOutput:
     reached: bool
 
 
-@dataclass(frozen=True)
-class YawOnlyControllerConfig:
-    ktheta: float = 0.8
-    coarse_max_wz: float = 0.12
-    fine_max_wz: float = 0.06
-    fine_yaw_error: float = 0.35
-    yaw_tolerance: float = 0.12
-    max_angular_accel: float = 0.30
-
-
-@dataclass(frozen=True)
-class YawOnlyControlOutput:
-    wz: float
-    error_yaw: float
-    mode: str
-    reached: bool
-
-
 class DirectedYawTracker:
     """Unwrap yaw while preserving an explicitly requested turn direction."""
 
@@ -107,63 +89,6 @@ class DirectedYawTracker:
     @property
     def error(self) -> float:
         return self.target_unwrapped - self.current_unwrapped
-
-
-class YawOnlyController:
-    """Feedback controller that can only command angular velocity."""
-
-    def __init__(self, config: Optional[YawOnlyControllerConfig] = None) -> None:
-        self.config = config or YawOnlyControllerConfig()
-        self._yaw_tracker: Optional[DirectedYawTracker] = None
-        self._previous_wz = 0.0
-
-    def start(
-        self,
-        start_yaw: float,
-        target_yaw: float,
-        direction: str = "shortest",
-    ) -> None:
-        self._yaw_tracker = DirectedYawTracker(start_yaw, target_yaw, direction)
-        self._previous_wz = 0.0
-
-    def hold(self) -> None:
-        """Reset the commanded velocity after an external zero-speed hold."""
-        self._previous_wz = 0.0
-
-    def compute(self, yaw: float, dt: float) -> YawOnlyControlOutput:
-        if self._yaw_tracker is None:
-            raise RuntimeError("controller.start() must be called before compute()")
-        if not all(math.isfinite(value) for value in (yaw, dt)):
-            raise ValueError("yaw and dt must be finite")
-
-        self._yaw_tracker.update(yaw)
-        error_yaw = self._yaw_tracker.error
-        if abs(error_yaw) <= self.config.yaw_tolerance:
-            self._previous_wz = 0.0
-            return YawOnlyControlOutput(
-                wz=0.0,
-                error_yaw=error_yaw,
-                mode="settle",
-                reached=True,
-            )
-
-        fine = abs(error_yaw) <= self.config.fine_yaw_error
-        max_wz = self.config.fine_max_wz if fine else self.config.coarse_max_wz
-        safe_dt = min(max(float(dt), 0.0), 0.5)
-        desired_wz = clamp(self.config.ktheta * error_yaw, max_wz)
-        wz = rate_limit(
-            desired_wz,
-            self._previous_wz,
-            self.config.max_angular_accel,
-            safe_dt,
-        )
-        self._previous_wz = wz
-        return YawOnlyControlOutput(
-            wz=wz,
-            error_yaw=error_yaw,
-            mode="fine_yaw" if fine else "coarse_yaw",
-            reached=False,
-        )
 
 
 class Se2PoseController:
