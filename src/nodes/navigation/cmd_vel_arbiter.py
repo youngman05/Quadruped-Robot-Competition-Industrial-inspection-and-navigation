@@ -28,7 +28,7 @@ class CmdVelArbiter(Node):
         self.declare_parameter("nav_timeout_sec", 0.35)
         self.declare_parameter("precision_timeout_sec", 0.25)
         self.declare_parameter("precision_release_stop_sec", 0.50)
-        self.declare_parameter("max_vx", 0.10)
+        self.declare_parameter("max_vx", 0.12)
         self.declare_parameter("max_vy", 0.05)
         self.declare_parameter("max_wz", 0.15)
 

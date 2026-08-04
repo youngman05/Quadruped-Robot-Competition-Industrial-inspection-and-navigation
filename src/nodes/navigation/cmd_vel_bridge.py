@@ -61,10 +61,10 @@ class CmdVelBridge(Node):
         self.declare_parameter("vx_deadband", 0.005)
         self.declare_parameter("vy_deadband", 0.005)
         self.declare_parameter("az_deadband", 0.005)
-        self.declare_parameter("hard_max_vx", 0.10)
+        self.declare_parameter("hard_max_vx", 0.12)
         self.declare_parameter("hard_max_vy", 0.05)
         self.declare_parameter("hard_max_az", 0.15)
-        self.declare_parameter("hard_max_speed_xy", 0.10)
+        self.declare_parameter("hard_max_speed_xy", 0.12)
         self.declare_parameter("diag_log_period_sec", 1.0)
 
         dog_ip = str(self.get_parameter("dog_ip").value)
