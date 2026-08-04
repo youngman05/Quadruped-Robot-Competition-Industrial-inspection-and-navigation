@@ -21,12 +21,12 @@ frames:
 static_transforms:
   - parent_frame: base_link
     child_frame: camera_link
-    translation_m: [0.080, 0.000, 0.493]
-    rotation_xyzw: [0.000000, 0.258819, 0.000000, 0.965926]
+    translation_m: [0.231724440, 0.077561412, 0.503275873]
+    rotation_xyzw: [0.000900958, 0.240529563, -0.013474058, 0.970547870]
     publish: true
-    status: provisional
-    source: "Nominal D455 mount: 80 mm forward, 493 mm above Lite3 torso, 30 deg downward pitch."
+    status: calibrated
+    source: "Five-point stationary green-block fit on Jetson Xavier; raw D455 camera_link UDP observations to surveyed base_link face centers."
     measurement:
-      calibrated_at: null
-      translational_uncertainty_m: [0.010, 0.010, 0.010]
-      rotational_uncertainty_deg: [1.0, 1.0, 1.0]
+      calibrated_at: "2026-08-04"
+      translational_uncertainty_m: [0.020, 0.020, 0.020]
+      rotational_uncertainty_deg: [1.5, 1.5, 1.5]

@@ -40,23 +40,16 @@ class StaticExtrinsicsConfigTest(unittest.TestCase):
         self.assertTrue(transform["publish"])
         self.assertEqual(transform["parent_frame"], "base_link")
         self.assertEqual(transform["child_frame"], "camera_link")
-        self.assertEqual(transform["status"], "provisional")
+        self.assertEqual(transform["status"], "calibrated")
 
-    def test_camera_transform_matches_documented_matrix(self) -> None:
+    def test_calibrated_camera_transform_is_a_proper_rigid_transform(self) -> None:
         transform = self.config["static_transforms"][0]
         rotation = rotation_from_xyzw(transform["rotation_xyzw"])
         translation = np.array(transform["translation_m"])
 
-        expected_rotation = np.array([
-            [0.866025, 0.0, 0.500000],
-            [0.0, 1.0, 0.0],
-            [-0.500000, 0.0, 0.866025],
-        ])
-        np.testing.assert_allclose(rotation, expected_rotation, atol=1e-6)
-        np.testing.assert_allclose(translation, [0.080, 0.000, 0.493], atol=1e-9)
-
-        inverse_translation = -rotation.T @ translation
-        np.testing.assert_allclose(inverse_translation, [0.177218, 0.0, -0.466951], atol=1e-6)
+        np.testing.assert_allclose(rotation @ rotation.T, np.eye(3), atol=1e-6)
+        self.assertAlmostEqual(float(np.linalg.det(rotation)), 1.0, places=6)
+        np.testing.assert_allclose(translation, [0.231724440, 0.077561412, 0.503275873], atol=1e-9)
 
     def test_calibration_template_uses_base_link_truth(self) -> None:
         template = yaml.safe_load(
