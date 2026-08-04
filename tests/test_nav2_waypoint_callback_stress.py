@@ -27,43 +27,6 @@ def load_probe_module():
 
 @unittest.skipIf(rclpy is None, "ROS2 Python packages are unavailable")
 class CallbackStressTests(unittest.TestCase):
-    def test_split_y_validation_route_distributes_the_u_turn(self):
-        module = load_probe_module()
-        steps = module.describe_route_preset("nav-only-split-y-validation")["steps"]
-
-        self.assertEqual([step["kind"] for step in steps], ["nav2"] * 6)
-        self.assertEqual(
-            [step["label"] for step in steps],
-            [
-                "obstacle_cross_target",
-                "pos1_left_clear",
-                "pos1_upper_view",
-                "pos1_split_y_upper_right",
-                "pos1_split_y_lower_right",
-                "pos1_lower_view",
-            ],
-        )
-        self.assertEqual(
-            (steps[2]["x"], steps[2]["y"], steps[2]["yaw"]),
-            (1.50, 3.40, module.math.pi / 2.0),
-        )
-        self.assertEqual(
-            (steps[5]["x"], steps[5]["y"], steps[5]["yaw"]),
-            (1.50, 3.10, -module.math.pi / 2.0),
-        )
-        self.assertEqual(
-            (steps[3]["x"], steps[4]["x"]),
-            (2.60, 2.60),
-        )
-        for start, end in zip(steps[1:], steps[2:]):
-            path_yaw = module.math.atan2(
-                end["y"] - start["y"], end["x"] - start["x"]
-            )
-            start_turn = abs(module.normalize_angle(path_yaw - start["yaw"]))
-            end_turn = abs(module.normalize_angle(end["yaw"] - path_yaw))
-            self.assertLessEqual(start_turn, module.math.pi / 2.0 + 1e-9)
-            self.assertLessEqual(end_turn, module.math.pi / 2.0 + 1e-9)
-
     def test_tf_updates_are_not_starved_by_cmd_and_odom_callbacks(self):
         module = load_probe_module()
         steps = module.describe_route_preset("nav-only-turn-validation")["steps"]

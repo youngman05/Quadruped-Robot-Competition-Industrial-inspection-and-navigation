@@ -92,18 +92,6 @@ _INSPECTION_PREFIX_STAGED = [
     ("pos1_middle_turned", 2.10, 3.25, -math.pi / 2.0),
 ]
 
-# Experimental alternative to the same-XY U-turn.  The two observation poses
-# stay on x=1.50 and are separated along Y; the right-side waypoints distribute
-# the heading reversal over a rectangular path instead of a 180 degree stop.
-_INSPECTION_PREFIX_SPLIT_Y = [
-    ("obstacle_cross_target", 1.05, 0.75, math.pi),
-    ("pos1_left_clear", 0.60, 2.90, math.pi / 2.0),
-    ("pos1_upper_view", 1.50, 3.40, math.pi / 2.0),
-    ("pos1_split_y_upper_right", 2.60, 3.40, 0.0),
-    ("pos1_split_y_lower_right", 2.60, 3.10, -math.pi / 2.0),
-    ("pos1_lower_view", 1.50, 3.10, -math.pi / 2.0),
-]
-
 _INSPECTION_PREFIX_SE2 = [
     ("obstacle_cross_target", 1.05, 0.75, math.pi),
     ("pos1_left_clear", 0.60, 2.90, math.pi / 2.0),
@@ -164,8 +152,6 @@ ROUTE_PRESETS = {
     # Opt-in staged-turn routes avoid the same-XY 180 deg RotateToGoal.
     "nav-only-full-staged": _INSPECTION_PREFIX_STAGED + _INSPECTION_TAIL + _FULL_TAIL,
     "nav-only-inspection-staged": _INSPECTION_PREFIX_STAGED + _INSPECTION_TAIL,
-    # Stop at the second Y-separated observation pose for a controlled trial.
-    "nav-only-split-y-validation": _INSPECTION_PREFIX_SPLIT_Y,
     # Use cuVSLAM feedback to refine XY and yaw together through the U-turn.
     "nav-only-full-se2": _INSPECTION_PREFIX_SE2 + _INSPECTION_TAIL + _FULL_TAIL,
     "nav-only-inspection-se2": _INSPECTION_PREFIX_SE2 + _INSPECTION_TAIL,
@@ -1487,7 +1473,6 @@ def validate_args(args):
         "nav-only-full",
         "nav-only-inspection",
         "nav-only-turn-validation",
-        "nav-only-split-y-validation",
         "nav-only-full-se2",
         "nav-only-inspection-se2",
         "nav-only-full-se2-resume",
