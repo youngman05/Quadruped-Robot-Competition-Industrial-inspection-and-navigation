@@ -1,6 +1,6 @@
 # System Design
 
-> Current D455 perception path: one RealSense ROS driver and the YOLO 3-D ROS node run in the same Docker container. The YOLO node consumes RGB, raw depth, CameraInfo, and RealSense TF, then sends `camera_link` coordinates to UDP port 19002. The host detection bridge and `base_link` output are pending. See `docs/Docker_Yolo_Combine_0720.md`; the outline below is a broader design record, not the current deployment contract.
+> Current D455 perception path: one RealSense ROS driver and the YOLO 3-D ROS node run in the same Docker container. The YOLO node consumes RGB, raw depth, CameraInfo, and RealSense TF, then sends `camera_link` coordinates to UDP port 19002. The Host UDP bridge validates and publishes those coordinates as `camera_link`; downstream nodes explicitly transform them only when another frame is needed. See `docs/Docker_Yolo_Combine_0720.md`; the outline below is a broader design record, not the current deployment contract.
 
 ## 总体架构
 

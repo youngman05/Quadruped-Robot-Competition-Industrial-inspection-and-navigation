@@ -8,8 +8,9 @@ p_parent = R_parent_child * p_child + t_parent_child
 ```
 
 All lengths are metres. Quaternions use ROS `xyzw` order. The configured
-`base_link -> camera_link` transform maps a D455 result in `camera_link` to
-the Lite3 torso/body frame.
+`base_link -> camera_link` transform is available to downstream consumers that
+need to convert a D455 result from `camera_link` to the Lite3 torso/body frame.
+The Host UDP bridge itself publishes `camera_link` unchanged.
 
 Coordinate frames:
 

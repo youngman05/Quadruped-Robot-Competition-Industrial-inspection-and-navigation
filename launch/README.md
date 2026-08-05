@@ -41,8 +41,8 @@ ros2 launch launch/competition.launch.py enable_yolo:=true
 
 ### Docker D455 YOLO 三维 UDP bridge
 
-该入口接收 Docker 的 UDP `19002` 检测，查询统一静态外参 TF，并只发布
-`base_link` 数据。默认不会启动旧 Host YOLO，二者不能同时启用。
+该入口接收 Docker 的 UDP `19002` 检测，校验后原样发布 `camera_link`
+数据，不查询静态外参 TF。默认不会启动旧 Host YOLO，二者不能同时启用。
 
 ```bash
 ros2 launch launch/yolo_udp_bridge.launch.py

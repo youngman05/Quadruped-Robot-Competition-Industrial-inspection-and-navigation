@@ -53,7 +53,7 @@ yolo_udp_bridge_node:
     udp_bind_host: "127.0.0.1"
     udp_port: 19002
     source_frame: "camera_link"
-    target_frame: "base_link"
+    target_frame: "camera_link"
     poll_period_s: 0.05
     max_packets_per_poll: 4
     max_packet_age_s: 0.5
