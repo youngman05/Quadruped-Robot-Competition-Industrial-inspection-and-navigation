@@ -8,6 +8,7 @@ import time
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
+from std_msgs.msg import String
 
 from nodes.navigation.cmd_vel_arbitration import CmdVelArbitration
 
@@ -24,6 +25,7 @@ class CmdVelArbiter(Node):
         self.declare_parameter("nav_topic", "/cmd_vel_nav2")
         self.declare_parameter("precision_topic", "/cmd_vel_precision")
         self.declare_parameter("output_topic", "/cmd_vel")
+        self.declare_parameter("status_topic", "/cmd_vel_arbiter/mode")
         self.declare_parameter("output_rate_hz", 40.0)
         self.declare_parameter("nav_timeout_sec", 0.35)
         self.declare_parameter("precision_timeout_sec", 0.25)
@@ -35,6 +37,7 @@ class CmdVelArbiter(Node):
         nav_topic = str(self.get_parameter("nav_topic").value)
         precision_topic = str(self.get_parameter("precision_topic").value)
         output_topic = str(self.get_parameter("output_topic").value)
+        status_topic = str(self.get_parameter("status_topic").value)
         self._output_rate_hz = max(
             5.0,
             float(self.get_parameter("output_rate_hz").value),
@@ -64,6 +67,7 @@ class CmdVelArbiter(Node):
         self._ignored_nav_count = 0
 
         self._publisher = self.create_publisher(Twist, output_topic, 10)
+        self._status_publisher = self.create_publisher(String, status_topic, 10)
         self._nav_subscription = self.create_subscription(
             Twist,
             nav_topic,
@@ -125,6 +129,9 @@ class CmdVelArbiter(Node):
         msg.linear.y = decision.command[1]
         msg.angular.z = decision.command[2]
         self._publisher.publish(msg)
+        status = String()
+        status.data = decision.mode
+        self._status_publisher.publish(status)
 
     def destroy_node(self) -> bool:
         stop = Twist()

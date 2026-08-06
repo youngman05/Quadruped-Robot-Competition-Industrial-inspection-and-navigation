@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "frame_id": "map",
+  "map_id": "",
+  "calibration": {
+    "status": "not_calibrated",
+    "updated_at": null
+  },
+  "waypoints": {},
+  "routes": {
+    "inspection_interleaved": [
+      "obstacle_cross_target",
+      "pos1_left_clear",
+      "pos1_middle",
+      "pos2a_upper_right",
+      "pos1_middle_turned",
+      "pos2b_lower_right"
+    ],
+    "full_interleaved": [
+      "obstacle_cross_target",
+      "pos1_left_clear",
+      "pos1_middle",
+      "pos2a_upper_right",
+      "pos1_middle_turned",
+      "pos2b_lower_right",
+      "grab_area_approach",
+      "placement_A_approach",
+      "placement_B_approach",
+      "placement_C_approach",
+      "placement_D_approach"
+    ]
+  }
+}

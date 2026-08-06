@@ -27,3 +27,41 @@ ros2 run nav2_map_server map_server \
 ros2 launch nav2_bringup navigation_launch.py \
   params_file:=configs/navigation/nav2_params.yaml
 ```
+# Real-field waypoint calibration
+
+`waypoints_real.yaml` is a JSON-compatible YAML document so it can be read with
+the Python standard library on the Foxy Jetson. The recorder also accepts normal
+block-style YAML when PyYAML is installed.
+
+Start the localization/TF stack without a Nav2 motion output, drive the robot by
+remote control, then run:
+
+```bash
+python3 scripts/waypoint_calibration_recorder.py \
+  --map-id competition-field-2026-08 \
+  --output configs/navigation/waypoints_real.yaml
+```
+
+The recorder never publishes `cmd_vel`. At each prompt, stop the robot at the
+desired task pose and press Enter. It samples `map -> base_link`, rejects an
+unstable window, asks for confirmation, and saves accepted points atomically.
+An existing calibration file is backed up once at session start under the
+ignored `configs/navigation/calibration_backups/` directory.
+
+After every required point is captured, enter `finish`. Validate a route without
+initializing ROS navigation:
+
+```bash
+python3 scripts/nav2_waypoint_sequence_probe.py \
+  --waypoint-file configs/navigation/waypoints_real.yaml \
+  --waypoint-route inspection_interleaved \
+  --describe-route
+```
+
+Run only the inspection route first. The full calibrated route is selected with
+`--waypoint-route full_interleaved` after inspection and physical-clearance
+validation succeeds. Calibration and competition runs must use the same map,
+official physical start, cuVSLAM cold-start procedure, and `map -> base_link`
+frame convention. The `action` fields are calibration metadata; this Nav-only
+probe records them in output but does not execute grasp, placement, or vision
+tasks.
