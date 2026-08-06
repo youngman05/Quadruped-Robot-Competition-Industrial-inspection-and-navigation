@@ -160,6 +160,8 @@ class WaypointCalibrationTests(unittest.TestCase):
         )
         self.assertIn('raise WaypointCalibrationError("map_id is empty")', source)
         self.assertIn('calibration_status != "complete"', source)
+        self.assertIn('"--allow-preview-route"', source)
+        self.assertIn('preview_source == "legacy_pgm_route_presets"', source)
         self.assertIn(
             '("absolute", "route_preset", "waypoint_file")',
             source,

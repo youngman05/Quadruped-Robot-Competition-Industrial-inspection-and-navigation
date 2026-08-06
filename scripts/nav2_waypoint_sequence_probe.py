@@ -1670,6 +1670,14 @@ def parse_args():
         help="Named route from --waypoint-file; exclusive with built-in goal sources.",
     )
     parser.add_argument(
+        "--allow-preview-route",
+        action="store_true",
+        help=(
+            "Explicitly allow the legacy-PGM preview file for a controlled trial; "
+            "never use this in a calibrated competition run."
+        ),
+    )
+    parser.add_argument(
         "--describe-route",
         action="store_true",
         help="Print the selected built-in or calibrated route and exit without initializing ROS.",
@@ -1785,6 +1793,8 @@ def validate_args(args):
         )
     if bool(args.waypoint_file) != bool(args.waypoint_route):
         raise SystemExit("--waypoint-file and --waypoint-route must be provided together")
+    if args.allow_preview_route and not args.waypoint_route:
+        raise SystemExit("--allow-preview-route requires --waypoint-file and --waypoint-route")
     if args.describe_route and not (args.route_preset or args.waypoint_route):
         raise SystemExit(
             "--describe-route requires --route-preset or --waypoint-route"
@@ -1799,10 +1809,20 @@ def validate_args(args):
                 args.waypoint_route,
                 expected_frame=args.frame_id,
             )
-            calibration_status = args.waypoint_document.get("calibration", {}).get(
-                "status"
+            calibration = args.waypoint_document.get("calibration", {})
+            calibration_status = calibration.get("status")
+            preview_source = calibration.get("coordinate_source")
+            preview_allowed = (
+                args.allow_preview_route
+                and calibration_status == "preview"
+                and preview_source == "legacy_pgm_route_presets"
             )
-            if not args.describe_route and calibration_status != "complete":
+            if not args.describe_route and calibration_status != "complete" and not preview_allowed:
+                if calibration_status == "preview":
+                    raise WaypointCalibrationError(
+                        "calibration status is preview; pass --allow-preview-route only "
+                        "for the legacy-PGM controlled trial"
+                    )
                 raise WaypointCalibrationError(
                     "calibration status is %r; run the recorder and enter finish"
                     % calibration_status
