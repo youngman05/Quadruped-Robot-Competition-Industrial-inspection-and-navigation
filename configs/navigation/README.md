@@ -48,6 +48,29 @@ unstable window, asks for confirmation, and saves accepted points atomically.
 An existing calibration file is backed up once at session start under the
 ignored `configs/navigation/calibration_backups/` directory.
 
+## Reordered route preview
+
+`waypoints_reordered_preview.yaml` contains the existing PGM-based coordinates
+with the four observation poses reordered as:
+
+```text
+pos1_middle -> pos2a_upper_right -> pos1_middle_turned -> pos2b_lower_right
+```
+
+This separates the two opposite-yaw poses at the same middle XY position. The
+file is intentionally marked `calibration.status: preview`; it is for local
+route inspection only and the navigation probe refuses to execute it. It must
+not replace remote-control calibration against the current real-field map.
+
+Inspect the local sequence without initializing ROS navigation:
+
+```bash
+python3 scripts/nav2_waypoint_sequence_probe.py \
+  --waypoint-file configs/navigation/waypoints_reordered_preview.yaml \
+  --waypoint-route inspection_interleaved \
+  --describe-route
+```
+
 After every required point is captured, enter `finish`. Validate a route without
 initializing ROS navigation:
 

@@ -99,6 +99,53 @@ class WaypointCalibrationTests(unittest.TestCase):
             list(DEFAULT_FULL_ROUTE),
         )
 
+    def test_reordered_preview_separates_the_same_xy_opposite_yaw_poses(self):
+        path = (
+            REPO_ROOT
+            / "configs"
+            / "navigation"
+            / "waypoints_reordered_preview.yaml"
+        )
+        document = load_waypoint_document(path)
+        goals = resolve_waypoint_route(document, "inspection_interleaved")
+
+        self.assertEqual(document["calibration"]["status"], "preview")
+        self.assertEqual(
+            [goal["label"] for goal in goals],
+            list(DEFAULT_INSPECTION_ROUTE),
+        )
+        self.assertEqual(
+            [goal["action"] for goal in goals if goal["action"].startswith("observe")],
+            [
+                "observe_upper_gauge",
+                "observe_upper_side",
+                "observe_lower_gauge",
+                "observe_lower_side",
+            ],
+        )
+
+        middle = goals[2]
+        middle_turned = goals[4]
+        self.assertEqual((middle["x"], middle["y"]), (middle_turned["x"], middle_turned["y"]))
+        self.assertAlmostEqual(abs(middle["yaw"] - middle_turned["yaw"]), math.pi)
+
+        for previous, current in zip(goals, goals[1:]):
+            distance = math.hypot(
+                current["x"] - previous["x"],
+                current["y"] - previous["y"],
+            )
+            yaw_change = abs(
+                math.atan2(
+                    math.sin(current["yaw"] - previous["yaw"]),
+                    math.cos(current["yaw"] - previous["yaw"]),
+                )
+            )
+            self.assertFalse(
+                distance <= 0.05 and yaw_change >= math.radians(150.0),
+                "%s -> %s reintroduces a same-position reversal"
+                % (previous["label"], current["label"]),
+            )
+
     def test_probe_exposes_explicit_calibrated_route_arguments(self):
         source = (
             REPO_ROOT / "scripts" / "nav2_waypoint_sequence_probe.py"
