@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "frame_id": "map",
+  "map_id": "competition_field_pending",
+  "x": 4.65,
+  "y": 0.75,
+  "yaw": 3.141592653589793,
+  "source": "navi/map/navi_map_data.py ROBOT_START_POSE",
+  "production_gate": "Update map_id after the competition Nav2 map is formally versioned."
+}

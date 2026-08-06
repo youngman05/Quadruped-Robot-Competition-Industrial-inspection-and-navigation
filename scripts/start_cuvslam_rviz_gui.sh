@@ -897,7 +897,7 @@ echo "Waiting for cuVSLAM topics..."
 wait_for_topic "/visual_slam/tracking/odometry" || die "Timed out waiting for /visual_slam/tracking/odometry. See $LOG_DIR/launch.log"
 start_loop_metrics_recorder
 
-if run_in_container "$(topic_list_cmd) 2>/dev/null | grep -Fx '/visual_slam/status' >/dev/null"; then
+if run_in_container "ros2 topic list 2>/dev/null | grep -Fx '/visual_slam/status' >/dev/null"; then
   echo "cuVSLAM odometry and status are publishing. One status sample:"
   run_in_container "timeout 8 ros2 topic echo /visual_slam/status --once" | tee "$LOG_DIR/status_once.txt" || true
 else

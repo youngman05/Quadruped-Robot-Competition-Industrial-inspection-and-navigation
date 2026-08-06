@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "status": "pending",
+  "mode": "legacy_static",
+  "nav_map_frame": "map",
+  "vslam_map_frame": "vslam_map",
+  "odom_frame": "odom",
+  "base_frame": "base_link",
+  "nav_map_id": "competition_field_pending",
+  "vslam_map_id": "",
+  "alignment": {
+    "status": "pending",
+    "x": 0.0,
+    "y": 0.0,
+    "yaw": 0.0,
+    "control_points": 0,
+    "max_residual_m": null
+  },
+  "max_stamp_delta": 0.05,
+  "max_age": 0.25,
+  "stable_frames": 3,
+  "max_candidate_jump_xy": 0.30,
+  "max_candidate_jump_yaw": 0.2617993877991494,
+  "max_residual_xy": 0.30,
+  "max_residual_yaw": 0.2617993877991494,
+  "small_correction_xy": 0.10,
+  "small_correction_yaw": 0.08726646259971647,
+  "medium_correction_xy": 0.30,
+  "medium_correction_yaw": 0.2617993877991494,
+  "production_gate": "Do not set alignment.status=complete or mode=cuvslam_global until vslam_map/Nav2 map hashes and multiple control points are accepted."
+}

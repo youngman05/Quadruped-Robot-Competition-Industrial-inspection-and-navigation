@@ -13,7 +13,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
 
@@ -34,6 +34,8 @@ def generate_launch_description() -> LaunchDescription:
     enable_depth_publisher = LaunchConfiguration("enable_depth_publisher", default="false")
     enable_whz = LaunchConfiguration("enable_whz", default="false")
     auto_advance = LaunchConfiguration("auto_advance", default="false")
+    enable_global_pose_manager = LaunchConfiguration("enable_global_pose_manager", default="false")
+    global_pose_mode = LaunchConfiguration("global_pose_mode", default="legacy_static")
 
     # ── 声明参数 ─────────────────────────────────────
     declare_enable_gauge = DeclareLaunchArgument(
@@ -75,6 +77,14 @@ def generate_launch_description() -> LaunchDescription:
     declare_auto_advance = DeclareLaunchArgument(
         "auto_advance", default_value="false",
         description="调试模式：跳过部分任务等待条件"
+    )
+    declare_enable_global_pose_manager = DeclareLaunchArgument(
+        "enable_global_pose_manager", default_value="false",
+        description="启动唯一 global_pose_manager。默认关闭，保持 legacy_static。",
+    )
+    declare_global_pose_mode = DeclareLaunchArgument(
+        "global_pose_mode", default_value="legacy_static",
+        description="global_pose_manager 模式：legacy_static/cuvslam_global/relocalize_hold/fault_hold",
     )
 
     # ═══════════════════════════════════════════════════
@@ -156,7 +166,25 @@ def generate_launch_description() -> LaunchDescription:
         executable="initial_pose_publisher",
         name="initial_pose_publisher_node",
         output="screen",
-        condition=IfCondition(enable_navigation),
+        condition=IfCondition(PythonExpression([
+            "'", enable_navigation, "' == 'true' and ('",
+            enable_global_pose_manager, "' == 'false' or '",
+            global_pose_mode, "' == 'legacy_static')",
+        ])),
+    )
+
+    global_pose_node = Node(
+        package="quadruped_robot_competition",
+        executable="global_pose_manager",
+        name="global_pose_manager_node",
+        output="screen",
+        parameters=[{
+            "mode": global_pose_mode,
+            "config_file": str(PROJECT_ROOT / "configs" / "navigation" / "global_pose.yaml"),
+            "vo_topic": "/odom",
+            "slam_topic": "/cuvslam/slam_pose",
+        }],
+        condition=IfCondition(enable_global_pose_manager),
     )
 
     base_to_camera_tf = Node(
@@ -235,6 +263,8 @@ def generate_launch_description() -> LaunchDescription:
         declare_enable_depth_publisher,
         declare_enable_whz,
         declare_auto_advance,
+        declare_enable_global_pose_manager,
+        declare_global_pose_mode,
         startup_info,
         gauge_node,
         yolo_node,
@@ -243,6 +273,7 @@ def generate_launch_description() -> LaunchDescription:
         task_manager_node,
         speech_node,
         initial_pose_node,
+        global_pose_node,
         base_to_camera_tf,
         depth_pub_node,
         cmd_vel_bridge_node,

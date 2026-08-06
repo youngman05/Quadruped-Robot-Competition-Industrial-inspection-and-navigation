@@ -33,6 +33,7 @@ setup(
             # ── 导航层 ──────────────────────────
             "depth_publisher = nodes.navigation.depth_publisher:main",
             "initial_pose_publisher = nodes.navigation.initial_pose_publisher:main",
+            "global_pose_manager = nodes.navigation.global_pose_manager:main",
             "cuvslam_bridge = nodes.navigation.cuvslam_bridge:main",
             "ir_imu_bridge = nodes.navigation.ir_imu_bridge:main",
             "cmd_vel_arbiter = nodes.navigation.cmd_vel_arbiter:main",
