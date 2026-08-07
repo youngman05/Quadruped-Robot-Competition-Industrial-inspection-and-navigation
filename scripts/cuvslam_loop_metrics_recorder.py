@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Record cuVSLAM trajectory metrics for loop-closure demos.
+"""Record lightweight online cuVSLAM trajectory metrics.
 
 This script is intended to run inside the Isaac ROS Humble container. It writes
 small text/JSON/CSV artifacts under /logs so a loop run can be judged without
-looking at RViz.
+looking at RViz. It intentionally never calls GetAllPoses; the full optimized
+pose graph is queried once after the robot stops by
+``cuvslam_get_all_poses_once.py``.
 """
 
 import argparse
@@ -71,11 +73,15 @@ def summarize_path(msg):
 
 
 class LoopMetricsRecorder(Node):
-    def __init__(self, log_dir, interval, path_dump_interval):
+    def __init__(
+        self, log_dir, interval, path_dump_interval, mount_mode, expected_base_frame
+    ):
         super().__init__("cuvslam_loop_metrics_recorder")
         self.log_dir = Path(log_dir)
         self.interval = interval
         self.path_dump_interval = path_dump_interval
+        self.mount_mode = mount_mode
+        self.expected_base_frame = expected_base_frame
         self.latest_paths = {}
         self.latest_odom = None
         self.first_odom = None
@@ -171,6 +177,8 @@ class LoopMetricsRecorder(Node):
         paths = {name: summarize_path(msg) for name, msg in self.latest_paths.items()}
         odom_summary = {
             "samples": self.odom_count,
+            "frame_id": None,
+            "child_frame_id": None,
             "path_length_m": self.odom_path_length_m,
             "first_position": None,
             "last_position": None,
@@ -183,6 +191,8 @@ class LoopMetricsRecorder(Node):
             closure = point_distance(first, last)
             odom_summary.update(
                 {
+                    "frame_id": self.latest_odom.header.frame_id,
+                    "child_frame_id": self.latest_odom.child_frame_id,
                     "first_position": point_to_list(first),
                     "last_position": point_to_list(last),
                     "closure_error_m": closure,
@@ -192,9 +202,20 @@ class LoopMetricsRecorder(Node):
                 }
             )
 
+        base_frame_match = (
+            odom_summary["child_frame_id"] == self.expected_base_frame
+        )
         return {
             "elapsed_s": elapsed,
             "generated_at_unix": time.time(),
+            "mount_mode": self.mount_mode,
+            "expected_base_frame": self.expected_base_frame,
+            "base_frame_match": base_frame_match,
+            "robot_base_ready": self.mount_mode == "robot" and base_frame_match,
+            "all_poses": {
+                "service_status": "disabled_online",
+                "query_tool": "cuvslam_get_all_poses_once.py",
+            },
             "paths": paths,
             "odometry": odom_summary,
             "interpretation": self.interpret(paths, odom_summary),
@@ -227,6 +248,11 @@ class LoopMetricsRecorder(Node):
             "cuVSLAM loop metrics",
             f"elapsed_s: {data['elapsed_s']:.1f}",
             f"interpretation: {data['interpretation']}",
+            f"mount_mode: {data['mount_mode']}",
+            f"expected_base_frame: {data['expected_base_frame']}",
+            f"base_frame_match: {data['base_frame_match']}",
+            f"robot_base_ready: {data['robot_base_ready']}",
+            "all_poses_service: disabled_online",
             "",
             "odometry:",
         ]
@@ -234,6 +260,8 @@ class LoopMetricsRecorder(Node):
         lines.extend(
             [
                 f"  samples: {odom['samples']}",
+                f"  frame_id: {odom['frame_id']}",
+                f"  child_frame_id: {odom['child_frame_id']}",
                 f"  path_length_m: {odom['path_length_m']:.3f}",
                 f"  closure_error_m: {format_optional(odom['closure_error_m'])}",
                 f"  closure_error_ratio: {format_optional(odom['closure_error_ratio'])}",
@@ -310,6 +338,13 @@ def main():
     parser.add_argument("--log-dir", default="/logs")
     parser.add_argument("--interval", type=float, default=2.0)
     parser.add_argument("--path-dump-interval", type=float, default=15.0)
+    parser.add_argument("--mount-mode", choices=("bench", "robot"), default="bench")
+    parser.add_argument("--expected-base-frame", default="camera_link")
+    parser.add_argument(
+        "--disable-all-poses-service",
+        action="store_true",
+        help="Compatibility flag; online recorder never calls GetAllPoses.",
+    )
     args = parser.parse_args()
 
     log_dir = Path(args.log_dir)
@@ -319,7 +354,13 @@ def main():
     )
 
     rclpy.init()
-    node = LoopMetricsRecorder(log_dir, args.interval, args.path_dump_interval)
+    node = LoopMetricsRecorder(
+        log_dir,
+        args.interval,
+        args.path_dump_interval,
+        args.mount_mode,
+        args.expected_base_frame,
+    )
     stopping = {"value": False}
 
     def handle_signal(signum, frame):

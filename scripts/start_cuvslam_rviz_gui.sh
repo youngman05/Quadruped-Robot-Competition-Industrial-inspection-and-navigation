@@ -55,6 +55,7 @@ ENABLE_OBSERVATIONS_VIEW="${ENABLE_OBSERVATIONS_VIEW:-true}"
 RVIZ_HEAVY_DISPLAYS="${RVIZ_HEAVY_DISPLAYS:-0}"
 LOOP_METRICS_INTERVAL="${LOOP_METRICS_INTERVAL:-2.0}"
 LOOP_METRICS_PATH_DUMP_INTERVAL="${LOOP_METRICS_PATH_DUMP_INTERVAL:-15.0}"
+LOOP_METRICS_POSTRUN_MAX_COUNT="${LOOP_METRICS_POSTRUN_MAX_COUNT:-100000}"
 SKIP_INPUT_TEST=0
 SKIP_RVIZ=0
 LOOP_RECORDER_STARTED=0
@@ -106,6 +107,7 @@ Environment overrides:
   RVIZ_HEAVY_DISPLAYS          Set to 1 to enable IR images and heavy clouds in RViz. Default: 0
   LOOP_METRICS_INTERVAL        Seconds between closure-metric summaries. Default: 2.0
   LOOP_METRICS_PATH_DUMP_INTERVAL Seconds between path CSV dumps. Default: 15.0
+  LOOP_METRICS_POSTRUN_MAX_COUNT Maximum poses in the one-shot post-run query. Default: 100000
 
 Run this from a Jetson desktop terminal, VNC, or NoMachine session.
 Plain SSH without X11/VNC will not show RViz.
@@ -814,19 +816,41 @@ if [[ -f "$RECORDER_SRC" ]]; then
 else
   die "Loop metrics recorder not found: $RECORDER_SRC"
 fi
+POSTRUN_RECORDER_SRC="$PROJECT_DIR/scripts/cuvslam_get_all_poses_once.py"
+if [[ -f "$POSTRUN_RECORDER_SRC" ]]; then
+  cp "$POSTRUN_RECORDER_SRC" "$LOG_DIR/cuvslam_get_all_poses_once.py"
+else
+  die "Post-run pose graph query not found: $POSTRUN_RECORDER_SRC"
+fi
 
 start_loop_metrics_recorder() {
-  echo "Starting loop metrics recorder..."
+  local ready=0
+  echo "Starting lightweight loop metrics recorder (GetAllPoses disabled)..."
+  docker exec "$CONTAINER_NAME" rm -f /tmp/cuvslam_loop_metrics_recorder.pid
   docker exec -d "$CONTAINER_NAME" bash -lc \
-    "source /opt/ros/humble/setup.bash && source /workspaces/isaac_ros-dev/install/setup.bash && python3 /logs/cuvslam_loop_metrics_recorder.py --interval '$LOOP_METRICS_INTERVAL' --path-dump-interval '$LOOP_METRICS_PATH_DUMP_INTERVAL' --mount-mode '$CUVSLAM_MOUNT_MODE' --expected-base-frame '$CUVSLAM_BASE_FRAME' >/logs/loop_metrics_recorder.log 2>&1"
+    "source /opt/ros/humble/setup.bash && source /workspaces/isaac_ros-dev/install/setup.bash && python3 /logs/cuvslam_loop_metrics_recorder.py --interval '$LOOP_METRICS_INTERVAL' --path-dump-interval '$LOOP_METRICS_PATH_DUMP_INTERVAL' --mount-mode '$CUVSLAM_MOUNT_MODE' --expected-base-frame '$CUVSLAM_BASE_FRAME' --disable-all-poses-service >/logs/loop_metrics_recorder.log 2>&1"
   LOOP_RECORDER_STARTED=1
+  for _ in $(seq 1 40); do
+    if docker exec "$CONTAINER_NAME" bash -lc \
+      'test -s /tmp/cuvslam_loop_metrics_recorder.pid && kill -0 "$(cat /tmp/cuvslam_loop_metrics_recorder.pid)"' \
+      >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
+    sleep 0.25
+  done
+  if [[ "$ready" -ne 1 ]]; then
+    docker exec "$CONTAINER_NAME" bash -lc \
+      'tail -n 80 /logs/loop_metrics_recorder.log 2>/dev/null || true' >&2 || true
+    die "Loop metrics recorder failed to stay running"
+  fi
   echo "Loop metrics live summary: $LOG_DIR/loop_metrics_latest.txt"
 }
 
 stop_loop_metrics_recorder() {
   if [[ "$LOOP_RECORDER_STARTED" -eq 1 ]]; then
     docker exec "$CONTAINER_NAME" bash -lc \
-      'if [[ -f /tmp/cuvslam_loop_metrics_recorder.pid ]]; then kill -INT "$(cat /tmp/cuvslam_loop_metrics_recorder.pid)" 2>/dev/null || true; sleep 2; fi' \
+      'if [[ -f /tmp/cuvslam_loop_metrics_recorder.pid ]]; then kill -INT "$(cat /tmp/cuvslam_loop_metrics_recorder.pid)" 2>/dev/null || true; sleep 2; rm -f /tmp/cuvslam_loop_metrics_recorder.pid; fi' \
       >/dev/null 2>&1 || true
   fi
 }
@@ -967,6 +991,7 @@ Watch:
   - $LOG_DIR/odometry_samples.csv
   - $LOG_DIR/slam_path_latest.csv
   - $LOG_DIR/vo_path_latest.csv
+  - $LOG_DIR/postrun_metrics_full/loop_metrics_latest.json (after one-shot query)
 
 Expected RViz content:
   - Fixed Frame: map
@@ -990,12 +1015,14 @@ Suggested teacher demo:
   1. Wait until "Loop metrics live summary" appears before moving.
   2. Put the robot/camera at the chosen start point and keep it still for 3-5 seconds.
   3. Move through a large loop, then return physically close to the start point.
-  4. Keep it still for 5 seconds at the end point, then press Ctrl+C in this terminal.
-  5. Judge loop accuracy from $LOG_DIR/loop_metrics_latest.txt:
+  4. Keep it still for 5 seconds at the end point.
+  5. Before pressing Ctrl+C, query the complete optimized pose graph once:
+     docker exec $CONTAINER_NAME bash -lc "source /opt/ros/humble/setup.bash && source /workspaces/isaac_ros-dev/install/setup.bash && python3 /logs/cuvslam_get_all_poses_once.py --log-dir /logs/postrun_metrics_full --max-count $LOOP_METRICS_POSTRUN_MAX_COUNT"
+  6. Judge loop accuracy from $LOG_DIR/postrun_metrics_full/loop_metrics_latest.txt:
      - closure_error_m < 0.2: good
      - 0.2 <= closure_error_m < 0.5: usable but mention drift
      - closure_error_m >= 0.5: poor loop closure for a 20 m demo
-  6. Also check launch.log for "Visual tracking is lost" and frame delta warnings.
+  7. Also check launch.log for "Visual tracking is lost" and frame delta warnings, then press Ctrl+C.
 
 Safety:
   - This script does not publish /cmd_vel.
