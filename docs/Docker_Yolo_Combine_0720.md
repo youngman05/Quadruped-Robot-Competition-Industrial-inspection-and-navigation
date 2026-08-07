@@ -18,7 +18,8 @@
 尚未完成：
 
 - 已知距离目标的真实 XYZ 误差标定；
-- 由 TaskManager、机械臂等下游显式消费 `camera_link` 检测并按需转换坐标；
+- Host `d455_detection_bridge`，以及 `/yolo/detections`、`/block/target_pose`、`/cone/detections` 发布；
+- `base_link -> camera_link` 外参标定和 Host 坐标转换；
 - PointCloud2 / Nav2 VoxelLayer（或轻量局部避障）接入；
 - TaskManager、机械臂、按阶段调整 YOLO FPS 的控制接口。
 
@@ -39,7 +40,7 @@ D455
                  -> UDP 127.0.0.1:19002
 
 后续 Host detection bridge
-  -> camera_link 检测结果
+  -> base_link 检测结果
   -> TaskManager / 机械臂
 ```
 
@@ -117,7 +118,7 @@ Raw Depth 像素
 
 非空 `detections` 的 `position_m` 始终是米单位的 `[x, y, z]`，表达在 `camera_link`。发送端不发布 ROS detection topic，也不会在 Docker 内转换到 `base_link`。
 
-Host bridge 验证 `schema_version`、序号、源时间戳和过期时间后，保持 `camera_link` 坐标原样发布 Host ROS topic。唯一的 `base_link -> camera_link` 静态外参保留给显式需要其他坐标系的下游节点使用。
+后续 Host bridge 应验证 `schema_version`、序号、源时间戳和过期时间，再根据唯一的 `base_link -> camera_link` 静态外参转换并发布 Host ROS topic。
 
 ## 7. 文件与职责
 

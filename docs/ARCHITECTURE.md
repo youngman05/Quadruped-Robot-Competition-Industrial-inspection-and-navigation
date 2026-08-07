@@ -1,6 +1,6 @@
 # 四足机器人竞赛系统 — 架构与调试手册
 
-> 文档状态：下文主要记录早期的 Host relay 架构。当前 D455 YOLO 三维链路已改为 Docker 内 RealSense 与 `/d455_object_yolo_3d` 同容器运行：RGB + Raw Depth + CameraInfo + TF -> `camera_link` XYZ -> UDP `127.0.0.1:19002` -> Host `yolo_udp_bridge` `camera_link` ROS 检测。它不使用 aligned depth 或 Host 文件 relay；`base_link` 转换由需要该坐标系的下游节点显式执行。当前实现、依赖与验证边界以 `docs/Docker_Yolo_Combine_0720.md` 为准；Nav2 点云避障仍未实现。
+> 文档状态：下文主要记录早期的 Host relay 架构。当前 D455 YOLO 三维链路已改为 Docker 内 RealSense 与 `/d455_object_yolo_3d` 同容器运行：RGB + Raw Depth + CameraInfo + TF -> `camera_link` XYZ -> UDP `127.0.0.1:19002`。它不使用 aligned depth 或 Host 文件 relay。当前实现、依赖与验证边界以 `docs/Docker_Yolo_Combine_0720.md` 为准；Host detection bridge、`base_link` 转换和 Nav2 点云避障仍未实现。
 
 ## 目录
 

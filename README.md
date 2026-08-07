@@ -61,7 +61,7 @@ Task Manager
 | 相机与传感器 | Intel RealSense D455，RGB / Depth / IR stereo / IMU | 已有 Python 封装和输入检查脚本 |
 | SLAM / 定位 | NVIDIA Isaac ROS Visual SLAM / cuVSLAM，D455 IR 双目 + IMU | 已跑通容器启动、topic/RViz、初步 loop metrics；仍在调精度和 TF 语义 |
 | 导航 | ROS2 Nav2，PGM 静态地图 + D455 点云局部避障 | 参数、地图、launch 和节点已建；需继续实车联调 |
-| 目标识别 | Docker 内 YOLOv8 实例分割 + Raw Depth 稀疏投影 | 已完成 `camera_link` UDP 三维输出和 Host bridge `camera_link` ROS 发布；任务接口待接入 |
+| 目标识别 | Docker 内 YOLOv8 实例分割 + Raw Depth 稀疏投影 | 已完成 `camera_link` UDP 三维输出；Host bridge、`base_link` 和任务接口待接入 |
 | 仪表识别 | OpenCV 传统视觉，Hough 圆/线 + HSV 颜色判定 | 已实现并接入 ROS2 `/gauge/status` |
 | 任务管理 | ROS2 状态机 | 已实现主流程和导航客户端调用 |
 | 语音播报 | `/speech/text` 接口，TTS 节点占位 | 接口已有，实际 TTS 待实现 |
@@ -193,7 +193,7 @@ Nav2 配置要点：
 - `configs/yolo/detection_v1.schema.json`
 - `docs/Docker_Yolo_Combine_0720.md`
 
-`src/nodes/perception/yolo_detect_publisher.py` 和旧的相机封装只保留作 Host/离线调试，不能与 Docker RealSense 同时直接打开 D455。Host `yolo_udp_bridge` 已将 UDP 校验后发布到 `/yolo/detections`、`/yolo/detection_poses`、`/block/detections` 和 `/cone/detections`，全部保持为 `camera_link`；需要 `base_link` 的下游节点应显式查询静态 TF。
+`src/nodes/perception/yolo_detect_publisher.py` 和旧的相机封装只保留作 Host/离线调试，不能与 Docker RealSense 同时直接打开 D455。Host detection bridge、`/yolo/detections`、`/block/target_pose`、`/cone/detections` 以及 `base_link` 坐标转换尚未实现。
 
 ### OpenCV 仪表盘识别
 

@@ -18,7 +18,7 @@ configs/
     yolo_xyz_test_points.yaml       # Test-point truth and acceptance template
   yolo/
     detection_v1.schema.json        # Docker camera_link UDP packet
-    host_detection_v1.schema.json   # Host camera_link JSON packet
+    host_detection_v1.schema.json   # Host base_link JSON packet
 ```
 
 `static_extrinsics.yaml` stores only static transforms owned by this project.
@@ -45,8 +45,8 @@ translation and quaternion when needed.
 
 The current camera entry describes `base_link -> camera_link`: D455 center is
 80 mm forward and 493 mm above the Lite3 torso reference, with the supplied
-positive 30 degree downward pitch. The Host bridge preserves Docker detections
-in `camera_link`; a downstream consumer queries this TF only when it needs
+positive 30 degree downward pitch. The Host bridge applies the inverse-frame
+lookup through TF, so Docker detections in `camera_link` are emitted in
 `base_link`.
 
 ## Runtime Flow
@@ -59,7 +59,8 @@ static_extrinsics.yaml
 Docker /d455_object_yolo_3d
   -> UDP 127.0.0.1:19002, frame_id=camera_link
   -> Host yolo_udp_bridge
-  -> camera_link ROS detections and PoseArray topics
+  -> tf2 lookup(base_link <- camera_link)
+  -> base_link ROS detections and PoseArray topics
 ```
 
 Use `launch/yolo_udp_bridge.launch.py` for the Host bridge alone. It starts
@@ -68,9 +69,9 @@ the static TF publisher and the bridge. When started from
 `publish_static_transforms:=false` to child launches so no duplicate static TF
 publisher exists.
 
-The bridge accepts only the Docker UDP v1 packet and rejects stale or malformed
-packets. It does not query TF; that lets a downstream consumer use freshness
-as a safety signal and choose an explicit coordinate transform when needed.
+The bridge accepts only the Docker UDP v1 packet, rejects stale or malformed
+packets, and does not publish an empty converted result while TF is missing.
+That lets a downstream consumer use freshness as a safety signal.
 
 ## Current Calibration Status
 
@@ -117,7 +118,7 @@ disallows them.
 ## Deployment Constraint
 
 The Xavier Foxy environment has an observed cross-process DDS reliability
-problem: the bridge receives UDP and publishes ROS detections, but a separate
+problem: the bridge receives UDP and performs the TF conversion, but a separate
 `ros2 topic echo` process may not receive the output. The ROS topics are the
 intended interface, but a production avoidance consumer must not rely on this
 DDS path until it passes a real Host-to-Host delivery test. Co-locating the

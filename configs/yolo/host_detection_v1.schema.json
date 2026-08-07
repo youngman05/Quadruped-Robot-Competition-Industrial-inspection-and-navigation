@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://quadruped.local/schemas/host-detection-v1.json",
-  "title": "Host camera_link YOLO detection packet",
+  "title": "Host base_link YOLO detection packet",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -26,7 +26,7 @@
         "nanosec": {"type": "integer", "minimum": 0, "maximum": 999999999}
       }
     },
-    "frame_id": {"const": "camera_link"},
+    "frame_id": {"const": "base_link"},
     "inference_ms": {"type": "number", "minimum": 0},
     "detections": {
       "type": "array",

@@ -14,7 +14,7 @@
 | `navigation/` | Nav2 导航参数 |
 | `transforms/static_extrinsics.yaml` | 项目拥有的静态外参（`base_link -> camera_link` 等） |
 | `calibration/yolo_xyz_test_points.yaml` | D455 YOLO XYZ 标定测试点与验收阈值模板 |
-| `yolo/host_detection_v1.schema.json` | Host UDP bridge 透传的 `camera_link` 检测 JSON 协议 |
+| `yolo/host_detection_v1.schema.json` | Host UDP bridge 转换后的 `base_link` 检测 JSON 协议 |
 
 ---
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bridge Docker D455 YOLO UDP detections into Host ROS camera_link topics."""
+"""Bridge Docker D455 YOLO UDP detections into Host ROS base_link topics."""
 
 from __future__ import annotations
 
@@ -9,18 +9,21 @@ from typing import Any, Dict, List
 
 import rclpy
 from geometry_msgs.msg import Pose, PoseArray
+from rclpy.duration import Duration
 from rclpy.node import Node
 from std_msgs.msg import String
+from tf2_ros import Buffer, TransformException, TransformListener
 
 from nodes.perception.yolo_udp_bridge_core import (
     PacketValidationError,
     packet_stamp_seconds,
+    transform_point,
     validate_source_packet,
 )
 
 
 class YoloUdpBridge(Node):
-    """Receive v1 UDP packets and publish valid camera_link XYZ on Host ROS."""
+    """Receive v1 UDP packets, transform valid XYZ to base_link, and publish ROS."""
 
     def __init__(self) -> None:
         super().__init__("yolo_udp_bridge_node")
@@ -33,11 +36,10 @@ class YoloUdpBridge(Node):
         self._max_packet_age_s = float(self.get_parameter("max_packet_age_s").value)
         self._min_depth_valid_ratio = float(self.get_parameter("min_depth_valid_ratio").value)
         self._max_packets_per_poll = int(self.get_parameter("max_packets_per_poll").value)
+        self._tf_timeout_s = float(self.get_parameter("tf_timeout_s").value)
         poll_period_s = float(self.get_parameter("poll_period_s").value)
         if self._udp_port <= 0 or poll_period_s <= 0 or self._max_packets_per_poll < 1:
             raise ValueError("invalid UDP bridge polling parameters")
-        if self._source_frame != "camera_link" or self._target_frame != self._source_frame:
-            raise ValueError("yolo_udp_bridge only supports camera_link UDP pass-through")
         if self._max_packet_age_s < 0 or not 0.0 <= self._min_depth_valid_ratio <= 1.0:
             raise ValueError("invalid UDP bridge validation parameters")
 
@@ -46,6 +48,8 @@ class YoloUdpBridge(Node):
         self._socket.bind((self._bind_host, self._udp_port))
         self._socket.setblocking(False)
 
+        self._tf_buffer = Buffer()
+        self._tf_listener = TransformListener(self._tf_buffer, self, spin_thread=False)
         self._detections_pub = self.create_publisher(String, "/yolo/detections", 10)
         self._all_poses_pub = self.create_publisher(PoseArray, "/yolo/detection_poses", 10)
         self._cone_poses_pub = self.create_publisher(PoseArray, "/cone/detections", 10)
@@ -64,12 +68,12 @@ class YoloUdpBridge(Node):
         self.declare_parameter("udp_bind_host", "127.0.0.1")
         self.declare_parameter("udp_port", 19002)
         self.declare_parameter("source_frame", "camera_link")
-        self.declare_parameter("target_frame", "camera_link")
+        self.declare_parameter("target_frame", "base_link")
         self.declare_parameter("poll_period_s", 0.05)
         self.declare_parameter("max_packets_per_poll", 4)
         self.declare_parameter("max_packet_age_s", 0.5)
         self.declare_parameter("min_depth_valid_ratio", 0.6)
-        self.declare_parameter("tf_timeout_s", 0.05)  # Reserved for a future explicit Host transform mode.
+        self.declare_parameter("tf_timeout_s", 0.05)
 
     def _poll_udp(self) -> None:
         for _ in range(self._max_packets_per_poll):
@@ -101,7 +105,25 @@ class YoloUdpBridge(Node):
             detection for detection in packet["detections"]
             if detection["position_valid"] and detection["depth_valid_ratio"] >= self._min_depth_valid_ratio
         ]
-        output_detections = self._prepare_detections(packet["detections"])
+        transform = None
+        if valid_detections:
+            try:
+                transform = self._tf_buffer.lookup_transform(
+                    self._target_frame,
+                    self._source_frame,
+                    rclpy.time.Time(),
+                    timeout=Duration(seconds=self._tf_timeout_s),
+                )
+            except TransformException as exc:
+                self.get_logger().warn(
+                    f"Cannot transform {self._source_frame} to {self._target_frame}: {exc}",
+                    throttle_duration_sec=2.0,
+                )
+                # Do not publish an empty result: downstream freshness watchdogs must fail safe.
+                self._publish_status("waiting_for_tf")
+                return
+
+        output_detections = self._transform_detections(packet["detections"], transform)
         output_packet = {
             "schema_version": 1,
             "source_schema_version": packet["schema_version"],
@@ -112,10 +134,10 @@ class YoloUdpBridge(Node):
             "detections": output_detections,
         }
         self._publish_packet_and_poses(output_packet)
-        camera_positions = [detection["position_m"] for detection in output_detections if detection["position_valid"]]
-        first_position = "" if not camera_positions else f" first_xyz={camera_positions[0]}"
+        base_positions = [detection["position_m"] for detection in output_detections if detection["position_valid"]]
+        first_position = "" if not base_positions else f" first_xyz={base_positions[0]}"
         self.get_logger().info(
-            f"Published camera_link detections={len(output_detections)} "
+            f"Published base_link detections={len(output_detections)} "
             f"valid={len(valid_detections)} sequence={packet['sequence']}{first_position}",
             throttle_duration_sec=1.0,
         )
@@ -127,11 +149,21 @@ class YoloUdpBridge(Node):
         now_s = self.get_clock().now().nanoseconds / 1_000_000_000.0
         return now_s - packet_stamp_seconds(packet) > self._max_packet_age_s
 
-    def _prepare_detections(self, detections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _transform_detections(self, detections: List[Dict[str, Any]], transform) -> List[Dict[str, Any]]:
         converted = []
+        translation = rotation = None
+        if transform is not None:
+            trans = transform.transform.translation
+            quat = transform.transform.rotation
+            translation = [trans.x, trans.y, trans.z]
+            rotation = [quat.x, quat.y, quat.z, quat.w]
+
         for detection in detections:
             output = dict(detection)
-            if not (output["position_valid"] and output["depth_valid_ratio"] >= self._min_depth_valid_ratio):
+            if output["position_valid"] and output["depth_valid_ratio"] >= self._min_depth_valid_ratio:
+                assert translation is not None and rotation is not None
+                output["position_m"] = transform_point(output["position_m"], translation, rotation)
+            else:
                 output["position_valid"] = False
                 output["position_m"] = None
             converted.append(output)
