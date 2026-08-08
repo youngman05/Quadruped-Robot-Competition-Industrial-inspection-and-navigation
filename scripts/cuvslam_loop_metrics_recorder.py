@@ -20,6 +20,12 @@ from pathlib import Path
 import rclpy
 from nav_msgs.msg import Odometry, Path as RosPath
 from rclpy.node import Node
+from rclpy.qos import (
+    DurabilityPolicy,
+    HistoryPolicy,
+    QoSProfile,
+    ReliabilityPolicy,
+)
 
 
 def point_distance(a, b):
@@ -74,7 +80,14 @@ def summarize_path(msg):
 
 class LoopMetricsRecorder(Node):
     def __init__(
-        self, log_dir, interval, path_dump_interval, mount_mode, expected_base_frame
+        self,
+        log_dir,
+        interval,
+        path_dump_interval,
+        mount_mode,
+        expected_base_frame,
+        enable_path_topics,
+        odom_csv_hz,
     ):
         super().__init__("cuvslam_loop_metrics_recorder")
         self.log_dir = Path(log_dir)
@@ -82,12 +95,16 @@ class LoopMetricsRecorder(Node):
         self.path_dump_interval = path_dump_interval
         self.mount_mode = mount_mode
         self.expected_base_frame = expected_base_frame
+        self.path_topics_enabled = enable_path_topics
+        self.odom_csv_interval = 1.0 / odom_csv_hz if odom_csv_hz > 0.0 else 0.0
+        self.last_odom_csv_stamp = None
         self.latest_paths = {}
         self.latest_odom = None
         self.first_odom = None
         self.prev_odom_position = None
         self.odom_path_length_m = 0.0
         self.odom_count = 0
+        self.odom_csv_count = 0
         self.start_time = time.time()
         self.last_summary_time = 0.0
         self.last_path_dump_time = 0.0
@@ -111,18 +128,25 @@ class LoopMetricsRecorder(Node):
             ]
         )
 
-        self.create_subscription(
-            RosPath,
-            "/visual_slam/tracking/slam_path",
-            lambda msg: self._path_callback("slam_path", msg),
-            10,
-        )
-        self.create_subscription(
-            RosPath,
-            "/visual_slam/tracking/vo_path",
-            lambda msg: self._path_callback("vo_path", msg),
-            10,
-        )
+        if self.path_topics_enabled:
+            path_qos = QoSProfile(
+                history=HistoryPolicy.KEEP_LAST,
+                depth=1,
+                reliability=ReliabilityPolicy.BEST_EFFORT,
+                durability=DurabilityPolicy.VOLATILE,
+            )
+            self.create_subscription(
+                RosPath,
+                "/visual_slam/tracking/slam_path",
+                lambda msg: self._path_callback("slam_path", msg),
+                path_qos,
+            )
+            self.create_subscription(
+                RosPath,
+                "/visual_slam/tracking/vo_path",
+                lambda msg: self._path_callback("vo_path", msg),
+                path_qos,
+            )
         self.create_subscription(
             Odometry,
             "/visual_slam/tracking/odometry",
@@ -145,23 +169,31 @@ class LoopMetricsRecorder(Node):
 
         q = msg.pose.pose.orientation
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec / 1e9
-        self.odom_writer.writerow(
-            [
-                f"{time.time() - self.start_time:.3f}",
-                f"{stamp:.9f}",
-                msg.header.frame_id,
-                msg.child_frame_id,
-                f"{pos.x:.6f}",
-                f"{pos.y:.6f}",
-                f"{pos.z:.6f}",
-                f"{q.x:.8f}",
-                f"{q.y:.8f}",
-                f"{q.z:.8f}",
-                f"{q.w:.8f}",
-            ]
+        should_write_csv = (
+            self.last_odom_csv_stamp is None
+            or stamp < self.last_odom_csv_stamp
+            or stamp - self.last_odom_csv_stamp >= self.odom_csv_interval
         )
-        if self.odom_count % 50 == 0:
-            self.odom_csv_file.flush()
+        if should_write_csv:
+            self.odom_writer.writerow(
+                [
+                    f"{time.time() - self.start_time:.3f}",
+                    f"{stamp:.9f}",
+                    msg.header.frame_id,
+                    msg.child_frame_id,
+                    f"{pos.x:.6f}",
+                    f"{pos.y:.6f}",
+                    f"{pos.z:.6f}",
+                    f"{q.x:.8f}",
+                    f"{q.y:.8f}",
+                    f"{q.z:.8f}",
+                    f"{q.w:.8f}",
+                ]
+            )
+            self.last_odom_csv_stamp = stamp
+            self.odom_csv_count += 1
+            if self.odom_csv_count % 50 == 0:
+                self.odom_csv_file.flush()
 
     def maybe_write_outputs(self, force=False):
         now = time.time()
@@ -216,13 +248,18 @@ class LoopMetricsRecorder(Node):
                 "service_status": "disabled_online",
                 "query_tool": "cuvslam_get_all_poses_once.py",
             },
+            "path_topics_enabled": self.path_topics_enabled,
             "paths": paths,
             "odometry": odom_summary,
-            "interpretation": self.interpret(paths, odom_summary),
+            "interpretation": self.interpret(
+                paths, odom_summary, self.path_topics_enabled
+            ),
         }
 
     @staticmethod
-    def interpret(paths, odom_summary):
+    def interpret(paths, odom_summary, path_topics_enabled=True):
+        if not path_topics_enabled:
+            return "online_path_topics_disabled: use one-shot GetAllPoses after stop"
         slam = paths.get("slam_path") or {}
         closure = slam.get("closure_error_m")
         length = slam.get("path_length_m")
@@ -252,6 +289,7 @@ class LoopMetricsRecorder(Node):
             f"expected_base_frame: {data['expected_base_frame']}",
             f"base_frame_match: {data['base_frame_match']}",
             f"robot_base_ready: {data['robot_base_ready']}",
+            f"path_topics_enabled: {data['path_topics_enabled']}",
             "all_poses_service: disabled_online",
             "",
             "odometry:",
@@ -338,12 +376,18 @@ def main():
     parser.add_argument("--log-dir", default="/logs")
     parser.add_argument("--interval", type=float, default=2.0)
     parser.add_argument("--path-dump-interval", type=float, default=15.0)
+    parser.add_argument("--odom-csv-hz", type=float, default=10.0)
     parser.add_argument("--mount-mode", choices=("bench", "robot"), default="bench")
     parser.add_argument("--expected-base-frame", default="camera_link")
     parser.add_argument(
         "--disable-all-poses-service",
         action="store_true",
         help="Compatibility flag; online recorder never calls GetAllPoses.",
+    )
+    parser.add_argument(
+        "--disable-path-topics",
+        action="store_true",
+        help="Do not subscribe to rolling 1024-pose Path topics.",
     )
     args = parser.parse_args()
 
@@ -360,6 +404,8 @@ def main():
         args.path_dump_interval,
         args.mount_mode,
         args.expected_base_frame,
+        not args.disable_path_topics,
+        args.odom_csv_hz,
     )
     stopping = {"value": False}
 

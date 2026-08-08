@@ -102,10 +102,29 @@ class CuvslamPostrunMetricsTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("--disable-all-poses-service", launcher)
+        self.assertIn("--disable-path-topics", launcher)
+        self.assertIn("--odom-csv-hz", launcher)
+        self.assertIn("stop_ros2_cli_daemon", launcher)
+        self.assertIn("ros2 daemon stop", launcher)
         self.assertIn("cuvslam_get_all_poses_once.py", launcher)
         self.assertIn("kill -0", launcher)
+        self.assertIn("scripts/camera/realsense_cuvslam_input_test.py", launcher)
+        self.assertIn('PYTHONPATH="$PROJECT_DIR/src', launcher)
+        self.assertIn("--skip-color-depth", launcher)
+        self.assertIn(
+            'ENABLE_LOOP_METRICS_RECORDER="${ENABLE_LOOP_METRICS_RECORDER:-true}"',
+            launcher,
+        )
+        self.assertIn('STARTUP_TOPIC_CHECKS="${STARTUP_TOPIC_CHECKS:-true}"', launcher)
+        self.assertIn('STARTUP_RATE_PROBES="${STARTUP_RATE_PROBES:-false}"', launcher)
+        self.assertIn('grep -Fx "$topic" "$LOG_DIR/topics.txt"', launcher)
+        self.assertNotIn("ros2 topic list | grep -Fx '$topic'", launcher)
+        self.assertIn("Skipping startup topic rate probes", launcher)
         self.assertIn('"--mount-mode"', online_recorder)
         self.assertIn('"--expected-base-frame"', online_recorder)
+        self.assertIn('"--disable-path-topics"', online_recorder)
+        self.assertIn('"--odom-csv-hz"', online_recorder)
+        self.assertIn('"path_topics_enabled"', online_recorder)
         self.assertNotIn("isaac_ros_visual_slam_interfaces", online_recorder)
         self.assertNotIn("create_client(", online_recorder)
 

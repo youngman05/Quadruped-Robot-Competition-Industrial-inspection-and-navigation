@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>cuvslam_lightweight_probe</name>
+  <version>0.1.0</version>
+  <description>Low-overhead metadata, IMU, odometry, status, and CPU observer for cuVSLAM.</description>
+  <maintainer email="111@example.com">111</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>nav_msgs</depend>
+  <depend>nlohmann_json</depend>
+  <depend>rclcpp</depend>
+  <depend>realsense2_camera_msgs</depend>
+  <depend>rmw</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

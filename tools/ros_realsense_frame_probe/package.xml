@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>ros_realsense_frame_probe</name>
+  <version>0.1.0</version>
+  <description>Low-overhead ROS RealSense frame-counter and timing probe.</description>
+  <maintainer email="111@example.com">111</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>nav_msgs</depend>
+  <depend>nlohmann_json</depend>
+  <depend>rclcpp</depend>
+  <depend>realsense2_camera_msgs</depend>
+  <depend>sensor_msgs</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

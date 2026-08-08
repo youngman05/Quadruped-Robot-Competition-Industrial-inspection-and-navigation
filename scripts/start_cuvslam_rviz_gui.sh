@@ -56,6 +56,11 @@ RVIZ_HEAVY_DISPLAYS="${RVIZ_HEAVY_DISPLAYS:-0}"
 LOOP_METRICS_INTERVAL="${LOOP_METRICS_INTERVAL:-2.0}"
 LOOP_METRICS_PATH_DUMP_INTERVAL="${LOOP_METRICS_PATH_DUMP_INTERVAL:-15.0}"
 LOOP_METRICS_POSTRUN_MAX_COUNT="${LOOP_METRICS_POSTRUN_MAX_COUNT:-100000}"
+LOOP_METRICS_ENABLE_PATH_TOPICS="${LOOP_METRICS_ENABLE_PATH_TOPICS:-false}"
+LOOP_METRICS_ODOM_CSV_HZ="${LOOP_METRICS_ODOM_CSV_HZ:-10.0}"
+ENABLE_LOOP_METRICS_RECORDER="${ENABLE_LOOP_METRICS_RECORDER:-true}"
+STARTUP_TOPIC_CHECKS="${STARTUP_TOPIC_CHECKS:-true}"
+STARTUP_RATE_PROBES="${STARTUP_RATE_PROBES:-false}"
 SKIP_INPUT_TEST=0
 SKIP_RVIZ=0
 LOOP_RECORDER_STARTED=0
@@ -108,6 +113,11 @@ Environment overrides:
   LOOP_METRICS_INTERVAL        Seconds between closure-metric summaries. Default: 2.0
   LOOP_METRICS_PATH_DUMP_INTERVAL Seconds between path CSV dumps. Default: 15.0
   LOOP_METRICS_POSTRUN_MAX_COUNT Maximum poses in the one-shot post-run query. Default: 100000
+  LOOP_METRICS_ENABLE_PATH_TOPICS Subscribe to rolling 1024-pose Path topics. Default: false
+  LOOP_METRICS_ODOM_CSV_HZ  CSV sampling rate; path metrics still use every odometry message. Default: 10
+  ENABLE_LOOP_METRICS_RECORDER Start the online lightweight recorder. Default: true
+  STARTUP_TOPIC_CHECKS    Capture and validate one topic-list snapshot. Default: true
+  STARTUP_RATE_PROBES     Run sequential ros2 topic hz probes before log follow. Default: false
 
 Run this from a Jetson desktop terminal, VNC, or NoMachine session.
 Plain SSH without X11/VNC will not show RViz.
@@ -240,6 +250,12 @@ rviz_bool() {
 run_in_container() {
   docker exec "$CONTAINER_NAME" bash -lc \
     "source /opt/ros/humble/setup.bash && source /workspaces/isaac_ros-dev/install/setup.bash && $*"
+}
+
+stop_ros2_cli_daemon() {
+  docker exec "$CONTAINER_NAME" bash -lc \
+    "source /opt/ros/humble/setup.bash && source /workspaces/isaac_ros-dev/install/setup.bash && timeout 10 ros2 daemon stop" \
+    >/dev/null 2>&1 || true
 }
 
 wait_for_topic() {
@@ -773,9 +789,27 @@ fi
 docker image inspect "$IMAGE" >/dev/null 2>&1 || die "Docker image not found: $IMAGE"
 
 if [[ "$SKIP_INPUT_TEST" -eq 0 ]]; then
-  if [[ -f "$PROJECT_DIR/scripts/realsense_cuvslam_input_test.py" ]]; then
+  INPUT_VALIDATOR_SRC=""
+  for candidate in \
+    "$PROJECT_DIR/scripts/realsense_cuvslam_input_test.py" \
+    "$PROJECT_DIR/scripts/camera/realsense_cuvslam_input_test.py"; do
+    if [[ -f "$candidate" ]]; then
+      INPUT_VALIDATOR_SRC="$candidate"
+      break
+    fi
+  done
+  if [[ -n "$INPUT_VALIDATOR_SRC" ]]; then
     echo "Running D455 input validator..."
-    (cd "$PROJECT_DIR" && python3 scripts/realsense_cuvslam_input_test.py --seconds "$INPUT_TEST_SECONDS")
+    (
+      cd "$PROJECT_DIR"
+      PYTHONPATH="$PROJECT_DIR/src${PYTHONPATH:+:$PYTHONPATH}" \
+        python3 "$INPUT_VALIDATOR_SRC" \
+          --width 640 \
+          --height 360 \
+          --fps 60 \
+          --seconds "$INPUT_TEST_SECONDS" \
+          --skip-color-depth
+    )
   else
     echo "WARNING: D455 validator not found under $PROJECT_DIR; continuing without it." >&2
   fi
@@ -802,6 +836,28 @@ CUVSLAM_LAUNCH="$LOG_DIR/cuvslam_realsense_tuned.launch.py"
 CUVSLAM_LAUNCH_RUNNER="$LOG_DIR/run_cuvslam_launch.py"
 RVIZ_HEAVY_ENABLED="$(rviz_bool "$RVIZ_HEAVY_DISPLAYS")"
 mkdir -p "$LOG_DIR"
+cat >"$LOG_DIR/runtime_config.env" <<EOF
+ENABLE_SLAM_VISUALIZATION=$ENABLE_SLAM_VISUALIZATION
+ENABLE_LANDMARKS_VIEW=$ENABLE_LANDMARKS_VIEW
+ENABLE_OBSERVATIONS_VIEW=$ENABLE_OBSERVATIONS_VIEW
+ENABLE_LOOP_METRICS_RECORDER=$ENABLE_LOOP_METRICS_RECORDER
+STARTUP_TOPIC_CHECKS=$STARTUP_TOPIC_CHECKS
+STARTUP_RATE_PROBES=$STARTUP_RATE_PROBES
+SKIP_RVIZ=$SKIP_RVIZ
+CUVSLAM_MOUNT_MODE=$CUVSLAM_MOUNT_MODE
+CUVSLAM_PROFILE=$CUVSLAM_PROFILE
+CUVSLAM_BASE_FRAME=$CUVSLAM_BASE_FRAME
+CUVSLAM_INPUT_BASE_FRAME=$CUVSLAM_INPUT_BASE_FRAME
+CUVSLAM_INPUT_LEFT_CAMERA_FRAME=$CUVSLAM_INPUT_LEFT_CAMERA_FRAME
+CUVSLAM_INPUT_RIGHT_CAMERA_FRAME=$CUVSLAM_INPUT_RIGHT_CAMERA_FRAME
+CUVSLAM_INPUT_IMU_FRAME=$CUVSLAM_INPUT_IMU_FRAME
+CUVSLAM_CAMERA_PROFILE=$CUVSLAM_CAMERA_PROFILE
+CUVSLAM_IMAGE_JITTER_THRESHOLD_MS=$CUVSLAM_IMAGE_JITTER_THRESHOLD_MS
+CUVSLAM_FORCE_PLANAR_MODE=$CUVSLAM_FORCE_PLANAR_MODE
+CUVSLAM_DENOISE_INPUT_IMAGES=$CUVSLAM_DENOISE_INPUT_IMAGES
+CUVSLAM_ENABLE_IMU_FUSION=$CUVSLAM_ENABLE_IMU_FUSION
+CUVSLAM_REALSENSE_PUBLISH_TF=$CUVSLAM_REALSENSE_PUBLISH_TF
+EOF
 write_rviz_config
 write_cuvslam_launch
 write_cuvslam_launch_runner
@@ -824,11 +880,14 @@ else
 fi
 
 start_loop_metrics_recorder() {
-  local ready=0
+  local ready=0 path_topics_flag="--disable-path-topics"
+  case "${LOOP_METRICS_ENABLE_PATH_TOPICS,,}" in
+    1|true|yes|on) path_topics_flag="" ;;
+  esac
   echo "Starting lightweight loop metrics recorder (GetAllPoses disabled)..."
   docker exec "$CONTAINER_NAME" rm -f /tmp/cuvslam_loop_metrics_recorder.pid
   docker exec -d "$CONTAINER_NAME" bash -lc \
-    "source /opt/ros/humble/setup.bash && source /workspaces/isaac_ros-dev/install/setup.bash && python3 /logs/cuvslam_loop_metrics_recorder.py --interval '$LOOP_METRICS_INTERVAL' --path-dump-interval '$LOOP_METRICS_PATH_DUMP_INTERVAL' --mount-mode '$CUVSLAM_MOUNT_MODE' --expected-base-frame '$CUVSLAM_BASE_FRAME' --disable-all-poses-service >/logs/loop_metrics_recorder.log 2>&1"
+    "source /opt/ros/humble/setup.bash && source /workspaces/isaac_ros-dev/install/setup.bash && python3 /logs/cuvslam_loop_metrics_recorder.py --interval '$LOOP_METRICS_INTERVAL' --path-dump-interval '$LOOP_METRICS_PATH_DUMP_INTERVAL' --odom-csv-hz '$LOOP_METRICS_ODOM_CSV_HZ' --mount-mode '$CUVSLAM_MOUNT_MODE' --expected-base-frame '$CUVSLAM_BASE_FRAME' --disable-all-poses-service $path_topics_flag >/logs/loop_metrics_recorder.log 2>&1"
   LOOP_RECORDER_STARTED=1
   for _ in $(seq 1 40); do
     if docker exec "$CONTAINER_NAME" bash -lc \
@@ -919,52 +978,71 @@ docker run -d --name "$CONTAINER_NAME" \
 
 echo "Waiting for cuVSLAM topics..."
 wait_for_topic "/visual_slam/tracking/odometry" || die "Timed out waiting for /visual_slam/tracking/odometry. See $LOG_DIR/launch.log"
-start_loop_metrics_recorder
+case "${ENABLE_LOOP_METRICS_RECORDER,,}" in
+  1|true|yes|on) start_loop_metrics_recorder ;;
+  *) echo "Skipping loop metrics recorder (ENABLE_LOOP_METRICS_RECORDER=$ENABLE_LOOP_METRICS_RECORDER)." ;;
+esac
 
-if run_in_container "ros2 topic list 2>/dev/null | grep -Fx '/visual_slam/status' >/dev/null"; then
-  echo "cuVSLAM odometry and status are publishing. One status sample:"
-  run_in_container "timeout 8 ros2 topic echo /visual_slam/status --once" | tee "$LOG_DIR/status_once.txt" || true
-else
-  echo "WARNING: /visual_slam/status is absent, but odometry is publishing; continuing." | tee "$LOG_DIR/status_once.txt" >&2
-fi
+case "${STARTUP_TOPIC_CHECKS,,}" in
+  1|true|yes|on)
+    echo "Recording one topic-list snapshot..."
+    run_in_container "timeout 12 ros2 topic list | sort" | tee "$LOG_DIR/topics.txt" >/dev/null || true
+    if grep -Fx '/visual_slam/status' "$LOG_DIR/topics.txt" >/dev/null; then
+      echo "cuVSLAM odometry and status are publishing. One status sample:"
+      run_in_container "timeout 8 ros2 topic echo /visual_slam/status --once" | tee "$LOG_DIR/status_once.txt" || true
+    else
+      echo "WARNING: /visual_slam/status is absent, but odometry is publishing; continuing." | tee "$LOG_DIR/status_once.txt" >&2
+    fi
+    for topic in \
+      /visual_slam/status \
+      /visual_slam/tracking/odometry \
+      /visual_slam/tracking/vo_path \
+      /visual_slam/tracking/slam_path \
+      /visual_slam/vis/slam_odometry \
+      /visual_slam/vis/landmarks_cloud \
+      /visual_slam/vis/observations_cloud \
+      /visual_slam/vis/loop_closure_cloud \
+      /visual_slam/vis/pose_graph_nodes \
+      /visual_slam/vis/pose_graph_edges \
+      /visual_slam/vis/pose_graph_edges2 \
+      /visual_slam/vis/velocity \
+      /visual_slam/vis/gravity; do
+      if grep -Fx "$topic" "$LOG_DIR/topics.txt" >/dev/null; then
+        echo "OK topic: $topic" | tee -a "$LOG_DIR/topic_check.txt"
+      else
+        echo "MISSING topic: $topic" | tee -a "$LOG_DIR/topic_check.txt"
+      fi
+    done
+    ;;
+  *)
+    echo "Skipping startup topic checks (STARTUP_TOPIC_CHECKS=$STARTUP_TOPIC_CHECKS)."
+    : >"$LOG_DIR/topics.txt"
+    ;;
+esac
 
-echo "Recording topic list and rates..."
-run_in_container "ros2 topic list | sort" | tee "$LOG_DIR/topics.txt" >/dev/null || true
-for topic in \
-  /visual_slam/status \
-  /visual_slam/tracking/odometry \
-  /visual_slam/tracking/vo_path \
-  /visual_slam/tracking/slam_path \
-  /visual_slam/vis/slam_odometry \
-  /visual_slam/vis/landmarks_cloud \
-  /visual_slam/vis/observations_cloud \
-  /visual_slam/vis/loop_closure_cloud \
-  /visual_slam/vis/pose_graph_nodes \
-  /visual_slam/vis/pose_graph_edges \
-  /visual_slam/vis/pose_graph_edges2 \
-  /visual_slam/vis/velocity \
-  /visual_slam/vis/gravity; do
-  if run_in_container "ros2 topic list | grep -Fx '$topic' >/dev/null"; then
-    echo "OK topic: $topic" | tee -a "$LOG_DIR/topic_check.txt"
-  else
-    echo "MISSING topic: $topic" | tee -a "$LOG_DIR/topic_check.txt"
-  fi
-done
+case "${STARTUP_RATE_PROBES,,}" in
+  1|true|yes|on)
+    for topic in \
+      /visual_slam/status \
+      /visual_slam/tracking/odometry \
+      /visual_slam/tracking/slam_path \
+      /visual_slam/vis/landmarks_cloud \
+      /visual_slam/vis/observations_cloud \
+      /visual_slam/vis/loop_closure_cloud \
+      /visual_slam/vis/pose_graph_nodes; do
+      if grep -Fx "$topic" "$LOG_DIR/topics.txt" >/dev/null; then
+        safe_name="${topic#/}"
+        safe_name="${safe_name//\//_}"
+        run_in_container "timeout 12 ros2 topic hz '$topic'" >"$LOG_DIR/hz_${safe_name}.txt" 2>&1 || true
+      fi
+    done
+    ;;
+  *)
+    echo "Skipping startup topic rate probes (STARTUP_RATE_PROBES=$STARTUP_RATE_PROBES)."
+    ;;
+esac
 
-for topic in \
-  /visual_slam/status \
-  /visual_slam/tracking/odometry \
-  /visual_slam/tracking/slam_path \
-  /visual_slam/vis/landmarks_cloud \
-  /visual_slam/vis/observations_cloud \
-  /visual_slam/vis/loop_closure_cloud \
-  /visual_slam/vis/pose_graph_nodes; do
-  if run_in_container "ros2 topic list | grep -Fx '$topic' >/dev/null"; then
-    safe_name="${topic#/}"
-    safe_name="${safe_name//\//_}"
-    run_in_container "timeout 12 ros2 topic hz '$topic'" >"$LOG_DIR/hz_${safe_name}.txt" 2>&1 || true
-  fi
-done
+stop_ros2_cli_daemon
 
 if [[ "$SKIP_RVIZ" -eq 0 ]]; then
   if run_in_container "command -v rviz2 >/dev/null"; then
