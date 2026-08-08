@@ -52,6 +52,10 @@ CUVSLAM_BASE_TO_CAMERA_YAW="${CUVSLAM_BASE_TO_CAMERA_YAW:-0.0}"
 ENABLE_SLAM_VISUALIZATION="${ENABLE_SLAM_VISUALIZATION:-true}"
 ENABLE_LANDMARKS_VIEW="${ENABLE_LANDMARKS_VIEW:-true}"
 ENABLE_OBSERVATIONS_VIEW="${ENABLE_OBSERVATIONS_VIEW:-true}"
+ENABLE_SLAM_DIAGNOSTICS="${ENABLE_SLAM_DIAGNOSTICS:-false}"
+SLAM_DIAGNOSTICS_METRICS_PERIOD_MS="${SLAM_DIAGNOSTICS_METRICS_PERIOD_MS:-33}"
+SLAM_DIAGNOSTICS_GRAPH_PERIOD_MS="${SLAM_DIAGNOSTICS_GRAPH_PERIOD_MS:-1000}"
+SLAM_DIAGNOSTICS_MAX_ITEMS_COUNT="${SLAM_DIAGNOSTICS_MAX_ITEMS_COUNT:-8192}"
 RVIZ_HEAVY_DISPLAYS="${RVIZ_HEAVY_DISPLAYS:-0}"
 LOOP_METRICS_INTERVAL="${LOOP_METRICS_INTERVAL:-2.0}"
 LOOP_METRICS_PATH_DUMP_INTERVAL="${LOOP_METRICS_PATH_DUMP_INTERVAL:-15.0}"
@@ -109,6 +113,11 @@ Environment overrides:
   ENABLE_SLAM_VISUALIZATION    Publish SLAM visualization topics. Default: true
   ENABLE_LANDMARKS_VIEW        Publish landmarks view. Default: true
   ENABLE_OBSERVATIONS_VIEW     Publish observations cloud. Default: true
+  ENABLE_SLAM_DIAGNOSTICS      Export native LC/PGO metrics and pose graph JSONL. Default: false
+  SLAM_DIAGNOSTICS_METRICS_PERIOD_MS  Native metrics polling period, 10..1000. Default: 33
+  SLAM_DIAGNOSTICS_GRAPH_PERIOD_MS    Graph minimum/periodic interval, 1000..60000. Default: 1000
+  SLAM_DIAGNOSTICS_MAX_ITEMS_COUNT    Maximum nodes/edges, 1..65536. Default: 8192
+  Diagnostics output is fixed at /logs/cuvslam_slam_diagnostics.jsonl.
   RVIZ_HEAVY_DISPLAYS          Set to 1 to enable IR images and heavy clouds in RViz. Default: 0
   LOOP_METRICS_INTERVAL        Seconds between closure-metric summaries. Default: 2.0
   LOOP_METRICS_PATH_DUMP_INTERVAL Seconds between path CSV dumps. Default: 15.0
@@ -165,6 +174,23 @@ py_bool() {
     *) echo "False" ;;
   esac
 }
+
+require_integer_in_range() {
+  local name="$1" value="$2" minimum="$3" maximum="$4"
+  [[ "$value" =~ ^[0-9]+$ ]] || die "$name must be an integer: $value"
+  (( value >= minimum && value <= maximum )) || \
+    die "$name must be in [$minimum, $maximum]: $value"
+}
+
+require_integer_in_range \
+  "SLAM_DIAGNOSTICS_METRICS_PERIOD_MS" "$SLAM_DIAGNOSTICS_METRICS_PERIOD_MS" 10 1000
+require_integer_in_range \
+  "SLAM_DIAGNOSTICS_GRAPH_PERIOD_MS" "$SLAM_DIAGNOSTICS_GRAPH_PERIOD_MS" 1000 60000
+require_integer_in_range \
+  "SLAM_DIAGNOSTICS_MAX_ITEMS_COUNT" "$SLAM_DIAGNOSTICS_MAX_ITEMS_COUNT" 1 65536
+if (( SLAM_DIAGNOSTICS_GRAPH_PERIOD_MS < SLAM_DIAGNOSTICS_METRICS_PERIOD_MS )); then
+  die "SLAM_DIAGNOSTICS_GRAPH_PERIOD_MS must be >= SLAM_DIAGNOSTICS_METRICS_PERIOD_MS"
+fi
 
 case "${CUVSLAM_PROFILE,,}" in
   planar_60fps)
@@ -630,7 +656,8 @@ RVIZ
 }
 
 write_cuvslam_launch() {
-  local enable_slam_py enable_landmarks_py enable_observations_py debug_py
+  local enable_slam_py enable_landmarks_py enable_observations_py
+  local enable_slam_diagnostics_py debug_py
   local enable_localization_n_mapping_py publish_map_to_odom_tf_py publish_odom_to_base_tf_py
   local enable_imu_fusion_py publish_base_to_camera_tf_py
   local force_planar_mode_py denoise_input_images_py realsense_publish_tf_py
@@ -638,6 +665,7 @@ write_cuvslam_launch() {
   enable_slam_py="$(py_bool "$ENABLE_SLAM_VISUALIZATION")"
   enable_landmarks_py="$(py_bool "$ENABLE_LANDMARKS_VIEW")"
   enable_observations_py="$(py_bool "$ENABLE_OBSERVATIONS_VIEW")"
+  enable_slam_diagnostics_py="$(py_bool "$ENABLE_SLAM_DIAGNOSTICS")"
   debug_py="$(py_bool "$DEBUG_DUMP")"
   enable_localization_n_mapping_py="$(py_bool "$CUVSLAM_ENABLE_LOCALIZATION_N_MAPPING")"
   publish_map_to_odom_tf_py="$(py_bool "$CUVSLAM_PUBLISH_MAP_TO_ODOM_TF")"
@@ -713,6 +741,11 @@ def generate_launch_description():
             'enable_slam_visualization': ${enable_slam_py},
             'enable_landmarks_view': ${enable_landmarks_py},
             'enable_observations_view': ${enable_observations_py},
+            'enable_slam_diagnostics': ${enable_slam_diagnostics_py},
+            'slam_diagnostics_path': '/logs/cuvslam_slam_diagnostics.jsonl',
+            'slam_diagnostics_metrics_period_ms': ${SLAM_DIAGNOSTICS_METRICS_PERIOD_MS},
+            'slam_diagnostics_graph_period_ms': ${SLAM_DIAGNOSTICS_GRAPH_PERIOD_MS},
+            'slam_diagnostics_max_items_count': ${SLAM_DIAGNOSTICS_MAX_ITEMS_COUNT},
             'map_frame': 'map',
             'odom_frame': 'odom',
             'base_frame': '${CUVSLAM_BASE_FRAME}',
@@ -840,6 +873,11 @@ cat >"$LOG_DIR/runtime_config.env" <<EOF
 ENABLE_SLAM_VISUALIZATION=$ENABLE_SLAM_VISUALIZATION
 ENABLE_LANDMARKS_VIEW=$ENABLE_LANDMARKS_VIEW
 ENABLE_OBSERVATIONS_VIEW=$ENABLE_OBSERVATIONS_VIEW
+ENABLE_SLAM_DIAGNOSTICS=$ENABLE_SLAM_DIAGNOSTICS
+SLAM_DIAGNOSTICS_PATH=/logs/cuvslam_slam_diagnostics.jsonl
+SLAM_DIAGNOSTICS_METRICS_PERIOD_MS=$SLAM_DIAGNOSTICS_METRICS_PERIOD_MS
+SLAM_DIAGNOSTICS_GRAPH_PERIOD_MS=$SLAM_DIAGNOSTICS_GRAPH_PERIOD_MS
+SLAM_DIAGNOSTICS_MAX_ITEMS_COUNT=$SLAM_DIAGNOSTICS_MAX_ITEMS_COUNT
 ENABLE_LOOP_METRICS_RECORDER=$ENABLE_LOOP_METRICS_RECORDER
 STARTUP_TOPIC_CHECKS=$STARTUP_TOPIC_CHECKS
 STARTUP_RATE_PROBES=$STARTUP_RATE_PROBES
@@ -951,6 +989,11 @@ echo "CUVSLAM_FORCE_PLANAR_MODE=$CUVSLAM_FORCE_PLANAR_MODE"
 echo "CUVSLAM_DENOISE_INPUT_IMAGES=$CUVSLAM_DENOISE_INPUT_IMAGES"
 echo "CUVSLAM_ENABLE_IMU_FUSION=$CUVSLAM_ENABLE_IMU_FUSION"
 echo "CUVSLAM_REALSENSE_PUBLISH_TF=$CUVSLAM_REALSENSE_PUBLISH_TF"
+echo "ENABLE_SLAM_DIAGNOSTICS=$ENABLE_SLAM_DIAGNOSTICS"
+echo "SLAM_DIAGNOSTICS_PATH=/logs/cuvslam_slam_diagnostics.jsonl"
+echo "SLAM_DIAGNOSTICS_METRICS_PERIOD_MS=$SLAM_DIAGNOSTICS_METRICS_PERIOD_MS"
+echo "SLAM_DIAGNOSTICS_GRAPH_PERIOD_MS=$SLAM_DIAGNOSTICS_GRAPH_PERIOD_MS"
+echo "SLAM_DIAGNOSTICS_MAX_ITEMS_COUNT=$SLAM_DIAGNOSTICS_MAX_ITEMS_COUNT"
 echo "ENABLE_LANDMARKS_VIEW=$ENABLE_LANDMARKS_VIEW"
 echo "ENABLE_OBSERVATIONS_VIEW=$ENABLE_OBSERVATIONS_VIEW"
 echo "RVIZ_HEAVY_DISPLAYS=$RVIZ_HEAVY_DISPLAYS"

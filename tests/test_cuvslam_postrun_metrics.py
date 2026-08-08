@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import math
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
@@ -17,7 +18,8 @@ def load_script_module():
     return module
 
 
-def make_pose(x, y, z=0.0, index=0, frame_id="map"):
+def make_pose(x, y, z=0.0, index=0, frame_id="map", yaw_deg=0.0):
+    yaw = math.radians(yaw_deg)
     return SimpleNamespace(
         header=SimpleNamespace(
             frame_id=frame_id,
@@ -25,7 +27,12 @@ def make_pose(x, y, z=0.0, index=0, frame_id="map"):
         ),
         pose=SimpleNamespace(
             position=SimpleNamespace(x=x, y=y, z=z),
-            orientation=SimpleNamespace(x=0.0, y=0.0, z=0.0, w=1.0),
+            orientation=SimpleNamespace(
+                x=0.0,
+                y=0.0,
+                z=math.sin(yaw / 2.0),
+                w=math.cos(yaw / 2.0),
+            ),
         ),
     )
 
@@ -92,6 +99,82 @@ class CuvslamPostrunMetricsTests(unittest.TestCase):
         self.assertEqual(payload["service_calls"], 1)
         self.assertEqual(payload["requested_max_count"], 100000)
         self.assertEqual(len(csv_lines), 3)
+
+    def test_scales_get_all_poses_stamps_and_selects_tracking_window(self):
+        poses = [
+            make_pose(99.0, 0.0, index=1786202),
+            make_pose(0.0, 0.0, index=1786203, yaw_deg=179.0),
+            make_pose(1.0, 0.0, index=1786204),
+            make_pose(0.1, 0.0, index=1786205, yaw_deg=-179.0),
+            make_pose(99.0, 0.0, index=1786206),
+        ]
+
+        selected = self.module.select_pose_window(
+            poses,
+            1786203000.0,
+            1786205000.0,
+            timestamp_scale=1000.0,
+        )
+        summary = self.module.summarize_pose_stamped_list(
+            selected, timestamp_scale=1000.0
+        )
+
+        self.assertEqual(summary["poses"], 3)
+        self.assertEqual(summary["first_stamp_sec"], 1786203000.0)
+        self.assertEqual(summary["last_stamp_sec"], 1786205000.0)
+        self.assertAlmostEqual(summary["xy_closure_error_m"], 0.1)
+        self.assertAlmostEqual(summary["yaw_closure_deg"], 2.0)
+
+    def test_report_records_timestamp_scale_and_tracking_window(self):
+        poses = [make_pose(0.0, 0.0, index=1), make_pose(0.1, 0.0, index=2)]
+        summary = self.module.summarize_pose_stamped_list(
+            poses, timestamp_scale=1000.0
+        )
+        tracking_window = dict(summary)
+        tracking_window.update(
+            {
+                "requested_start_stamp_sec": 1000.0,
+                "requested_end_stamp_sec": 2000.0,
+            }
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            log_dir = Path(temporary_directory)
+            self.module.write_report(
+                log_dir,
+                poses,
+                100000,
+                summary,
+                "test_result",
+                timestamp_scale=1000.0,
+                tracking_window=tracking_window,
+            )
+            payload = json.loads(
+                (log_dir / "loop_metrics_latest.json").read_text(encoding="utf-8")
+            )
+            csv_header = (log_dir / "slam_all_poses_latest.csv").read_text(
+                encoding="utf-8"
+            ).splitlines()[0]
+
+        self.assertEqual(payload["pose_timestamp_scale"], 1000.0)
+        self.assertEqual(payload["tracking_window"]["poses"], 2)
+        self.assertEqual(csv_header.split(",")[1:3], ["stamp_sec", "raw_stamp_sec"])
+
+    def test_loads_legacy_raw_timestamp_csv(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "poses.csv"
+            path.write_text(
+                "index,stamp_sec,frame_id,x,y,z,qx,qy,qz,qw\n"
+                "0,1786202.125000000,,1,2,3,0,0,0,1\n",
+                encoding="utf-8",
+            )
+            poses = self.module.load_pose_csv(path)
+
+        self.assertEqual(len(poses), 1)
+        self.assertAlmostEqual(
+            self.module.normalized_pose_stamp_seconds(poses[0], 1000.0),
+            1786202125.0,
+            places=6,
+        )
 
     def test_online_launcher_disables_get_all_poses_and_checks_process(self):
         launcher = (REPO_ROOT / "scripts" / "start_cuvslam_rviz_gui.sh").read_text(

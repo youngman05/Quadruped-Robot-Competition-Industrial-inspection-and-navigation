@@ -1,6 +1,57 @@
 # cuVSLAM 最终遥控建图验收规程
 
+> 当前状态（2026-08-09）：两次独立短闭环均未证明有效全局 XY 纠偏，旧日志也没有原生回环边证据。第三次短环、半程和完整路线继续冻结。当前唯一允许的下一步是构建原生 diagnostics exporter 后执行静止负载 A/B；在 A/B 通过且用户另行决定前，不得移动机器人。
+
 本文用于执行一次有判别力的 cuVSLAM 比赛路线验收。它不是“再走一遍看看”，也不允许失败后继续绕圈补拍。
+
+## 当前唯一允许步骤：原生 diagnostics 静止 A/B
+
+此步骤只验证 exporter 的负载和落盘契约，不判断回环质量。机器人保持当前姿态完全静止；禁止遥控、站起、趴下、调用 `GetAllPoses` 或启动任何路线。A/B 必须分别独立冷启动，唯一变量是 `ENABLE_SLAM_DIAGNOSTICS`：
+
+| 轮次 | `ENABLE_SLAM_DIAGNOSTICS` | 预期 |
+|---|---|---|
+| A | `false` | 不生成 diagnostics JSONL，保持原生产行为 |
+| B | `true` | 生成 `/logs/cuvslam_slam_diagnostics.jsonl` |
+
+每轮均使用以下命令。先执行 A，完全停止并确认 Docker/相关进程为空后，将 `AB_MODE=A` 与 `DIAGNOSTICS_ENABLED=false` 分别改为 `B` 与 `true`，再执行 B：
+
+```bash
+cd /home/superwfx666/quadruped-robot-competition-nav2-dwb
+
+AB_MODE=A
+DIAGNOSTICS_ENABLED=false
+
+CONTAINER_NAME="cuvslam_diag_${AB_MODE,,}" \
+LOG_ROOT="$HOME/cuvslam_slam_diagnostics_ab/$AB_MODE" \
+PROJECT_DIR="$PWD" \
+CUVSLAM_MOUNT_MODE=robot \
+CUVSLAM_PROFILE=custom \
+CUVSLAM_CAMERA_PROFILE=640x360x30 \
+CUVSLAM_IMAGE_JITTER_THRESHOLD_MS=40.0 \
+CUVSLAM_ENABLE_LOCALIZATION_N_MAPPING=true \
+CUVSLAM_ENABLE_IMU_FUSION=true \
+CUVSLAM_FORCE_PLANAR_MODE=true \
+CUVSLAM_PUBLISH_MAP_TO_ODOM_TF=false \
+CUVSLAM_PUBLISH_ODOM_TO_BASE_TF=false \
+ENABLE_SLAM_VISUALIZATION=false \
+ENABLE_LANDMARKS_VIEW=false \
+ENABLE_OBSERVATIONS_VIEW=false \
+ENABLE_SLAM_DIAGNOSTICS="$DIAGNOSTICS_ENABLED" \
+SLAM_DIAGNOSTICS_METRICS_PERIOD_MS=33 \
+SLAM_DIAGNOSTICS_GRAPH_PERIOD_MS=1000 \
+SLAM_DIAGNOSTICS_MAX_ITEMS_COUNT=8192 \
+ENABLE_LOOP_METRICS_RECORDER=false \
+STARTUP_TOPIC_CHECKS=false \
+STARTUP_RATE_PROBES=false \
+RVIZ_HEAVY_DISPLAYS=0 \
+bash scripts/start_cuvslam_rviz_gui.sh --skip-input-test --no-rviz
+```
+
+diagnostics 采集契约固定为：正常运行期间的原生 pose graph 全图读取硬上限为 `1 Hz`（停机 final 快照除外）；每个独立 metrics 事件保留两次受限频器约束的关联 graph attempt，以覆盖异步图更新；快照写 `possibly_truncated=true` 时必须同时写 `edge_diff_valid=false`，且不得更新上一份可靠 edge baseline。
+
+tracker 稳定后保持 `130s`，期间不运行 RViz、PointCloud 显示、rosbag、ROS CLI topic/rate 探针、全量系统日志扫描或在线 recorder。两轮都只允许一次相同的 `docker stats --no-stream` 采样，用于粗略比较容器 CPU；随后停止会话，离线统计 `launch.log` 的 frame delta/tracking lost、JSONL 行数和文件增长。B 轮只在以下条件全部满足时通过：没有相对 A 新增 frame delta/tracking lost，CPU 没有持续异常增量，JSONL 每行可独立解析，且终止前包含 final graph snapshot。
+
+A/B 通过只说明 exporter 具备低负载采集条件，不解冻任何路线，也不等于 cuVSLAM 已建立有效回环边。
 
 验收固定采用三个相互独立的冷启动会话：
 
@@ -69,7 +120,17 @@ docker ps --format '{{.Names}}'
 ps -eo pid=,comm=,args= | grep -E \
   'visual_slam_node|realsense2_camera|cuvslam|nav2|bt_navigator|controller_server|planner_server|behavior_server|waypoint_follower|cmd_vel|final_bridge|motion_sender|lite3_udp|_ros2_daemon|tegrastats|rviz2|recorder' \
   | grep -v grep || true
+
+# Ubuntu“设置”窗口必须关闭；只检查，不在 runbook 内自动终止桌面进程
+if pgrep -u "$(id -u)" -f '^gnome-control-center($| )' >/dev/null; then
+  echo 'GNOME_CONTROL_CENTER_RUNNING'
+  exit 1
+else
+  echo 'GNOME_CONTROL_CENTER_OFF'
+fi
 ```
+
+本机单变量 A/B 中，关闭 `gnome-control-center` 后，原先稳定复现的约 `30.5s` 周期图像断档在 `130s` 稳定窗口内消失，因此将其视为当前环境已确认的周期触发源。测试前正常关闭 Ubuntu“设置”窗口即可；不要停止 `systemd-timedated` 或 `iio-sensor-proxy`，它们不是本规程要修改的变量。窗口结束后执行一次全量 `journalctl` 又触发了 `167.64ms` 瞬态，说明底层机制仍是系统调度或资源竞争；关闭设置窗口是运行门禁，不代表已经解释历史运动漂移的全部原因。
 
 现场必须另行确认：
 
@@ -77,6 +138,7 @@ ps -eo pid=,comm=,args= | grep -E \
 2. 机器狗站稳，D455 支架和线缆无松动。
 3. 本级路线净空，遥控器回中可靠，急停人员就位。
 4. 不运行 `start_competition.sh`、`lite3_udp_smoke.py --armed`，不发布 `/cmd_vel`。
+5. cuVSLAM 运行期间不要执行全量 `journalctl`、`systemctl status` 或桌面设置查询；如需读取系统日志，先结束本级 cuVSLAM 会话。
 
 ## 2. 固定低负载启动配置
 
@@ -235,12 +297,17 @@ docker exec "$CN" bash -lc \
      --log-dir '/logs/acceptance/$STAGE/postrun' \
      --max-count 100000 \
      --request-timeout 120 \
+     --pose-timestamp-scale 1000 \
+     --tracking-start '/logs/acceptance/$STAGE/tracking_start.json' \
+     --tracking-end '/logs/acceptance/$STAGE/tracking_end.json' \
      --min-path-length '$MIN_PATH' \
      --good-closure 0.20 \
      --usable-closure 0.50"
 ```
 
 无论成功、超时还是返回失败，都不得再次调用。读取三份证据：
+
+当前 cuVSLAM `GetAllPoses` 返回的 pose stamp 数值为 tracking UNIX 秒的 `1/1000`；工具必须显式使用 `--pose-timestamp-scale 1000`。通过/失败只使用 `tracking_window_*` 同窗字段，整图 `all_poses` 首末点仅保留作审计，不得替代同窗指标。
 
 ```bash
 cat "$HOST_LOG_DIR/acceptance/$STAGE/tracking_delta.json"
@@ -254,9 +321,9 @@ grep -Ein \
 
 | 结果 | 解释 |
 |---|---|
-| tracking `xy_drift_m` 小，后端闭环也 `<0.20m` | 前端本身稳定，后端结果可接受 |
-| tracking 漂移较大，后端闭环明显更小且 `<0.20m` | 后端 SLAM 已把累计误差拉回 |
-| tracking 漂移较大，后端仍 `>=0.20m` 或与 tracking 同量级 | 后端没有形成可用全局纠偏，本级失败 |
+| tracking `xy_drift_m` 小，同窗后端闭环也 `<0.20m` | 前端本身稳定，后端结果可接受 |
+| tracking 漂移较大，同窗后端闭环明显更小且 `<0.20m` | 后端 SLAM 已把累计误差拉回 |
+| tracking 漂移较大，同窗后端仍 `>=0.20m` 或与 tracking 同量级 | 后端没有形成可用全局纠偏，本级失败 |
 | 物理回到起点，但后端为 `0.5-0.9m` | 完整路线时终止 cuVSLAM 建图优化路线 |
 
 不要用 tracking odometry 的终点误差代替后端 pose graph 闭环误差，也不要用 alignment 吸收本级误差。
