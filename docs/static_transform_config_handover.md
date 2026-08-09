@@ -56,6 +56,11 @@ static_extrinsics.yaml
   -> launch/static_transforms.launch.py
   -> tf2_ros/static_transform_publisher (/tf_static)
 
+arm_new_ros/arm_motion_node
+  -> TF lookup camera_link -> arm_base_link
+  -> fixed ROS-to-ArmPi API axis conversion
+  -> ArmPi planner
+
 Docker /d455_object_yolo_3d
   -> UDP 127.0.0.1:19002, frame_id=camera_link
   -> Host yolo_udp_bridge
@@ -75,26 +80,19 @@ That lets a downstream consumer use freshness as a safety signal.
 
 ## Current Calibration Status
 
-The existing `base_link -> camera_link` metadata intentionally remains:
+The current `base_link -> camera_link` entry is marked `calibrated` in the
+canonical YAML. Its source is the five-point stationary green-block fit on the
+Jetson Xavier, and its calibration date and uncertainty values are recorded
+beside the transform. That YAML entry is the current source of truth; do not
+replace it with a nominal transform or maintain a separate matrix copy.
 
-```yaml
-status: provisional
-source: "Nominal ..."
-measurement:
-  calibrated_at: null
-```
-
-This is correct for the present evidence level. The transform values are an
-engineering initial installation estimate supplied for integration, but this
-repository does not contain the original calibration fixture definition, raw
-measurements, samples, operator record, or residual-error report. Changing
-the entry to `calibrated`, replacing `Nominal`, or filling `calibrated_at`
-without those records would make an unsupported accuracy claim. Do not change
-these metadata fields during the current implementation work.
-
-The configured uncertainty values are planning bounds, not measured error
-statistics. Avoid using them as an avoidance safety margin until calibration
-data exists.
+`base_link -> arm_base_link` is currently published with the user-provided
+mount pose, but its status is `provisional`: no uncertainty bounds, raw
+measurement record, or known-point validation have yet been supplied. The
+`arm_new` API frame `arm` is also not a TF frame: it has the same intended
+physical origin as `arm_base_link` but uses +X right, +Y forward, +Z up rather
+than ROS REP-103 axes. Its exact axis conversion is documented in
+`configs/transforms/README.md` and `static_extrinsics.yaml`.
 
 ## Required Evidence Before Marking Calibrated
 

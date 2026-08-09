@@ -1,0 +1,45 @@
+# Legacy offline coordinate-conversion configuration.
+#
+# Runtime ROS nodes must use configs/transforms/static_extrinsics.yaml through
+# TF instead of this file. Keep this only for FrameTransformer CLI/API tests.
+#
+# 单位：米。真实抓取前必须替换下面的单位矩阵。
+#
+# arm/arm_base:
+#   +Y 机械臂正前方，+X 横向偏移，+Z 向上
+#
+# camera:
+#   RealSense 光学系通常是 +X 图像右，+Y 图像下，+Z 镜头前
+#
+# dog:
+#   需按机器狗 SDK/ROS 确认，常见为 +X 前，+Y 左，+Z 上
+#
+# 命名：
+#   arm_from_camera: p_camera -> p_arm
+#   arm_from_dog:    p_dog -> p_arm
+#
+# 矩阵格式：
+#   [r11, r12, r13, tx]
+#   [r21, r22, r23, ty]
+#   [r31, r32, r33, tz]
+#   [0.0, 0.0, 0.0, 1.0]
+
+# This file currently contains identity matrices for offline planning only.
+# Measure arm_from_camera for the mounted arm before real motion. The ROS node
+# additionally requires transform_calibrated:=true before it sends commands.
+units: m
+
+transforms:
+  arm_from_camera:
+    matrix:
+      - [1.0, 0.0, 0.0, 0.0]
+      - [0.0, 1.0, 0.0, 0.0]
+      - [0.0, 0.0, 1.0, 0.0]
+      - [0.0, 0.0, 0.0, 1.0]
+
+  arm_from_dog:
+    matrix:
+      - [1.0, 0.0, 0.0, 0.0]
+      - [0.0, 1.0, 0.0, 0.0]
+      - [0.0, 0.0, 1.0, 0.0]
+      - [0.0, 0.0, 0.0, 1.0]

@@ -33,14 +33,24 @@ class StaticExtrinsicsConfigTest(unittest.TestCase):
         schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
         self.assertEqual(schema["$id"], "https://quadruped.local/schemas/static-extrinsics-v1.json")
 
-    def test_camera_transform_is_the_single_published_static_transform(self) -> None:
+    def test_camera_and_arm_transforms_are_the_published_static_transforms(self) -> None:
         transforms = self.config["static_transforms"]
-        self.assertEqual(len(transforms), 1)
-        transform = transforms[0]
-        self.assertTrue(transform["publish"])
-        self.assertEqual(transform["parent_frame"], "base_link")
-        self.assertEqual(transform["child_frame"], "camera_link")
-        self.assertEqual(transform["status"], "calibrated")
+        self.assertEqual(len(transforms), 2)
+        camera, arm = transforms
+        self.assertTrue(camera["publish"])
+        self.assertEqual(camera["parent_frame"], "base_link")
+        self.assertEqual(camera["child_frame"], "camera_link")
+        self.assertEqual(camera["status"], "calibrated")
+
+        self.assertTrue(arm["publish"])
+        self.assertEqual(arm["parent_frame"], "base_link")
+        self.assertEqual(arm["child_frame"], "arm_base_link")
+        self.assertEqual(arm["status"], "provisional")
+        np.testing.assert_allclose(arm["translation_m"], [0.24, 0.0, 0.41])
+        np.testing.assert_allclose(arm["rotation_xyzw"], [0.0, 0.0, 0.0, 1.0])
+        self.assertIsNone(arm["measurement"]["calibrated_at"])
+        self.assertIsNone(arm["measurement"]["translational_uncertainty_m"])
+        self.assertIsNone(arm["measurement"]["rotational_uncertainty_deg"])
 
     def test_calibrated_camera_transform_is_a_proper_rigid_transform(self) -> None:
         transform = self.config["static_transforms"][0]

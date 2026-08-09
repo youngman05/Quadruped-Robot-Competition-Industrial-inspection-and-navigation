@@ -10,13 +10,13 @@ convention:
 frames:
   base_link:
     owner: robot_description
-    description: "Lite3 torso/body reference frame."
+    description: "Lite3 torso/body reference frame; ROS REP-103 axes: +X forward, +Y left, +Z up."
   camera_link:
     owner: project_static_extrinsics
-    description: "D455 mechanical frame; RealSense owns the child optical frames."
+    description: "D455 mechanical mounting frame; ROS REP-103 axes: +X forward, +Y left, +Z up. RealSense owns the child optical frames."
   arm_base_link:
     owner: project_static_extrinsics
-    description: "Arm mounting frame. Its static extrinsic is not measured yet."
+    description: "ArmPi mounting-base TF frame. Its origin is the same physical base reference point used by the arm_new API frame `arm`; ROS REP-103 axes are +X arm forward, +Y arm left, +Z up. `arm` itself is not a ROS TF frame: its right-handed API axes are +X right, +Y forward, +Z up, so for coincident origins p_arm_base_link = [y_arm, -x_arm, z_arm]. The base_link->arm_base_link mounting extrinsic is not measured yet and is intentionally absent from static_transforms."
 
 static_transforms:
   - parent_frame: base_link
@@ -30,3 +30,17 @@ static_transforms:
       calibrated_at: "2026-08-04"
       translational_uncertainty_m: [0.020, 0.020, 0.020]
       rotational_uncertainty_deg: [1.5, 1.5, 1.5]
+
+  # The physical ArmPi API frame uses +X right, +Y forward, +Z up. The
+  # published child uses ROS axes instead, so it is aligned with base_link.
+  - parent_frame: base_link
+    child_frame: arm_base_link
+    translation_m: [0.24, 0.0, 0.41]
+    rotation_xyzw: [0.0, 0.0, 0.0, 1.0]
+    publish: true
+    status: provisional
+    source: "User-provided ArmPi base pose in base_link; position (front, left, up) = (0.24, 0.0, 0.41) m and axes parallel to base_link."
+    measurement:
+      calibrated_at: null
+      translational_uncertainty_m: null
+      rotational_uncertainty_deg: null

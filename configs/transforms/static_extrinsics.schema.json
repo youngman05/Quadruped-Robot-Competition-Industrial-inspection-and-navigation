@@ -67,8 +67,18 @@
           ],
           "properties": {
             "calibrated_at": {"type": ["string", "null"]},
-            "translational_uncertainty_m": {"$ref": "#/$defs/vector3"},
-            "rotational_uncertainty_deg": {"$ref": "#/$defs/vector3"}
+            "translational_uncertainty_m": {
+              "oneOf": [
+                {"$ref": "#/$defs/vector3"},
+                {"type": "null"}
+              ]
+            },
+            "rotational_uncertainty_deg": {
+              "oneOf": [
+                {"$ref": "#/$defs/vector3"},
+                {"type": "null"}
+              ]
+            }
           }
         }
       }

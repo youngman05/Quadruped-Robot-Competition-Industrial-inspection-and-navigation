@@ -1,0 +1,41 @@
+arm_motion_node:
+  ros__parameters:
+    grasp_actions_topic: /arm/grasp_actions
+    place_actions_topic: /arm/place_actions
+    status_topic: /arm/status
+    # The production node exposes services only.  It never subscribes to YOLO.
+    tf_lookup_timeout_s: 1.0
+    tf_parent_frame: base_link
+    tf_child_frame: arm_base_link
+    require_tf_in_preflight: true
+
+    # Keep both false until the mounted-arm calibration is accepted.
+    transform_calibrated: false
+    enable_motion: false
+    port: /dev/ttyACM0
+    baud: 115200
+    pause_s: 0.2
+    scan_first: true
+
+    # I1 reference in ROS arm_base_link axes: +X forward, +Y left, +Z up.
+    # The numeric values are placeholders until calibrated on the physical robot.
+    grasp_reference_configured: false
+    grasp_reference_arm_base: [0.40, 0.00]
+    grasp_reference_xy_tolerance_m: 0.02
+    grasp_z_min_m: 0.02
+    grasp_z_max_m: 0.12
+    grasp_rotation_deg: 0.0
+    grasp_pre_distance: 0.05
+    grasp_lift_height: 0.08
+    grasp_duration_scale: 1.0
+    grasp_include_home: false
+    grasp_approach_steps: 8
+    grasp_approach_step_duration_ms: 180
+
+    # ArmPi API axes: +X right, +Y forward, +Z up.  This point must be measured
+    # with the dog at each calibrated A/B/C/D base pose before enabling motion.
+    place_target_configured: false
+    place_target_arm: [0.0, 0.0, 0.0]
+    place_duration_ms: 1200
+    place_duration_scale: 1.0
+    place_include_home: false
