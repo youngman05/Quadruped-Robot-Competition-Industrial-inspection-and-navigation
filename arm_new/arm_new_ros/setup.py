@@ -7,7 +7,6 @@ setup(
     version="0.1.0",
     packages=[package_name, "arm_api"],
     package_dir={
-        package_name: package_name,
         "arm_api": "../arm_api",
     },
     data_files=[
