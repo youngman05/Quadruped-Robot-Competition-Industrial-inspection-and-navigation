@@ -17,6 +17,7 @@ DEFAULT_CALIBRATION_ORDER = (
     "pos1_left_clear",
     "pos1_middle",
     "pos2a_upper_right",
+    "upper_corner_clear",
     "pos1_middle_turned",
     "pos2b_lower_right",
     "grab_area_approach",
@@ -31,6 +32,7 @@ DEFAULT_INSPECTION_ROUTE = (
     "pos1_left_clear",
     "pos1_middle",
     "pos2a_upper_right",
+    "upper_corner_clear",
     "pos1_middle_turned",
     "pos2b_lower_right",
 )

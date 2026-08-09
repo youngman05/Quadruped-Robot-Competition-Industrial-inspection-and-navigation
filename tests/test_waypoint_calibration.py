@@ -124,10 +124,22 @@ class WaypointCalibrationTests(unittest.TestCase):
             ],
         )
 
-        middle = goals[2]
-        middle_turned = goals[4]
+        goals_by_label = {goal["label"]: goal for goal in goals}
+        middle = goals_by_label["pos1_middle"]
+        corner_clear = goals_by_label["upper_corner_clear"]
+        middle_turned = goals_by_label["pos1_middle_turned"]
         self.assertEqual((middle["x"], middle["y"]), (middle_turned["x"], middle_turned["y"]))
         self.assertAlmostEqual(abs(middle["yaw"] - middle_turned["yaw"]), math.pi)
+        self.assertEqual(
+            (corner_clear["x"], corner_clear["y"], corner_clear["yaw"]),
+            (2.6, 3.25, math.pi),
+        )
+        labels = [goal["label"] for goal in goals]
+        corner_index = labels.index("upper_corner_clear")
+        self.assertEqual(
+            labels[corner_index - 1 : corner_index + 2],
+            ["pos2a_upper_right", "upper_corner_clear", "pos1_middle_turned"],
+        )
 
         for previous, current in zip(goals, goals[1:]):
             distance = math.hypot(
