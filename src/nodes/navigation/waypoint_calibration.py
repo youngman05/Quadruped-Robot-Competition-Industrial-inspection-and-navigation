@@ -31,6 +31,7 @@ DEFAULT_INSPECTION_ROUTE = (
     "obstacle_cross_target",
     "pos1_left_clear",
     "pos1_middle",
+    "upper_corner_clear",
     "pos2a_upper_right",
     "upper_corner_clear",
     "pos1_middle_turned",

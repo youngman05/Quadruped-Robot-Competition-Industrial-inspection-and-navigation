@@ -135,9 +135,18 @@ class WaypointCalibrationTests(unittest.TestCase):
             (2.6, 3.25, math.pi),
         )
         labels = [goal["label"] for goal in goals]
-        corner_index = labels.index("upper_corner_clear")
+        corner_indices = [
+            index
+            for index, label in enumerate(labels)
+            if label == "upper_corner_clear"
+        ]
+        self.assertEqual(len(corner_indices), 2)
         self.assertEqual(
-            labels[corner_index - 1 : corner_index + 2],
+            labels[corner_indices[0] - 1 : corner_indices[0] + 2],
+            ["pos1_middle", "upper_corner_clear", "pos2a_upper_right"],
+        )
+        self.assertEqual(
+            labels[corner_indices[1] - 1 : corner_indices[1] + 2],
             ["pos2a_upper_right", "upper_corner_clear", "pos1_middle_turned"],
         )
 

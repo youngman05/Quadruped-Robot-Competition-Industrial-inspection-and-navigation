@@ -54,13 +54,16 @@ ignored `configs/navigation/calibration_backups/` directory.
 with the four observation poses reordered as:
 
 ```text
-pos1_middle -> pos2a_upper_right -> pos1_middle_turned -> pos2b_lower_right
+pos1_middle -> upper_corner_clear -> pos2a_upper_right
+  -> upper_corner_clear -> pos1_middle_turned -> pos2b_lower_right
 ```
 
-This separates the two opposite-yaw poses at the same middle XY position. The
-file is intentionally marked `calibration.status: preview`; it is for local
-route inspection only. Normal execution refuses it; it must not replace
-remote-control calibration against the current real-field map.
+This separates the two opposite-yaw poses at the same middle XY position and
+forces both the entry to and exit from `pos2a_upper_right` through the same
+wall-clear transition. The file is intentionally marked
+`calibration.status: preview`; it is for local route inspection only. Normal
+execution refuses it; it must not replace remote-control calibration against
+the current real-field map.
 
 Inspect the local sequence without initializing ROS navigation:
 

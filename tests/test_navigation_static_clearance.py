@@ -130,13 +130,30 @@ class NavigationStaticClearanceTests(unittest.TestCase):
         self.assertIn('plugin: "nav2_costmap_2d::StaticLayer"', local_block)
         self.assertIn("map_subscribe_transient_local: true", local_block)
 
+    def test_dwb_scores_the_rectangular_footprint(self):
+        params = PARAMS_PATH.read_text(encoding="utf-8")
+        follow_path_block = params.split("    FollowPath:", 1)[1].split(
+            "controller_server_rclcpp_node:", 1
+        )[0]
+
+        self.assertIn('- "ObstacleFootprint"', follow_path_block)
+        self.assertIn("ObstacleFootprint.scale: 0.02", follow_path_block)
+        self.assertNotIn('"BaseObstacle"', follow_path_block)
+        self.assertNotIn("BaseObstacle.scale", follow_path_block)
+
     def test_corner_clear_route_has_safe_swept_footprint(self):
         document = json.loads(WAYPOINTS_PATH.read_text(encoding="utf-8"))
         route = document["routes"]["inspection_interleaved"]
-        corner_index = route.index("upper_corner_clear")
+        upper_route = route[2:7]
         self.assertEqual(
-            route[corner_index - 1 : corner_index + 2],
-            ["pos2a_upper_right", "upper_corner_clear", "pos1_middle_turned"],
+            upper_route,
+            [
+                "pos1_middle",
+                "upper_corner_clear",
+                "pos2a_upper_right",
+                "upper_corner_clear",
+                "pos1_middle_turned",
+            ],
         )
 
         corner = document["waypoints"]["upper_corner_clear"]
@@ -145,10 +162,16 @@ class NavigationStaticClearanceTests(unittest.TestCase):
             (2.6, 3.25, math.pi, "transit"),
         )
 
-        segments = (
-            ((2.6, 4.5), (2.6, 3.25)),
-            ((2.6, 3.25), (1.5, 3.25)),
-        )
+        segments = []
+        for start_name, end_name in zip(upper_route, upper_route[1:]):
+            start_waypoint = document["waypoints"][start_name]
+            end_waypoint = document["waypoints"][end_name]
+            segments.append(
+                (
+                    (start_waypoint["x"], start_waypoint["y"]),
+                    (end_waypoint["x"], end_waypoint["y"]),
+                )
+            )
         sampled_yaws = [index * math.pi / 12.0 for index in range(24)]
         for start, end in segments:
             for step in range(51):
@@ -168,14 +191,15 @@ class NavigationStaticClearanceTests(unittest.TestCase):
                     )
 
     def test_regression_pose_from_failed_run_collides(self):
-        self.assertTrue(
-            footprint_hits_occupied(
-                2.441901,
-                4.245238,
-                -2.444062,
-                self.occupied_centers,
-            )
+        failed_poses = (
+            (2.441901, 4.245238, -2.444062),
+            (1.755, 3.780, 0.616),
         )
+        for pose in failed_poses:
+            with self.subTest(pose=pose):
+                self.assertTrue(
+                    footprint_hits_occupied(*pose, self.occupied_centers)
+                )
 
 
 if __name__ == "__main__":
