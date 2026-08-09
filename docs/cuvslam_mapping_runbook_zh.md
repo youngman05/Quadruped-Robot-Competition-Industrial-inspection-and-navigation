@@ -1,10 +1,10 @@
 # cuVSLAM 最终遥控建图验收规程
 
-> 当前状态（2026-08-09）：两次独立短闭环均未证明有效全局 XY 纠偏，旧日志也没有原生回环边证据。第三次短环、半程和完整路线继续冻结。当前唯一允许的下一步是构建原生 diagnostics exporter 后执行静止负载 A/B；在 A/B 通过且用户另行决定前，不得移动机器人。
+> 当前状态（2026-08-09）：Phase 40 真实短闭环已完成但验收失败。tracking 全程正常，LC/PGO 候选、局部非相邻边和全局图修正均出现，但没有末端到早期段的长程回环边；后端同窗 XY 误差 `0.520313m`，显著差于 tracking `0.078694m`。半程与完整路线继续冻结。
 
 本文用于执行一次有判别力的 cuVSLAM 比赛路线验收。它不是“再走一遍看看”，也不允许失败后继续绕圈补拍。
 
-## 当前唯一允许步骤：原生 diagnostics 静止 A/B
+## 已完成前置步骤：原生 diagnostics 静止 A/B
 
 此步骤只验证 exporter 的负载和落盘契约，不判断回环质量。机器人保持当前姿态完全静止；禁止遥控、站起、趴下、调用 `GetAllPoses` 或启动任何路线。A/B 必须分别独立冷启动，唯一变量是 `ENABLE_SLAM_DIAGNOSTICS`：
 
@@ -51,9 +51,32 @@ diagnostics 采集契约固定为：正常运行期间的原生 pose graph 全�
 
 tracker 稳定后保持 `130s`，期间不运行 RViz、PointCloud 显示、rosbag、ROS CLI topic/rate 探针、全量系统日志扫描或在线 recorder。两轮都只允许一次相同的 `docker stats --no-stream` 采样，用于粗略比较容器 CPU；随后停止会话，离线统计 `launch.log` 的 frame delta/tracking lost、JSONL 行数和文件增长。B 轮只在以下条件全部满足时通过：没有相对 A 新增 frame delta/tracking lost，CPU 没有持续异常增量，JSONL 每行可独立解析，且终止前包含 final graph snapshot。
 
-A/B 通过只说明 exporter 具备低负载采集条件，不解冻任何路线，也不等于 cuVSLAM 已建立有效回环边。
+A/B 已通过，只说明 exporter 具备低负载采集条件，不等于 cuVSLAM 已建立有效回环边。
 
-验收固定采用三个相互独立的冷启动会话：
+## 当前允许步骤：一次短闭环回环验收
+
+本级不以“机器狗物理走回来了”单独判定。必须同时保存并分层核对以下证据：
+
+1. 运动窗口内无 tracking lost、无新增 frame delta/图像时间断档，tracking odometry 连续。
+2. diagnostics 出现连接早期与后期节点的新增非相邻边；快照必须 `possibly_truncated=false` 且 `edge_diff_valid=true`。
+3. 同一事件链出现 `lc_status=1`、可靠非相邻新增边及后续 `pgo_status=1`，证明候选不只是被看见，而且约束进入后端优化链。
+4. LC/PGO 事件前后完整 graph snapshot 的共同旧节点发生一致的全局位姿变化，或一次性 GetAllPoses 同窗结果相对 tracking 明确显示后端全局纠正。只有新节点继续增长不算全局修正。
+
+只允许一次独立冷启动的 `short` 会话。路线应低速、短距离，回到早期经过且视野相似的位置；现场必须有人看护并保留急停。Nav2、bridge、速度仲裁、运动发送器、RViz、PointCloud、rosbag、在线 recorder 和重型探针全部保持关闭。无论结果如何，本级结束后都先停止并分析，不自动进入半程或完整路线。
+
+失败归因按以下顺序进行：
+
+| 诊断证据 | 判定 |
+|---|---|
+| LC landmark 计数和 `lc_status` 均无信号，且无非相邻新增边 | 未观察到回环候选 |
+| LC landmark 计数非零，但 `lc_status` 始终为 0 | 候选进入匹配流程但被拒绝/未成功 |
+| `lc_status=1`，但没有可靠非相邻新增边或没有后续 `pgo_status=1` | LC 层报告成功，但约束未被完整证明进入后端 |
+| 只有短程局部非相邻边，没有端点分别落在早期段和最终回访段的长程边 | 局部 LC 工作，但目标起终点回环没有建立 |
+| 非相邻边与 LC/PGO 成功均存在，但共同旧节点无可观测位姿变化、后端同窗指标也无改善 | 约束已加入但后端没有产生可观测全局修正 |
+| LC/PGO 后大量旧节点移动，但后端闭环误差相对 tracking 明显恶化 | 后端确实修正，但约束/优化方向错误，本级失败 |
+| 四层证据全部成立 | 短闭环回环验收通过；仍需另行决定是否进入更长路线 |
+
+若短闭环通过且用户之后另行解冻更长路线，完整分级仍必须采用三个相互独立的冷启动会话：
 
 ```text
 短闭环
@@ -80,8 +103,8 @@ A/B 通过只说明 exporter 具备低负载采集条件，不解冻任何路线
 
 | 级别 | `--min-path-length` | 通过后动作 |
 |---|---:|---|
-| 短闭环 | `1.0m` | 停止本会话；冷启动半程路线 |
-| 半程路线 | `5.0m` | 停止本会话；冷启动完整路线 |
+| 短闭环 | `1.0m` | 停止本会话并分析；等待用户另行决定 |
+| 半程路线 | `5.0m` | 仅另行解冻后执行；完成后再次停止并分析 |
 | 完整比赛路线 | `5.0m`，且应与真实路线长度同量级 | `<0.20m` 才允许保存地图 |
 
 短闭环或半程路线不得保存地图。任一级失败都停止、保留日志、不继续补拍、不进入下一级。
@@ -165,13 +188,17 @@ CUVSLAM_PUBLISH_ODOM_TO_BASE_TF=false \
 ENABLE_SLAM_VISUALIZATION=false \
 ENABLE_LANDMARKS_VIEW=false \
 ENABLE_OBSERVATIONS_VIEW=false \
+ENABLE_SLAM_DIAGNOSTICS=true \
+SLAM_DIAGNOSTICS_METRICS_PERIOD_MS=33 \
+SLAM_DIAGNOSTICS_GRAPH_PERIOD_MS=1000 \
+SLAM_DIAGNOSTICS_MAX_ITEMS_COUNT=8192 \
 ENABLE_LOOP_METRICS_RECORDER=false \
 STARTUP_TOPIC_CHECKS=false \
 STARTUP_RATE_PROBES=false \
 bash scripts/start_cuvslam_rviz_gui.sh --skip-input-test --no-rviz
 ```
 
-终端 A 保持前台运行。`--skip-input-test` 只用于本次最终验收，因为静止输入门禁已完成；不要在此时重新加入诊断负载。
+终端 A 保持前台运行。`--skip-input-test` 只用于本次最终验收，因为静止输入门禁已完成；只允许已经通过 A/B 的原生 diagnostics exporter，不得加入其他诊断负载。
 
 启动后静止 10 秒，在终端 B 验证实际运行配置：
 
@@ -201,6 +228,11 @@ CUVSLAM_CAMERA_PROFILE=640x360x30
 ENABLE_SLAM_VISUALIZATION=false
 ENABLE_LANDMARKS_VIEW=false
 ENABLE_OBSERVATIONS_VIEW=false
+ENABLE_SLAM_DIAGNOSTICS=true
+SLAM_DIAGNOSTICS_PATH=/logs/cuvslam_slam_diagnostics.jsonl
+SLAM_DIAGNOSTICS_METRICS_PERIOD_MS=33
+SLAM_DIAGNOSTICS_GRAPH_PERIOD_MS=1000
+SLAM_DIAGNOSTICS_MAX_ITEMS_COUNT=8192
 ENABLE_LOOP_METRICS_RECORDER=false
 STARTUP_TOPIC_CHECKS=false
 STARTUP_RATE_PROBES=false
@@ -241,17 +273,18 @@ date '+%s.%N %FT%T%z' \
 
 - 从标记起点和原始朝向出发，低速走一个可重复小环。
 - 建议速度约 `0.04-0.06m/s`；避免快速原地旋转和急停急转。
-- 回到同一物理标记和原始朝向，遥控器回中，停稳 10 秒。
+- 路线中应有一个早期观察段；回程重新进入该区域时尽量恢复相似位置、朝向和视野，而不只是靠近起点坐标。
+- 回到同一物理标记和原始朝向，遥控器回中，继续保持相似视野并停稳至少 10 秒，让异步 LC/PGO 与两次 graph attempt 有时间落盘。
 
 ### 4.2 半程路线
 
-- 只有短闭环会话通过并完全停止后，才冷启动 `STAGE=half`。
+- 本阶段保持冻结；不得因短闭环通过而自动冷启动 `STAGE=half`，必须等待用户另行决定。
 - 覆盖完整比赛路线前半段及一条自然回起点的路径。
 - 不得沿失败轨迹继续加圈，也不得加载短闭环会话的数据。
 
 ### 4.3 完整比赛路线
 
-- 只有半程会话通过并完全停止后，才冷启动 `STAGE=full`。
+- 本阶段保持冻结；只有半程另行解冻、通过并完全停止后，才可再次等待用户决定是否冷启动 `STAGE=full`。
 - 单向覆盖既定比赛建图路线，在关键转角低速、短暂停留并保持画面清晰。
 - 最终回到同一物理标记和原始朝向，遥控器回中，停稳 10 秒。
 
@@ -312,6 +345,32 @@ docker exec "$CN" bash -lc \
 ```bash
 cat "$HOST_LOG_DIR/acceptance/$STAGE/tracking_delta.json"
 cat "$HOST_LOG_DIR/acceptance/$STAGE/postrun/loop_metrics_latest.txt"
+python3 - "$HOST_LOG_DIR/cuvslam_slam_diagnostics.jsonl" <<'PY'
+import json
+import math
+import sys
+
+def reject_nonfinite(value):
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError("non-finite number")
+    if isinstance(value, dict):
+        for item in value.values():
+            reject_nonfinite(item)
+    elif isinstance(value, list):
+        for item in value:
+            reject_nonfinite(item)
+
+count = 0
+with open(sys.argv[1], encoding="utf-8") as stream:
+    for line_number, line in enumerate(stream, 1):
+        if not line.strip():
+            continue
+        reject_nonfinite(json.loads(line))
+        count += 1
+print(f"DIAGNOSTICS_JSONL_OK lines={count}")
+PY
+grep -En '"event":"(metrics_signal|metrics_update|graph_event|graph_final)"' \
+  "$HOST_LOG_DIR/cuvslam_slam_diagnostics.jsonl" || true
 grep -Ein \
   'Visual tracking is lost|frame.?delta|image.*(gap|jitter)|timestamp.*(gap|jump)' \
   "$HOST_LOG_DIR/launch.log" || true
@@ -327,6 +386,8 @@ grep -Ein \
 | 物理回到起点，但后端为 `0.5-0.9m` | 完整路线时终止 cuVSLAM 建图优化路线 |
 
 不要用 tracking odometry 的终点误差代替后端 pose graph 闭环误差，也不要用 alignment 吸收本级误差。
+
+`cuvslam_slam_diagnostics.jsonl` 是逐行 JSON，不是一个整体 JSON 文档；正式判定必须逐行严格解析，并拒绝 NaN/Infinity。新增边只有在 `possibly_truncated=false`、`edge_diff_valid=true` 时可信。非相邻性优先按拓扑判断：暂时移除新增边后，其两个端点在既有图中仍需通过至少 2 条边才能相连；`node_id_span > 1` 只作辅助。更重要的是，“拓扑非相邻”不等于“新位置连接早期位置”：长程回环必须证明一个端点属于离开起点前标记的早期段，另一个端点属于最终回访段，不能用只跨少数相邻关键帧的局部闭合代替。单独出现 `pgo_status=1` 或顺序边增长不能证明回环，静止 A/B 已出现过这两类初始化信号。
 
 ## 6. 每一级收尾
 
@@ -464,6 +525,13 @@ GetAllPoses service_success:
 xy_path_length_m:
 xy_closure_error_m:
 tracking lost / 原生时间断档:
+diagnostics JSONL 行数 / 严格解析:
+LC landmark 最大计数:
+lc_status=1 事件:
+可靠非相邻新增边端点 / 既有拓扑距离:
+pgo_status=1 关联事件:
+共同旧节点最大 XY / yaw 修正:
+失败分型: 无候选 / 候选被拒 / 约束未入后端 / 后端无修正 / 不适用
 本级结论: pass / fail
 是否保存地图:
 MAP_NAME / SHA-256:

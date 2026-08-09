@@ -62,12 +62,20 @@ class CuvslamSlamDiagnosticsContractTests(unittest.TestCase):
             self.launcher,
         )
 
-    def test_runbook_allows_only_stationary_ab(self):
+    def test_runbook_preserves_completed_stationary_ab_contract(self):
         for requirement in (
-            "第三次短环、半程和完整路线继续冻结",
             "AB_MODE=A",
             "DIAGNOSTICS_ENABLED=false",
             "ENABLE_SLAM_DIAGNOSTICS=\"$DIAGNOSTICS_ENABLED\"",
+        ):
+            self.assertIn(requirement, self.runbook)
+
+    def test_runbook_allows_only_one_guarded_diagnostic_short_loop(self):
+        for requirement in (
+            "只允许一次独立冷启动的 `short` 会话",
+            "半程与完整路线继续冻结",
+            "有人看护并保留急停",
+            "ENABLE_SLAM_DIAGNOSTICS=true",
             "ENABLE_SLAM_VISUALIZATION=false",
             "ENABLE_LANDMARKS_VIEW=false",
             "ENABLE_OBSERVATIONS_VIEW=false",
@@ -77,6 +85,10 @@ class CuvslamSlamDiagnosticsContractTests(unittest.TestCase):
             "--skip-input-test --no-rviz",
         ):
             self.assertIn(requirement, self.runbook)
+        self.assertNotIn(
+            "| 短闭环 | `1.0m` | 停止本会话；冷启动半程路线 |",
+            self.runbook,
+        )
 
     def test_runbook_documents_diagnostics_evidence_contract(self):
         for requirement in (
@@ -85,6 +97,13 @@ class CuvslamSlamDiagnosticsContractTests(unittest.TestCase):
             "`possibly_truncated=true`",
             "`edge_diff_valid=false`",
             "不得更新上一份可靠 edge baseline",
+            "新增非相邻边",
+            "`lc_status=1`",
+            "`pgo_status=1`",
+            "全局位姿变化",
+            "逐行严格解析",
+            "拓扑非相邻”不等于“新位置连接早期位置",
+            "后端确实修正，但约束/优化方向错误",
         ):
             self.assertIn(requirement, self.runbook)
 
