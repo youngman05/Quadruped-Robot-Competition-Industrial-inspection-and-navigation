@@ -20,6 +20,7 @@ Nav2 导航参数配置。
 - `local_costmap`：D455 深度点云障碍物层，滚动窗口 2m × 2m
 - `planner`：NavFn 全局路径规划
 - `controller`：RegulatedPurePursuit 路径跟踪（适合四足）
+- `goal tolerance`：goal checker 与 DWB 的 XY 容差同步为 0.30m，朝向容差为 0.30rad
 - **不使用 AMCL**：定位由 cuVSLAM 提供
 
 ## 使用
@@ -54,6 +55,11 @@ unstable window, asks for confirmation, and saves accepted points atomically.
 An existing calibration file is backed up once at session start under the
 ignored `configs/navigation/calibration_backups/` directory.
 
+`upper_corner_clear` and `lower_corner_clear` are captured as separate prompts.
+Their preview coordinates currently match, but the real-field calibration keeps
+them independent so the upper and lower corridor clearances can be adjusted
+without changing the other route.
+
 ## Reordered route preview
 
 `waypoints_reordered_preview.yaml` contains the existing PGM-based coordinates
@@ -61,12 +67,16 @@ with the four observation poses reordered as:
 
 ```text
 pos1_middle -> upper_corner_clear -> pos2a_upper_right
-  -> upper_corner_clear -> pos1_middle_turned -> pos2b_lower_right
+  -> upper_corner_clear -> pos1_middle_turned
+  -> lower_corner_clear -> pos2b_lower_right
 ```
 
 This separates the two opposite-yaw poses at the same middle XY position and
 forces both the entry to and exit from `pos2a_upper_right` through the same
-wall-clear transition. The file is intentionally marked
+wall-clear transition. It also routes the lower observation leg through the
+independently calibratable `lower_corner_clear` point instead of allowing a
+diagonal shortcut into the lower cabinet corner. The inspection route contains
+9 goals and the full route contains 14 goals. The file is intentionally marked
 `calibration.status: preview`; it is for local route inspection only. Normal
 execution refuses it; it must not replace remote-control calibration against
 the current real-field map.

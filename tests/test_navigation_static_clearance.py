@@ -140,11 +140,14 @@ class NavigationStaticClearanceTests(unittest.TestCase):
         self.assertIn("ObstacleFootprint.scale: 0.02", follow_path_block)
         self.assertNotIn('"BaseObstacle"', follow_path_block)
         self.assertNotIn("BaseObstacle.scale", follow_path_block)
+        self.assertEqual(params.count("xy_goal_tolerance: 0.30"), 2)
+        self.assertNotIn("xy_goal_tolerance: 0.20", params)
 
-    def test_corner_clear_route_has_safe_swept_footprint(self):
+    def test_corner_clear_routes_have_safe_swept_footprint(self):
         document = json.loads(WAYPOINTS_PATH.read_text(encoding="utf-8"))
         route = document["routes"]["inspection_interleaved"]
         upper_route = route[2:7]
+        lower_route = route[6:9]
         self.assertEqual(
             upper_route,
             [
@@ -155,23 +158,43 @@ class NavigationStaticClearanceTests(unittest.TestCase):
                 "pos1_middle_turned",
             ],
         )
+        self.assertEqual(
+            lower_route,
+            [
+                "pos1_middle_turned",
+                "lower_corner_clear",
+                "pos2b_lower_right",
+            ],
+        )
 
         corner = document["waypoints"]["upper_corner_clear"]
         self.assertEqual(
             (corner["x"], corner["y"], corner["yaw"], corner["action"]),
             (2.6, 3.25, math.pi, "transit"),
         )
+        lower_corner = document["waypoints"]["lower_corner_clear"]
+        self.assertEqual(
+            (
+                lower_corner["x"],
+                lower_corner["y"],
+                lower_corner["yaw"],
+                lower_corner["action"],
+            ),
+            (2.6, 3.25, math.pi, "transit"),
+        )
 
         segments = []
-        for start_name, end_name in zip(upper_route, upper_route[1:]):
-            start_waypoint = document["waypoints"][start_name]
-            end_waypoint = document["waypoints"][end_name]
-            segments.append(
-                (
-                    (start_waypoint["x"], start_waypoint["y"]),
-                    (end_waypoint["x"], end_waypoint["y"]),
+        for corner_route in (upper_route, lower_route):
+            for start_name, end_name in zip(corner_route, corner_route[1:]):
+                start_waypoint = document["waypoints"][start_name]
+                end_waypoint = document["waypoints"][end_name]
+                segments.append(
+                    (
+                        (start_waypoint["x"], start_waypoint["y"]),
+                        (end_waypoint["x"], end_waypoint["y"]),
+                    )
                 )
-            )
+        self.assertEqual(len(segments), 6)
         sampled_yaws = [index * math.pi / 12.0 for index in range(24)]
         for start, end in segments:
             for step in range(51):

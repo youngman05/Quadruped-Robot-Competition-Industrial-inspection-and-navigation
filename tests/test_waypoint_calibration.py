@@ -12,6 +12,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from nodes.navigation.waypoint_calibration import (
+    DEFAULT_CALIBRATION_ORDER,
     DEFAULT_FULL_ROUTE,
     DEFAULT_INSPECTION_ROUTE,
     WaypointCalibrationError,
@@ -98,6 +99,7 @@ class WaypointCalibrationTests(unittest.TestCase):
             document["routes"]["full_interleaved"],
             list(DEFAULT_FULL_ROUTE),
         )
+        self.assertEqual(len(document["routes"]["full_interleaved"]), 14)
 
     def test_reordered_preview_separates_the_same_xy_opposite_yaw_poses(self):
         path = (
@@ -128,11 +130,29 @@ class WaypointCalibrationTests(unittest.TestCase):
         middle = goals_by_label["pos1_middle"]
         corner_clear = goals_by_label["upper_corner_clear"]
         middle_turned = goals_by_label["pos1_middle_turned"]
+        lower_corner_clear = goals_by_label["lower_corner_clear"]
         self.assertEqual((middle["x"], middle["y"]), (middle_turned["x"], middle_turned["y"]))
         self.assertAlmostEqual(abs(middle["yaw"] - middle_turned["yaw"]), math.pi)
         self.assertEqual(
             (corner_clear["x"], corner_clear["y"], corner_clear["yaw"]),
             (2.6, 3.25, math.pi),
+        )
+        self.assertEqual(
+            (
+                lower_corner_clear["x"],
+                lower_corner_clear["y"],
+                lower_corner_clear["yaw"],
+            ),
+            (2.6, 3.25, math.pi),
+        )
+        self.assertEqual(len(goals), 9)
+        calibration_order = list(DEFAULT_CALIBRATION_ORDER)
+        lower_calibration_index = calibration_order.index("lower_corner_clear")
+        self.assertEqual(
+            calibration_order[
+                lower_calibration_index - 1 : lower_calibration_index + 2
+            ],
+            ["pos1_middle_turned", "lower_corner_clear", "pos2b_lower_right"],
         )
         labels = [goal["label"] for goal in goals]
         corner_indices = [
@@ -148,6 +168,18 @@ class WaypointCalibrationTests(unittest.TestCase):
         self.assertEqual(
             labels[corner_indices[1] - 1 : corner_indices[1] + 2],
             ["pos2a_upper_right", "upper_corner_clear", "pos1_middle_turned"],
+        )
+        lower_corner_indices = [
+            index
+            for index, label in enumerate(labels)
+            if label == "lower_corner_clear"
+        ]
+        self.assertEqual(len(lower_corner_indices), 1)
+        self.assertEqual(
+            labels[
+                lower_corner_indices[0] - 1 : lower_corner_indices[0] + 2
+            ],
+            ["pos1_middle_turned", "lower_corner_clear", "pos2b_lower_right"],
         )
 
         for previous, current in zip(goals, goals[1:]):
