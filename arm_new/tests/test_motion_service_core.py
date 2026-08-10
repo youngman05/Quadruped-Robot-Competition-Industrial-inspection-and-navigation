@@ -17,20 +17,20 @@ from arm_api.motion_service_core import (
 class MotionServiceCoreTest(unittest.TestCase):
     def setUp(self) -> None:
         self.planner = ArmGrabPlannerNew()
-        self.target_arm_base = (0.42, 0.0, 0.06)
+        self.target_arm_base = (0.45, 0.0, 0.06)
 
     def test_arm_base_to_api_axes_match_documented_convention(self) -> None:
         self.assertEqual(arm_base_to_api((0.42, 0.10, 0.06)), (-0.10, 0.42, 0.06))
 
     def test_grasp_target_requires_i1_xy_and_calibrated_z_range(self) -> None:
         self.assertEqual(
-            validate_grasp_target(self.target_arm_base, (0.40, 0.0), 0.03, 0.04, 0.10),
+            validate_grasp_target(self.target_arm_base, (0.45, 0.0), 0.02, 0.04, 0.10),
             self.target_arm_base,
         )
         with self.assertRaises(MotionServiceValidationError):
-            validate_grasp_target((0.46, 0.0, 0.06), (0.40, 0.0), 0.03, 0.04, 0.10)
+            validate_grasp_target((0.48, 0.0, 0.06), (0.45, 0.0), 0.02, 0.04, 0.10)
         with self.assertRaises(MotionServiceValidationError):
-            validate_grasp_target((0.40, 0.0, 0.12), (0.40, 0.0), 0.03, 0.04, 0.10)
+            validate_grasp_target((0.45, 0.0, 0.12), (0.45, 0.0), 0.02, 0.04, 0.10)
 
     def test_grasp_plan_matches_face_approach_sequence_and_stays_lifted(self) -> None:
         target_api, _pose, steps = plan_face_approach_grasp(
@@ -41,7 +41,7 @@ class MotionServiceCoreTest(unittest.TestCase):
             lift_height_m=0.08,
         )
         names = [step.name for step in steps]
-        self.assertEqual(target_api, (0.0, 0.42, 0.06))
+        self.assertEqual(target_api, (0.0, 0.45, 0.06))
         self.assertEqual(names[:3], ["pre_grasp_open_and_rotate", "safe_pose", "pre_grasp"])
         self.assertIn("close_gripper", names)
         self.assertEqual(names[-1], "lift")

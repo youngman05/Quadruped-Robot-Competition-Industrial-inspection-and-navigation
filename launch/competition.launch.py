@@ -20,6 +20,8 @@ from launch_ros.actions import Node
 # ─── 路径 ────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PARAMS_FILE = PROJECT_ROOT / "configs" / "ros" / "competition_params.yaml"
+TASK_MANAGER_PARAMS_FILE = PROJECT_ROOT / "configs" / "ros" / "task_manager_params.yaml"
+GRASP_PLACE_PARAMS_FILE = PROJECT_ROOT / "configs" / "ros" / "grasp_place_params.yaml"
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -28,6 +30,8 @@ def generate_launch_description() -> LaunchDescription:
     enable_yolo = LaunchConfiguration("enable_yolo", default="false")
     enable_yolo_udp_bridge = LaunchConfiguration("enable_yolo_udp_bridge", default="false")
     enable_task_manager = LaunchConfiguration("enable_task_manager", default="false")
+    enable_grasp_place_manager = LaunchConfiguration("enable_grasp_place_manager", default="false")
+    grasp_place_zones = LaunchConfiguration("grasp_place_zones", default="")
     enable_speech = LaunchConfiguration("enable_speech", default="false")
     enable_navigation = LaunchConfiguration("enable_navigation", default="false")
     enable_whz = LaunchConfiguration("enable_whz", default="false")
@@ -48,6 +52,14 @@ def generate_launch_description() -> LaunchDescription:
     declare_enable_task_manager = DeclareLaunchArgument(
         "enable_task_manager", default_value="false",
         description="启动任务管理器节点"
+    )
+    declare_enable_grasp_place_manager = DeclareLaunchArgument(
+        "enable_grasp_place_manager", default_value="false",
+        description="启动红条抓取/放置独立状态机；不要同时启动旧 task_manager",
+    )
+    declare_grasp_place_zones = DeclareLaunchArgument(
+        "grasp_place_zones", default_value="",
+        description="独立抓放测试的异常区，例如 A,C；留空则拒绝启动任务",
     )
     declare_enable_speech = DeclareLaunchArgument(
         "enable_speech", default_value="false",
@@ -112,9 +124,18 @@ def generate_launch_description() -> LaunchDescription:
         package="quadruped_robot_competition",
         executable="task_manager",
         name="task_manager_node",
-        parameters=[str(PARAMS_FILE)],
+        parameters=[str(TASK_MANAGER_PARAMS_FILE)],
         output="screen",
         condition=IfCondition(enable_task_manager),
+    )
+
+    grasp_place_manager_node = Node(
+        package="quadruped_robot_competition",
+        executable="grasp_place_manager",
+        name="grasp_place_manager_node",
+        parameters=[str(GRASP_PLACE_PARAMS_FILE), {"manual_abnormal_zones_csv": grasp_place_zones}],
+        output="screen",
+        condition=IfCondition(enable_grasp_place_manager),
     )
 
     speech_node = Node(
@@ -192,6 +213,7 @@ def generate_launch_description() -> LaunchDescription:
             "║ yolo_detect      : ", enable_yolo, "  ║\n",
             "║ yolo_udp_bridge  : ", enable_yolo_udp_bridge, "  ║\n",
             "║ task_manager     : ", enable_task_manager, "  ║\n",
+            "║ grasp_place      : ", enable_grasp_place_manager, "  ║\n",
             "║ speech           : ", enable_speech, "  ║\n",
             "║ navigation (Nav2): ", enable_navigation, "  ║\n",
             "║ whz inspect      : ", enable_whz, "  ║\n",
@@ -204,6 +226,8 @@ def generate_launch_description() -> LaunchDescription:
         declare_enable_yolo,
         declare_enable_yolo_udp_bridge,
         declare_enable_task_manager,
+        declare_enable_grasp_place_manager,
+        declare_grasp_place_zones,
         declare_enable_speech,
         declare_enable_navigation,
         declare_enable_whz,
@@ -213,6 +237,7 @@ def generate_launch_description() -> LaunchDescription:
         color_image_pub_node,
         whz_inspection_node,
         task_manager_node,
+        grasp_place_manager_node,
         speech_node,
         initial_pose_node,
         depth_pub_node,

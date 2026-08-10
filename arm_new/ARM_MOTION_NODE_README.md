@@ -29,7 +29,7 @@ p_arm_api = [-y_arm_base_link, x_arm_base_link, z_arm_base_link]
 ```
 
 The grasp service accepts the I1 reference target, normally
-`(0.40, 0.00, z_final)`. It validates the configured x/y tolerance and z range,
+`(0.45, 0.00, z_final)`. It validates the configured x/y tolerance and z range,
 then reuses the planning sequence from `scripts/face_approach_grab.py`:
 
 ```text
@@ -99,7 +99,7 @@ must return `success: false` and a JSON message with `state: planned`.
 ```bash
 ros2 service call /arm/execute_grasp_fixed \
   arm_new_interfaces/srv/ExecuteGraspFixed \
-  '{target_arm_base: {x: 0.40, y: 0.00, z: 0.06}}'
+  '{target_arm_base: {x: 0.45, y: 0.00, z: 0.06}}'
 
 ros2 service call /arm/execute_place_fixed std_srvs/srv/Trigger '{}'
 ```

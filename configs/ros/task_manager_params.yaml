@@ -1,0 +1,16 @@
+# Task-manager behavior and ROS interface parameters.
+# Spatial calibration is owned by configs/calibration/competition_sites.yaml.
+task_manager_node:
+  ros__parameters:
+    phases: ["start", "pass_obstacle", "inspect_gauges", "report_status", "find_red_bar", "grasp_bar", "place_to_abnormal_zone", "finish"]
+    timeout_per_phase: 300.0
+    tick_rate: 10.0
+    require_stable_gauge: true
+    auto_advance: false
+
+    phase2_map_yaml: "src/navi/map/competition_field_phase2.yaml"
+    gauge_topic: "/gauge/status"
+    yolo_topic: "/yolo/detections"
+    slam_status_topic: "/visual_slam/status"
+    phase_topic: "/task/phase"
+    status_topic: "/task/status"

@@ -1,6 +1,6 @@
 # 配置文件 (configs)
 
-所有 ROS2 节点参数集中管理。
+项目配置按空间标定、节点行为、导航和静态 TF 分层管理。
 
 ---
 
@@ -8,19 +8,28 @@
 
 | 文件 | 用途 |
 |------|------|
-| `ros/competition_params.yaml` | 所有 ROS2 节点参数（主配置） |
+| `ros/competition_params.yaml` | 感知等共享比赛节点参数 |
 | `yolo/classes.yaml` | YOLO 类别映射 |
 | `camera/d455.yaml` | D455 相机流参数 |
 | `navigation/` | Nav2 导航参数 |
 | `transforms/static_extrinsics.yaml` | 项目拥有的静态外参（`base_link -> camera_link` 等） |
 | `calibration/yolo_xyz_test_points.yaml` | D455 YOLO XYZ 标定测试点与验收阈值模板 |
+| `calibration/competition_sites.yaml` | I0/I1、固定狗位姿与机械臂释放点的联合标定集合 |
+| `ros/task_manager_params.yaml` | 状态机行为、超时和 ROS 接口参数 |
 | `yolo/host_detection_v1.schema.json` | Host UDP bridge 转换后的 `base_link` 检测 JSON 协议 |
 
 ---
 
-## 主配置文件: ros/competition_params.yaml
+## ROS 节点参数
 
-每个节点的 `ros__parameters` 段对应一个节点。参数在节点启动时通过 launch 文件传入。
+每个节点的 `ros__parameters` 段对应一个节点。感知节点使用
+`ros/competition_params.yaml`，状态机使用 `ros/task_manager_params.yaml`，参数在
+节点启动时通过 launch 文件传入。
+
+空间标定不放在 ROS 行为参数中。固定站位和机械臂相对点统一维护在
+`calibration/competition_sites.yaml`；机械臂动作参数继续由
+`arm_new/config/arm_motion_params.yaml` 管理。详细规则见
+`docs/state_machine_design.md` 的“参数维护方案”。
 
 ### 已配置节点
 
@@ -28,14 +37,15 @@
 |--------|------|
 | `gauge_status_node` | ✅ 已配置 |
 | `yolo_detect_node` | ✅ 已配置 |
-| `task_manager_node` | ✅ 已配置 |
+| `task_manager_node` | ✅ 独立文件 |
 | `speech_node` | ⏳ 已注释 |
 
 ### 修改参数
 
 > **平台: 均可 (Windows 开发机编辑，Git 同步到 Jetson)**
 
-编辑 `configs/ros/competition_params.yaml` 后重新启动节点即可，无需重新编译。
+编辑源码配置后重新执行对应 `colcon build`，再 source install 空间并重启节点。
+不要直接修改 `install/*/share/` 中的副本。
 
 ### 在 Jetson 上直接用参数覆盖
 

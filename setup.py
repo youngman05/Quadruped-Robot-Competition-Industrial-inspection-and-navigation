@@ -47,6 +47,7 @@ setup(
             "yolo_image_server = nodes.perception.yolo_image_server:main",
             # ── 决策层 ──────────────────────────
             "task_manager = nodes.decision.task_manager:main",
+            "grasp_place_manager = nodes.decision.grasp_place_manager:main",
             # "speech_publisher = nodes.decision.speech:main",
             # ── 导航层 (Nav2) ──────────────────
             "depth_publisher = nodes.navigation.depth_publisher:main",

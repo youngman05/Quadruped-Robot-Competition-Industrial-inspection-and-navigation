@@ -52,8 +52,8 @@ TF 后才调用本模块。离线 `FrameTransformer` API 仅保留兼容用途�
 | 0.16 | 0.18 - 0.42 |
 
 这不是完整三维工作空间：横向 `x` 偏移、夹爪旋转、安装误差、舵机实际零位和
-周围碰撞都会收缩可用范围。`(0.0, 0.42, 0.06)` 是当前模型下用于抓取和放置
-dry-run 的基准点；真实执行前必须重新核对 pulse、速度和空间干涉。
+周围碰撞都会收缩可用范围。`(0.0, 0.45, 0.06)` 是当前实机验证过的抓取
+基准点；真实执行前仍必须核对 pulse、速度和空间干涉。
 
 ## 目录结构
 
@@ -103,7 +103,7 @@ arm = ArmService(
 )
 
 result = arm.grab_from_pose(
-    position=(0.0, 0.42, 0.06),
+    position=(0.0, 0.45, 0.06),
     rotation_deg=0.0,
 )
 
@@ -119,7 +119,7 @@ if not result.ok:
 from arm_api import ArmGrabPlanner
 
 planner = ArmGrabPlanner()
-steps = planner.plan_grab((0.0, 0.42, 0.06), rotation_deg=20.0, include_home=True)
+steps = planner.plan_grab((0.0, 0.45, 0.06), rotation_deg=20.0, include_home=True)
 
 for step in steps:
     print(step.to_command())
@@ -132,13 +132,13 @@ for step in steps:
 输入一个机械臂基座坐标系下的目标点，脚本自动生成水平端面靠近路径：
 
 ```bash
-python3 scripts/face_approach_grab.py 0 0.42 0.06 --steps 8
+python3 scripts/face_approach_grab.py 0 0.45 0.06 --steps 8
 ```
 
 默认只 dry-run。确认路径和 pulse 合理后再真实执行：
 
 ```bash
-python3 scripts/face_approach_grab.py 0 0.42 0.06 --execute --read-before --duration-scale 2.0
+python3 scripts/face_approach_grab.py 0 0.45 0.06 --execute --read-before --duration-scale 2.0
 ```
 
 如果目标太近，水平姿态约束可能无解。可以先减小 `--pre-distance`，或调整目标点高度/水平距离。

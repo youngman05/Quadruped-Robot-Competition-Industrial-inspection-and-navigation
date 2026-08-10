@@ -1,4 +1,4 @@
-# 比赛系统参数 — 集中管理所有 ROS2 节点参数
+# 比赛系统共享节点参数；task_manager 使用 task_manager_params.yaml。
 # 用法: ros2 launch launch/competition.launch.py
 
 gauge_status_publisher_node:
@@ -60,20 +60,9 @@ yolo_udp_bridge_node:
     min_depth_valid_ratio: 0.60
     tf_timeout_s: 0.05
 
-task_manager_node:
-  ros__parameters:
-    phases: ["start", "pass_obstacle", "inspect_gauges", "report_status", "find_red_bar", "grasp_bar", "place_to_abnormal_zone", "finish"]
-    timeout_per_phase: 300.0     # 每阶段超时秒数 (含YOLO, 仪表检测)
-    report_duration: 5.0         # 语音播报最短时长
-    tick_rate: 10.0              # 状态机主循环频率 (Hz)
-    require_stable_gauge: true   # 是否必须仪表稳定检测才推进
-    auto_advance: false          # 调试: 自动推进阶段（跳过所有条件）
-    phase2_map_yaml: "src/navi/map/competition_field_phase2.yaml"  # Nav2 越障后地图
-    gauge_topic: "/gauge/status"
-    yolo_topic: "/yolo/detections"
-    slam_status_topic: "/visual_slam/status"
-    phase_topic: "/task/phase"
-    status_topic: "/task/status"
+# task_manager parameters are maintained separately in task_manager_params.yaml.
+# Calibrated dog/arm spatial relationships live in
+# ../calibration/competition_sites.yaml.
 
 # speech_node:
 #   ros__parameters:

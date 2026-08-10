@@ -36,7 +36,7 @@
 当选中物块在机械臂基座坐标系中的位置满足抓取参考条件时，认为机器狗到达 `I1`：
 
 ```text
-target_arm_base ~= (0.40, 0.00, z_final)
+target_arm_base ~= (0.45, 0.00, z_final)
 ```
 
 因此，不同红色物块对应的机器狗最终位置可能不同，但机械臂看到的目标相对位置应尽量相同。
@@ -311,7 +311,7 @@ job_index += 1
 机械臂参考抓取点为：
 
 ```text
-p_ref_arm = (0.40, 0.00, z_final)
+p_ref_arm = (0.45, 0.00, z_final)
 ```
 
 利用固定外参得到该点在 `base_link` 中的参考坐标：
@@ -428,7 +428,7 @@ response:
 实际请求目标使用：
 
 ```text
-x = 0.40
+x = 0.45
 y = 0.00
 z = 最终稳定帧的中位数，并经过可达范围检查
 ```
@@ -719,7 +719,7 @@ task_manager_node:
   ros__parameters:
     grasp_i0: [I0_X, I0_Y, I0_YAW]
 
-    grasp_reference_arm: [0.40, 0.00]
+    grasp_reference_arm: [0.45, 0.00]
     grasp_z_min: Z_MIN
     grasp_z_max: Z_MAX
 
@@ -816,3 +816,99 @@ task_manager_node:
 -> 机械臂执行固定放置
 -> 循环处理第二个异常区域
 ```
+
+## 16. 参数维护方案
+
+### 16.1 设计目标
+
+参数按“数据所有权”而不是按“方便写在哪里”分配。每个有效数值只能有一个
+运行真值来源，文档、测试命令和代码默认值不能再维护第二份生产坐标。
+
+配置分为三层：
+
+| 配置 | 唯一负责内容 | 不应包含 |
+| --- | --- | --- |
+| `configs/calibration/competition_sites.yaml` | 系统级空间标定：固定狗位姿、I1 契约、公共机械臂释放点、标定版本 | 控制增益、串口、安全开关 |
+| `configs/ros/task_manager_params.yaml` | 状态机阶段、超时、话题以及后续 I1 控制器参数 | map 点位、机械臂 TCP |
+| `arm_new/config/arm_motion_params.yaml` | 串口、动作时序、接近/抬升参数、机械臂安全开关 | I0、A/B/C/D 狗位姿 |
+
+`configs/transforms/static_extrinsics.yaml` 继续作为项目静态 TF 的唯一真值来源，
+不能把 `base_link -> arm_base_link` 或相机外参复制到上述文件。
+
+### 16.2 空间标定集合
+
+`competition_sites.yaml` 是一次联合标定的原子集合。它同时保存：
+
+- `grasp_i0`：`map` 中固定的粗对齐狗位姿 `[x_m, y_m, yaw_rad]`；
+- `grasp_i1`：`arm_base_link` 中动态细对齐终止条件，当前固定 x/y 为
+  `[0.45, 0.00]`，z 由每趟最终稳定观测提供；
+- `placement_A/B/C/D`：四个 `map` 中的固定放置狗位姿；
+- `fixed_release`：ArmPi API 坐标系中的公共释放 TCP；
+- `smoke_test.grasp_z_m`：人工服务链路测试使用的 z，当前为 `0.06 m`。
+
+I1 不是一个 `map` 航点，不能新增 `i1` 导航目标。它表示选中物块在
+`arm_base_link` 中已经进入机械臂抓取参考位置。
+
+第一版要求 A/B/C/D 共用一个 `fixed_release`。现场应调整四个狗位姿，使同一
+机械臂释放动作均落入有效区域。如果必须为四区使用不同 TCP，应先把
+`/arm/execute_place_fixed` 从无参数 `Trigger` 改成携带 `zone_id` 的自定义服务，
+不能只在 YAML 中增加四个点而让节点隐式选择。
+
+### 16.3 坐标与单位
+
+- 固定狗位姿统一直接记录 ROS `map` 坐标，长度单位为米、yaw 单位为弧度；
+- 禁止把场地图左上原点、毫米、y 向下的绘图坐标直接写入运行点位；
+- I1 目标使用 `arm_base_link`：`+X` 前、`+Y` 左、`+Z` 上；
+- 固定释放点使用明确标记的 `arm_api`：`+X` 右、`+Y` 前、`+Z` 上；
+- TF 平移使用米，四元数顺序固定为 `xyzw`。
+
+字段名必须携带 frame 或单位语义，例如 `pose_map_m_rad`、`fixed_xy_m` 和
+`target_m`。任何 frame 不明确的三元数组都不能进入已标定状态。
+
+### 16.4 标定状态和启动门控
+
+空间条目的状态采用：
+
+- `uncalibrated`：无有效值，禁止自动任务；
+- `conflict`：现有来源互相矛盾，禁止自动任务；
+- `provisional`：有候选值，只允许人工分阶段验证；
+- `confirmed_reference`：接口参考值已确认，但不代表整条实机链路已验收；
+- `calibrated`：完成重复性验收，可进入自动任务。
+
+运行加载器落地后，任何必需点位为 `null`、缺 yaw、含非有限数或状态不是
+`calibrated` 时必须 fail closed。两个节点必须输出同一 `calibration_set.id`；
+日志无法证明所加载标定集合时，不允许执行真机自动流程。
+
+当前 `competition_sites.yaml` 仅建立统一格式，导航侧尚未接入。文件中的
+候选狗位姿仍是 `provisional`，`grasp_i0` 因代码与文档冲突明确标为 `conflict`，
+不能因为文件已经存在就视为现场标定完成。
+
+### 16.5 日常维护流程
+
+1. 在 PC 工作分支修改源码配置，不直接编辑 Xavier 的 `install/` 或 `/tmp/`；
+2. 修改前先将受影响条目标记为 `uncalibrated`；
+3. 一次只调整一个变量，保留前一版本的 Git commit；
+4. 同步 Xavier 后重新 `colcon build` 并 `source install/setup.bash`；
+5. 依次完成 YAML 校验、`enable_motion=false`、TF/preflight、dry-run、单点导航、
+   低速真机动作和完整链路；
+6. 每个固定站位至少重复到位 3 至 5 次，再写入标定人、日期并更新
+   `calibration_set.id`；
+7. 验收通过的集合用 Git tag 固化，问题回退到整套标定，不手工猜测旧数值。
+
+仓库中的 `enable_motion` 必须保持 `false`。真机运动授权属于本次启动行为，
+只能在有人监护和可立即断电时显式打开。禁止在动作执行中使用
+`ros2 param set` 修改点位、速度或安全开关。
+
+### 16.6 变更失效传播
+
+| 变更 | 必须重新验收 |
+| --- | --- |
+| 地图原点、尺度或 SLAM 定位定义 | 所有 `map` 狗位姿 |
+| `base_link -> arm_base_link` | I1、抓取、公共释放点和 A/B/C/D |
+| 相机安装位姿或相机外参 | 目标坐标、I1 闭环和真实抓取 |
+| I1 固定 x/y | 状态机闭环与机械臂抓取 |
+| 公共释放 TCP | A/B/C/D 四个联合放置测试 |
+| 机械臂运输位姿或抬升高度 | 抓取、持物导航和环境碰撞检查 |
+
+配置维护的责任边界、当前分支差异和与 navigation/SLAM 分支的整合流程见
+`docs/2026-08-09VersionDifference.md`。

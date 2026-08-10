@@ -17,23 +17,28 @@ arm_motion_node:
     pause_s: 0.2
     scan_first: true
 
-    # I1 reference in ROS arm_base_link axes: +X forward, +Y left, +Z up.
-    # The numeric values are placeholders until calibrated on the physical robot.
+    # Transitional runtime copy. The system-level source of truth is
+    # configs/calibration/competition_sites.yaml. Keep motion disabled if the
+    # two files disagree; remove this copy when the sites loader is integrated.
+    # I1 reference uses arm_base_link axes: +X forward, +Y left, +Z up.
     grasp_reference_configured: false
-    grasp_reference_arm_base: [0.40, 0.00]
+    # Mounted-arm baseline verified at z=0.06 m. ArmPi API [0.00, 0.45, z]
+    # corresponds to ROS arm_base_link [0.45, 0.00, z].
+    grasp_reference_arm_base: [0.45, 0.00]
     grasp_reference_xy_tolerance_m: 0.02
     grasp_z_min_m: 0.02
     grasp_z_max_m: 0.12
     grasp_rotation_deg: 0.0
     grasp_pre_distance: 0.05
     grasp_lift_height: 0.08
-    grasp_duration_scale: 1.0
+    grasp_duration_scale: 2.0
     grasp_include_home: false
     grasp_approach_steps: 8
     grasp_approach_step_duration_ms: 180
 
-    # ArmPi API axes: +X right, +Y forward, +Z up.  This point must be measured
-    # with the dog at each calibrated A/B/C/D base pose before enabling motion.
+    # Transitional runtime copy of manipulation.fixed_release. ArmPi API axes:
+    # +X right, +Y forward, +Z up. This point must be measured with the dog at
+    # each calibrated A/B/C/D base pose before enabling motion.
     place_target_configured: false
     place_target_arm: [0.0, 0.0, 0.0]
     place_duration_ms: 1200
