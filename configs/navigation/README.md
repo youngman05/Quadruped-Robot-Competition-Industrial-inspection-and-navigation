@@ -7,6 +7,12 @@ Nav2 导航参数配置。
 | 文件 | 用途 |
 |------|------|
 | `nav2_params.yaml` | Nav2 全局/局部代价地图、规划器、控制器参数 |
+| `navigate_terminal_no_replanning.xml` | 终点邻域单次规划 BT；无周期重规划和运动恢复 |
+
+完整航点 probe 默认在距离目标 `0.35m` 时取消周期重规划目标，确认
+`/cmd_vel` 连续归零后，以 `navigate_terminal_no_replanning.xml` 重发同一目标。
+这样 Foxy 0.4.7 不会在最终位置/朝向收敛期间反复重置 goal checker 和
+`RotateToGoal` critic。
 
 ## 关键参数
 

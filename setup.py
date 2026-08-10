@@ -14,7 +14,10 @@ setup(
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/launch", glob("launch/*.py")),
-        ("share/" + package_name + "/configs/navigation", glob("configs/navigation/*.yaml")),
+        (
+            "share/" + package_name + "/configs/navigation",
+            glob("configs/navigation/*.yaml") + glob("configs/navigation/*.xml"),
+        ),
         ("share/" + package_name + "/configs/ros", glob("configs/ros/*")),
         ("share/" + package_name + "/navi/map", glob("navi/map/*.pgm") + glob("navi/map/*.yaml")),
     ],

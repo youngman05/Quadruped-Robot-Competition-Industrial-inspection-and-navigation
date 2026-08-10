@@ -1,0 +1,13 @@
+<!--
+  Terminal approach tree for Foxy Nav2 0.4.7.
+  The path is computed once so goal-checker and DWB terminal state are not
+  reset while the robot finishes position and yaw convergence.
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <SequenceStar name="NavigateTerminalWithoutReplanning">
+      <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+      <FollowPath path="{path}" controller_id="FollowPath"/>
+    </SequenceStar>
+  </BehaviorTree>
+</root>

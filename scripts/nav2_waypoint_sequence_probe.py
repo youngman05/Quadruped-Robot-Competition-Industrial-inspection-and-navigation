@@ -45,6 +45,8 @@ from nodes.navigation.waypoint_calibration import (
 )
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
 STATUS_NAMES = {
     GoalStatus.STATUS_UNKNOWN: "UNKNOWN",
     GoalStatus.STATUS_ACCEPTED: "ACCEPTED",
@@ -58,6 +60,12 @@ STATUS_NAMES = {
 NO_RECOVERY_REPLANNING_BT = (
     "/opt/ros/foxy/share/nav2_bt_navigator/behavior_trees/"
     "navigate_w_replanning_time.xml"
+)
+TERMINAL_NO_REPLANNING_BT = str(
+    PROJECT_ROOT
+    / "configs"
+    / "navigation"
+    / "navigate_terminal_no_replanning.xml"
 )
 
 
@@ -475,7 +483,7 @@ class Nav2WaypointSequenceProbe(Node):
         pose["segment_index"] = segment_index
         self.segment_trace.append(pose)
 
-    def build_goal_from_pose(self, x, y, yaw):
+    def build_goal_from_pose(self, x, y, yaw, behavior_tree=None):
         goal_msg = NavigateToPose.Goal()
         goal_msg.pose.header.frame_id = self.args.frame_id
         goal_msg.pose.header.stamp = self.get_clock().now().to_msg()
@@ -487,7 +495,9 @@ class Nav2WaypointSequenceProbe(Node):
         goal_msg.pose.pose.orientation.y = q["y"]
         goal_msg.pose.pose.orientation.z = q["z"]
         goal_msg.pose.pose.orientation.w = q["w"]
-        goal_msg.behavior_tree = self.args.behavior_tree
+        goal_msg.behavior_tree = (
+            self.args.behavior_tree if behavior_tree is None else behavior_tree
+        )
         return goal_msg
 
     def run(self):
@@ -519,6 +529,11 @@ class Nav2WaypointSequenceProbe(Node):
             "frame_id": self.args.frame_id,
             "base_frame": self.args.base_frame,
             "behavior_tree": self.args.behavior_tree or None,
+            "terminal_behavior_tree": (
+                self.args.terminal_behavior_tree
+                if self.args.terminal_replan_stop
+                else None
+            ),
             "segments": self.segments,
         }
 
@@ -660,6 +675,95 @@ class Nav2WaypointSequenceProbe(Node):
             abs(command[name]) <= 1e-5
             for name in ("linear_x", "linear_y", "angular_z")
         )
+
+    def _wait_future(self, future, timeout):
+        deadline = time.monotonic() + max(0.0, timeout)
+        while rclpy.ok() and not future.done() and time.monotonic() < deadline:
+            rclpy.spin_once(self, timeout_sec=0.02)
+        return future.done()
+
+    def _send_nav2_goal(self, goal, behavior_tree):
+        goal_msg = self.build_goal_from_pose(
+            goal["x"],
+            goal["y"],
+            goal["yaw"],
+            behavior_tree=behavior_tree,
+        )
+        send_future = self.action_client.send_goal_async(goal_msg)
+        if not self._wait_future(send_future, self.args.server_timeout):
+            return None, None, "goal send timed out"
+        goal_handle = send_future.result()
+        if goal_handle is None or not goal_handle.accepted:
+            return goal_handle, None, "goal rejected"
+        return goal_handle, goal_handle.get_result_async(), None
+
+    def _cancel_nav2_goal(self, goal_handle, result_future, timeout):
+        if result_future.done():
+            return int(result_future.result().status), None
+
+        cancel_future = goal_handle.cancel_goal_async()
+        if not self._wait_future(cancel_future, timeout):
+            return None, "Nav2 cancel request timed out"
+
+        response = cancel_future.result()
+        return_code = getattr(response, "return_code", None)
+        cancel_accepted = return_code == 0 or bool(
+            getattr(response, "goals_canceling", [])
+        )
+        if not self._wait_future(result_future, timeout):
+            return None, "Nav2 goal stayed active after cancel request"
+
+        status = int(result_future.result().status)
+        if not cancel_accepted and status not in (
+            GoalStatus.STATUS_SUCCEEDED,
+            GoalStatus.STATUS_CANCELED,
+            GoalStatus.STATUS_ABORTED,
+        ):
+            return status, "Nav2 cancel request was rejected"
+        return status, None
+
+    def _wait_for_output_zero(self):
+        started = time.monotonic()
+        deadline = started + self.args.terminal_zero_timeout
+        zero_started = None
+        while rclpy.ok() and time.monotonic() < deadline:
+            rclpy.spin_once(self, timeout_sec=0.02)
+            now = time.monotonic()
+            command = self.latest_output_cmd
+            command_is_current = (
+                command is not None and command["monotonic_time"] >= started
+            )
+            if command_is_current and self._output_command_is_zero(command):
+                if zero_started is None:
+                    zero_started = now
+                elif now - zero_started >= self.args.terminal_zero_confirm_time:
+                    return None
+            else:
+                zero_started = None
+        return "final cmd_vel did not remain zero before terminal goal"
+
+    def _capture_nav2_trace_sample(self, segment_index, goal, phase):
+        pose = self.lookup_map_pose(allow_fallback=False)
+        trace_sample = dict(pose)
+        trace_sample.update(
+            {
+                "segment_index": segment_index,
+                "segment_kind": "nav2",
+                "handover_phase": phase,
+                "control_mode": phase,
+                "target_x": goal["x"],
+                "target_y": goal["y"],
+                "target_yaw": goal["yaw"],
+            }
+        )
+        if pose.get("ok"):
+            trace_sample["position_error"] = math.hypot(
+                pose["x"] - goal["x"],
+                pose["y"] - goal["y"],
+            )
+            trace_sample["error_yaw"] = normalize_angle(goal["yaw"] - pose["yaw"])
+        self.segment_trace.append(trace_sample)
+        return trace_sample
 
     def _acquire_precision_zero_lease(self):
         if self.precision_cmd_pub.get_subscription_count() < 1:
@@ -1466,56 +1570,175 @@ class Nav2WaypointSequenceProbe(Node):
         start_pose = self.wait_for_map_pose()
         if not start_pose.get("ok"):
             raise RuntimeError("cannot capture start map pose: %s" % start_pose.get("error"))
-        goal_msg = self.build_goal_from_pose(goal["x"], goal["y"], goal["yaw"])
 
-        send_future = self.action_client.send_goal_async(goal_msg)
-        rclpy.spin_until_future_complete(self, send_future, timeout_sec=self.args.server_timeout)
-        goal_handle = send_future.result()
-        if goal_handle is None or not goal_handle.accepted:
+        terminal_enabled = bool(
+            self.args.terminal_replan_stop and self.args.terminal_behavior_tree
+        )
+        start_distance = math.hypot(
+            start_pose["x"] - goal["x"],
+            start_pose["y"] - goal["y"],
+        )
+        started_in_terminal_radius = bool(
+            terminal_enabled
+            and start_distance <= self.args.terminal_replan_stop_radius
+        )
+        terminal_started = started_in_terminal_radius
+        current_phase = (
+            "terminal_no_replanning"
+            if terminal_started
+            else "periodic_replanning"
+        )
+        current_behavior_tree = (
+            self.args.terminal_behavior_tree
+            if terminal_started
+            else self.args.behavior_tree
+        )
+        goal_handle, result_future, error = self._send_nav2_goal(
+            goal,
+            current_behavior_tree,
+        )
+        if error is not None:
             end_pose = self.lookup_map_pose()
             segment = {
                 "index": index,
                 "kind": "nav2",
                 "accepted": False,
                 "succeeded": False,
-                "error": "goal rejected",
+                "error": error,
                 "goal": goal,
                 "start_pose": start_pose,
                 "end_pose": end_pose,
                 "cmd_vel": self.segment_cmd,
                 "cmd_vel_samples": self.segment_cmd_samples,
                 "trace": self.segment_trace,
+                "terminal_handover": {
+                    "enabled": terminal_enabled,
+                    "started_in_terminal_radius": started_in_terminal_radius,
+                    "triggered": False,
+                    "stop_radius": self.args.terminal_replan_stop_radius,
+                    "periodic_behavior_tree": self.args.behavior_tree or None,
+                    "terminal_behavior_tree": (
+                        self.args.terminal_behavior_tree if terminal_enabled else None
+                    ),
+                },
             }
             self._clear_segment_logging()
             return segment
 
-        result_future = goal_handle.get_result_async()
         deadline = time.monotonic() + self.args.goal_timeout
         next_trace = time.monotonic()
         timed_out = False
-        while rclpy.ok() and not result_future.done():
+        canceled = False
+        handover_triggered = False
+        handover_trigger_pose = None
+        handover_trigger_distance = None
+        handover_cancel_requested = False
+        handover_zero_confirmed = False
+        periodic_action_status = None
+        terminal_accepted = terminal_started
+        action_status = None
+
+        while rclpy.ok():
+            if result_future.done():
+                action_status = int(result_future.result().status)
+                break
             rclpy.spin_once(self, timeout_sec=0.05)
             now = time.monotonic()
             if now >= next_trace:
-                self.capture_trace_sample(index)
+                trace_sample = self._capture_nav2_trace_sample(
+                    index,
+                    goal,
+                    current_phase,
+                )
                 next_trace = now + (1.0 / self.args.trace_rate)
+                tf_age = trace_sample.get("tf_age_sec")
+                pose_is_fresh = (
+                    trace_sample.get("ok")
+                    and tf_age is not None
+                    and tf_age <= self.args.terminal_tf_max_age
+                )
+                if (
+                    terminal_enabled
+                    and not terminal_started
+                    and pose_is_fresh
+                    and trace_sample["position_error"]
+                    <= self.args.terminal_replan_stop_radius
+                ):
+                    handover_triggered = True
+                    handover_trigger_pose = dict(trace_sample)
+                    handover_trigger_distance = trace_sample["position_error"]
+                    handover_cancel_requested = True
+                    periodic_action_status, cancel_error = self._cancel_nav2_goal(
+                        goal_handle,
+                        result_future,
+                        self.args.terminal_cancel_timeout,
+                    )
+                    if cancel_error is not None:
+                        error = cancel_error
+                        break
+                    if periodic_action_status == GoalStatus.STATUS_SUCCEEDED:
+                        action_status = periodic_action_status
+                        break
+                    if periodic_action_status != GoalStatus.STATUS_CANCELED:
+                        error = "periodic Nav2 goal ended during terminal handover: %s" % (
+                            STATUS_NAMES.get(
+                                periodic_action_status,
+                                periodic_action_status,
+                            )
+                        )
+                        break
+
+                    zero_error = self._wait_for_output_zero()
+                    if zero_error is not None:
+                        error = zero_error
+                        break
+                    handover_zero_confirmed = True
+
+                    goal_handle, result_future, send_error = self._send_nav2_goal(
+                        goal,
+                        self.args.terminal_behavior_tree,
+                    )
+                    terminal_accepted = send_error is None
+                    if send_error is not None:
+                        error = send_error
+                        break
+                    terminal_started = True
+                    current_phase = "terminal_no_replanning"
+                    current_behavior_tree = self.args.terminal_behavior_tree
+                    continue
             if now >= deadline:
                 timed_out = True
                 break
 
-        canceled = False
-        if timed_out and self.args.cancel_on_timeout:
-            cancel_future = goal_handle.cancel_goal_async()
-            rclpy.spin_until_future_complete(self, cancel_future, timeout_sec=2.0)
-            canceled = True
+        should_cancel_active = (
+            not result_future.done()
+            and (
+                error is not None
+                or (timed_out and self.args.cancel_on_timeout)
+            )
+        )
+        if should_cancel_active:
+            action_status, cancel_error = self._cancel_nav2_goal(
+                goal_handle,
+                result_future,
+                self.args.terminal_cancel_timeout,
+            )
+            canceled = action_status == GoalStatus.STATUS_CANCELED
+            if cancel_error is not None:
+                error = cancel_error if error is None else "%s; %s" % (
+                    error,
+                    cancel_error,
+                )
             self.spin_for(self.args.post_cancel_spin)
 
-        action_status = None
         status_name = "TIMEOUT"
-        if result_future.done():
+        if action_status is None and result_future.done():
             result = result_future.result()
             action_status = int(result.status)
+        if action_status is not None:
             status_name = STATUS_NAMES.get(action_status, str(action_status))
+        elif error is not None:
+            status_name = "HANDOVER_FAILED"
 
         end_pose = self.lookup_map_pose()
         delta = self.pose_delta(start_pose, end_pose)
@@ -1523,11 +1746,14 @@ class Nav2WaypointSequenceProbe(Node):
             "index": index,
             "kind": "nav2",
             "accepted": True,
-            "succeeded": action_status == GoalStatus.STATUS_SUCCEEDED,
+            "succeeded": (
+                error is None and action_status == GoalStatus.STATUS_SUCCEEDED
+            ),
             "timed_out": timed_out,
             "canceled": canceled,
             "action_status": action_status,
             "action_status_name": status_name,
+            "error": error,
             "goal": goal,
             "start_pose": start_pose,
             "end_pose": end_pose,
@@ -1535,6 +1761,28 @@ class Nav2WaypointSequenceProbe(Node):
             "cmd_vel": self.segment_cmd,
             "cmd_vel_samples": self.segment_cmd_samples,
             "trace": self.segment_trace,
+            "terminal_handover": {
+                "enabled": terminal_enabled,
+                "started_in_terminal_radius": started_in_terminal_radius,
+                "triggered": handover_triggered,
+                "trigger_pose": handover_trigger_pose,
+                "trigger_distance": handover_trigger_distance,
+                "stop_radius": self.args.terminal_replan_stop_radius,
+                "cancel_requested": handover_cancel_requested,
+                "periodic_action_status": periodic_action_status,
+                "periodic_action_status_name": (
+                    STATUS_NAMES.get(periodic_action_status, periodic_action_status)
+                    if periodic_action_status is not None
+                    else None
+                ),
+                "zero_confirmed": handover_zero_confirmed,
+                "terminal_started": terminal_started,
+                "terminal_accepted": terminal_accepted,
+                "periodic_behavior_tree": self.args.behavior_tree or None,
+                "terminal_behavior_tree": (
+                    self.args.terminal_behavior_tree if terminal_enabled else None
+                ),
+            },
         }
         self._clear_segment_logging()
         return segment
@@ -1769,6 +2017,31 @@ def parse_args():
         default="",
         help="Optional NavigateToPose behavior-tree XML path for every goal.",
     )
+    parser.add_argument(
+        "--terminal-behavior-tree",
+        default=TERMINAL_NO_REPLANNING_BT,
+        help=(
+            "NavigateToPose behavior tree used after the terminal handover; "
+            "the default computes one path and does not replan."
+        ),
+    )
+    parser.add_argument(
+        "--terminal-replan-stop-radius",
+        type=float,
+        default=0.35,
+        help="Switch from periodic replanning to the terminal tree within this XY radius.",
+    )
+    parser.add_argument(
+        "--no-terminal-replan-stop",
+        dest="terminal_replan_stop",
+        action="store_false",
+        help="Disable the terminal no-replanning handover.",
+    )
+    parser.set_defaults(terminal_replan_stop=True)
+    parser.add_argument("--terminal-cancel-timeout", type=float, default=3.0)
+    parser.add_argument("--terminal-zero-timeout", type=float, default=2.0)
+    parser.add_argument("--terminal-zero-confirm-time", type=float, default=0.20)
+    parser.add_argument("--terminal-tf-max-age", type=float, default=0.20)
     parser.add_argument("--cancel-on-timeout", action="store_true", default=True)
     parser.add_argument("--no-cancel-on-timeout", dest="cancel_on_timeout", action="store_false")
     parser.add_argument("--stop-on-failure", action="store_true", default=True)
@@ -1839,6 +2112,45 @@ def validate_args(args):
         raise SystemExit("--map-tf-timeout must be > 0")
     if args.tf_timeout <= 0.0:
         raise SystemExit("--tf-timeout must be > 0")
+    if args.terminal_replan_stop:
+        if not 0.20 <= args.terminal_replan_stop_radius <= 1.0:
+            raise SystemExit(
+                "--terminal-replan-stop-radius must be between 0.20m and 1.0m"
+            )
+        terminal_values = {
+            "--terminal-cancel-timeout": args.terminal_cancel_timeout,
+            "--terminal-zero-timeout": args.terminal_zero_timeout,
+            "--terminal-tf-max-age": args.terminal_tf_max_age,
+        }
+        for name, value in terminal_values.items():
+            if not math.isfinite(value) or value <= 0.0:
+                raise SystemExit("%s must be > 0" % name)
+        if (
+            not math.isfinite(args.terminal_zero_confirm_time)
+            or args.terminal_zero_confirm_time < 0.0
+            or args.terminal_zero_confirm_time > args.terminal_zero_timeout
+        ):
+            raise SystemExit(
+                "--terminal-zero-confirm-time must be between 0 and "
+                "--terminal-zero-timeout"
+            )
+        if not args.terminal_behavior_tree:
+            raise SystemExit(
+                "--terminal-behavior-tree is required unless "
+                "--no-terminal-replan-stop is used"
+            )
+        if not Path(args.terminal_behavior_tree).is_file():
+            raise SystemExit(
+                "terminal behavior tree does not exist: %s"
+                % args.terminal_behavior_tree
+            )
+        if args.behavior_tree and (
+            Path(args.behavior_tree).resolve()
+            == Path(args.terminal_behavior_tree).resolve()
+        ):
+            raise SystemExit(
+                "periodic and terminal behavior trees must be different"
+            )
     if args.waypoint_route or args.route_preset in (
         "nav-only-full",
         "nav-only-inspection",
