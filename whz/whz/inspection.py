@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Callable, Iterable, Optional
 
 from whz.audio_player import AudioPlayer
 from whz.yolo_detector import YOLODetector
@@ -168,19 +168,37 @@ class InspectionRunner:
         inspector: Inspector,
         required_frames: int = 3,
         frame_timeout_sec: float = 2.0,
+        camera_factory: Optional[Callable[[], object]] = None,
     ) -> None:
         self.camera = camera
+        self.camera_factory = camera_factory
         self.inspector = inspector
         self.required_frames = int(required_frames)
         self.frame_timeout_sec = float(frame_timeout_sec)
+        if (self.camera is None) == (self.camera_factory is None):
+            raise ValueError("provide exactly one of camera or camera_factory")
         if self.required_frames < 1:
             raise ValueError("required_frames must be at least 1")
         if self.inspector.min_agree_frames > self.required_frames:
             raise ValueError("min_agree_frames cannot exceed required_frames")
 
     def run(self) -> InspectionResult:
+        camera = self.camera
+        close_after_capture = False
+        if self.camera_factory is not None:
+            try:
+                camera = self.camera_factory()
+                close_after_capture = True
+            except Exception as exc:  # noqa: BLE001
+                return InspectionResult(
+                    ok=False,
+                    error="camera_open_failed: %s" % exc,
+                    total_frames=0,
+                    agree_frames=0,
+                )
+
         try:
-            frames = self.camera.read_frames(
+            frames = camera.read_frames(
                 count=self.required_frames,
                 timeout_sec=self.frame_timeout_sec,
             )
@@ -191,6 +209,10 @@ class InspectionRunner:
                 total_frames=0,
                 agree_frames=0,
             )
+        finally:
+            if close_after_capture:
+                camera.close()
+
         if len(frames) != self.required_frames:
             return InspectionResult(
                 ok=False,

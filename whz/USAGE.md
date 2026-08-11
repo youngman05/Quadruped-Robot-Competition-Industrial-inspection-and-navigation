@@ -1,6 +1,6 @@
 # WHZ 使用说明
 
-`whz` 通过 Lite3 前置 RTSP 相机完成一次按需巡检。节点常驻时只创建一个 YOLO 模型、执行一次预热，并保持一个低延迟 GStreamer 连接。
+`whz` 通过 Lite3 前置 RTSP 相机完成一次按需巡检。节点常驻时只创建一个 YOLO 模型并执行一次预热；每次服务调用临时连接相机，抓满 3 个新帧后立即释放 GStreamer，再进行推理和播报。
 
 ## 1. 接口与流程
 
@@ -79,13 +79,17 @@ A B C D green red yellow
 | `min_agree_frames` | `2` | 成功所需一致票数 |
 | `connect_timeout_sec` | `8.0` | RTSP 启动超时 |
 | `frame_timeout_sec` | `2.0` | 每个新帧的读取超时 |
-| `image_size` | `320` | YOLO 推理尺寸 |
-| `confidence_threshold` | `0.30` | YOLO 置信度阈值 |
+| `image_size` | `960` | YOLO 推理尺寸；已按当前观察距离验证 |
+| `confidence_threshold` | `0.25` | 全图仪表检测置信度阈值 |
+| `letter_crop_image_size` | `320` | 以仪表为锚点的字母 ROI 推理尺寸 |
+| `letter_confidence_threshold` | `0.15` | 字母 ROI 置信度阈值；仍受空间配对和歧义拒绝约束 |
 | `iou_threshold` | `0.50` | YOLO NMS IoU 阈值 |
-| `prefer_hw_decode` | `false` | 优先尝试 Jetson 硬解码 |
+| `prefer_hw_decode` | `true` | 优先尝试 Jetson 硬解码；不可用时自动回退软件解码 |
 | `play_audio` | `true` | 投票成功后播放一次 MP3 |
 
 `min_agree_frames` 不能大于 `required_frames`。这些资源型参数为启动期只读参数，修改后应重启节点。
+
+字母识别不是固定屏幕裁剪：节点先在整帧中检测仪表，再按仪表框尺寸裁出其上方区域，用同一个 YOLO 模型二次识别 A/B/C/D，最后把字母框映射回原图执行空间配对。
 
 ## 4. 返回 JSON
 
@@ -123,6 +127,7 @@ ambiguous_spatial_pair
 ambiguous_vote
 not_enough_agreement=1/2
 camera_read_failed: ...
+camera_open_failed: ...
 camera_frame_count_mismatch=2/3
 audio_play_failed: ...
 ```

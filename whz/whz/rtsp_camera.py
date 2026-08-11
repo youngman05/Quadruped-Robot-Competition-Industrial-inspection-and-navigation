@@ -15,7 +15,7 @@ DEFAULT_RTSP_URL = "rtsp://192.168.1.120:8554/test"
 _JETSON_TLS_FIX = "/lib/aarch64-linux-gnu/libgomp.so.1"
 
 _NVVDEC_PIPELINE = (
-    "rtspsrc location={url} latency={latency} ! "
+    "rtspsrc location={url} latency={latency} protocols=tcp ! "
     "rtph264depay ! h264parse config-interval=1 ! "
     "nvv4l2decoder ! video/x-raw(memory:NVMM) ! "
     "nvvidconv ! video/x-raw,format=BGRx ! "
@@ -24,8 +24,9 @@ _NVVDEC_PIPELINE = (
 )
 
 _AVDEC_PIPELINE = (
-    "rtspsrc location={url} latency={latency} ! "
-    "rtph264depay ! h264parse config-interval=1 ! avdec_h264 ! "
+    "rtspsrc location={url} latency={latency} protocols=tcp ! "
+    "rtph264depay ! h264parse config-interval=1 ! "
+    "avdec_h264 output-corrupt=false ! "
     "videoconvert ! video/x-raw,format=BGR ! "
     "appsink name=sink sync=false max-buffers=1 drop=true"
 )

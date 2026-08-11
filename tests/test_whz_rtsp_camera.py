@@ -10,7 +10,7 @@ WHZ_ROOT = REPO_ROOT / "whz"
 if str(WHZ_ROOT) not in sys.path:
     sys.path.insert(0, str(WHZ_ROOT))
 
-from whz.rtsp_camera import RTSPCamera
+from whz.rtsp_camera import RTSPCamera, _AVDEC_PIPELINE, _NVVDEC_PIPELINE
 
 
 class ScriptedRTSPCamera(RTSPCamera):
@@ -30,6 +30,13 @@ class ScriptedRTSPCamera(RTSPCamera):
 
 
 class RTSPCameraTests(unittest.TestCase):
+    def test_production_pipelines_force_tcp_transport(self):
+        self.assertIn("protocols=tcp", _AVDEC_PIPELINE)
+        self.assertIn("protocols=tcp", _NVVDEC_PIPELINE)
+
+    def test_software_pipeline_drops_corrupt_startup_frames(self):
+        self.assertIn("avdec_h264 output-corrupt=false", _AVDEC_PIPELINE)
+
     def test_read_frames_skips_duplicate_stream_identity(self):
         frame1 = np.full((1, 1, 3), 1, dtype=np.uint8)
         duplicate = np.full((1, 1, 3), 99, dtype=np.uint8)

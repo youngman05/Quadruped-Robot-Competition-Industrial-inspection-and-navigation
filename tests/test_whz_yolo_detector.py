@@ -12,7 +12,15 @@ WHZ_ROOT = REPO_ROOT / "whz"
 if str(WHZ_ROOT) not in sys.path:
     sys.path.insert(0, str(WHZ_ROOT))
 
-from whz.yolo_detector import GaugeDetection, LetterDetection, YOLODetector
+from whz.yolo_detector import (
+    DEFAULT_CONFIDENCE_THRESHOLD,
+    DEFAULT_IMAGE_SIZE,
+    DEFAULT_LETTER_CONFIDENCE_THRESHOLD,
+    DEFAULT_LETTER_CROP_IMAGE_SIZE,
+    GaugeDetection,
+    LetterDetection,
+    YOLODetector,
+)
 
 
 def pairing_detector():
@@ -32,6 +40,33 @@ class FakeModel:
     def predict(self, **kwargs):
         self.predict_calls += 1
         self.last_kwargs = kwargs
+        return [SimpleNamespace(boxes=[])]
+
+
+def fake_box(class_id, confidence, bbox):
+    return SimpleNamespace(
+        cls=np.array([class_id], dtype=np.float32),
+        conf=np.array([confidence], dtype=np.float32),
+        xyxy=np.array([bbox], dtype=np.float32),
+    )
+
+
+class GaugeAnchoredModel(FakeModel):
+    def predict(self, **kwargs):
+        self.predict_calls += 1
+        self.last_kwargs = kwargs
+        image = kwargs["source"]
+        if image.shape == (720, 1280, 3):
+            return [
+                SimpleNamespace(
+                    boxes=[
+                        fake_box(1, 0.29, (628, 340, 652, 368)),
+                        fake_box(4, 0.93, (600, 400, 680, 480)),
+                    ]
+                )
+            ]
+        if image.shape == (148, 200, 3):
+            return [SimpleNamespace(boxes=[fake_box(3, 0.40, (88, 80, 112, 108))])]
         return [SimpleNamespace(boxes=[])]
 
 
@@ -58,8 +93,35 @@ class YOLODetectorTests(unittest.TestCase):
         self.assertEqual(len(factory_calls), 1)
         self.assertTrue(detector.warmup_done)
         self.assertEqual(model.predict_calls, 2)
+        self.assertEqual(model.last_kwargs["imgsz"], DEFAULT_IMAGE_SIZE)
+        self.assertEqual(model.last_kwargs["conf"], DEFAULT_CONFIDENCE_THRESHOLD)
+        self.assertEqual(DEFAULT_IMAGE_SIZE, 960)
+        self.assertEqual(DEFAULT_CONFIDENCE_THRESHOLD, 0.25)
+        self.assertEqual(DEFAULT_LETTER_CROP_IMAGE_SIZE, 320)
+        self.assertEqual(DEFAULT_LETTER_CONFIDENCE_THRESHOLD, 0.15)
         self.assertFalse(result.ok)
         self.assertEqual(result.error, "letter_not_detected")
+
+    def test_gauge_anchored_crop_corrects_full_frame_letter_confusion(self):
+        model = GaugeAnchoredModel()
+
+        with tempfile.TemporaryDirectory() as directory:
+            model_path = Path(directory) / "model.pt"
+            model_path.write_bytes(b"test")
+            detector = YOLODetector(
+                model_path=model_path,
+                device="cpu",
+                model_factory=lambda _: model,
+            )
+            result = detector.detect(np.zeros((720, 1280, 3), dtype=np.uint8))
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.pair.letter.letter, "D")
+        self.assertEqual(result.pair.letter.bbox, (628, 340, 652, 368))
+        self.assertEqual(result.pair.gauge.color, "green")
+        self.assertEqual(model.predict_calls, 3)
+        self.assertEqual(model.last_kwargs["imgsz"], 320)
+        self.assertEqual(model.last_kwargs["conf"], 0.15)
 
     def test_pairing_uses_geometry_instead_of_global_gauge_confidence(self):
         detector = pairing_detector()

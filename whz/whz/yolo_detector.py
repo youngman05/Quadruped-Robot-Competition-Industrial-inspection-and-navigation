@@ -12,6 +12,10 @@ import numpy as np
 BBox = Tuple[int, int, int, int]
 LETTER_CLASSES = frozenset("ABCD")
 GAUGE_COLORS = frozenset(("green", "red", "yellow"))
+DEFAULT_IMAGE_SIZE = 960
+DEFAULT_CONFIDENCE_THRESHOLD = 0.25
+DEFAULT_LETTER_CROP_IMAGE_SIZE = 320
+DEFAULT_LETTER_CONFIDENCE_THRESHOLD = 0.15
 
 
 @dataclass(frozen=True)
@@ -56,8 +60,10 @@ class YOLODetector:
         self,
         model_path: Path,
         device: str = "0",
-        image_size: int = 320,
-        confidence_threshold: float = 0.30,
+        image_size: int = DEFAULT_IMAGE_SIZE,
+        confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
+        letter_crop_image_size: int = DEFAULT_LETTER_CROP_IMAGE_SIZE,
+        letter_confidence_threshold: float = DEFAULT_LETTER_CONFIDENCE_THRESHOLD,
         iou_threshold: float = 0.50,
         max_horizontal_offset_ratio: float = 0.75,
         max_vertical_gap_ratio: float = 2.50,
@@ -71,6 +77,8 @@ class YOLODetector:
         self.device = str(device).strip()
         self.image_size = int(image_size)
         self.confidence_threshold = float(confidence_threshold)
+        self.letter_crop_image_size = int(letter_crop_image_size)
+        self.letter_confidence_threshold = float(letter_confidence_threshold)
         self.iou_threshold = float(iou_threshold)
         self.max_horizontal_offset_ratio = float(max_horizontal_offset_ratio)
         self.max_vertical_gap_ratio = float(max_vertical_gap_ratio)
@@ -98,12 +106,21 @@ class YOLODetector:
         self._predict(dummy)
         self._warmup_done = True
 
-    def _predict(self, image: np.ndarray):
+    def _predict(
+        self,
+        image: np.ndarray,
+        image_size: Optional[int] = None,
+        confidence_threshold: Optional[float] = None,
+    ):
         kwargs = {
             "source": image,
             "verbose": False,
-            "imgsz": self.image_size,
-            "conf": self.confidence_threshold,
+            "imgsz": self.image_size if image_size is None else int(image_size),
+            "conf": (
+                self.confidence_threshold
+                if confidence_threshold is None
+                else float(confidence_threshold)
+            ),
             "iou": self.iou_threshold,
         }
         if self.device:
@@ -118,25 +135,88 @@ class YOLODetector:
         if not results:
             return DetectionResult(error="empty_model_result")
 
+        full_letters, gauges = self._extract_detections(
+            results[0].boxes,
+            confidence_threshold=self.confidence_threshold,
+        )
+        letters = (
+            self._detect_gauge_anchored_letters(image, gauges)
+            if gauges
+            else full_letters
+        )
+
+        pair, error = self._select_pair(letters, gauges)
+        return DetectionResult(letters=letters, gauges=gauges, pair=pair, error=error)
+
+    def _detect_gauge_anchored_letters(
+        self,
+        image: np.ndarray,
+        gauges: Sequence[GaugeDetection],
+    ) -> List[LetterDetection]:
+        height, width = image.shape[:2]
+        letters: List[LetterDetection] = []
+        for gauge in gauges:
+            x1, y1, x2, y2 = gauge.bbox
+            gauge_width = max(1.0, float(x2 - x1))
+            gauge_height = max(1.0, float(y2 - y1))
+            center_x = (x1 + x2) / 2.0
+            crop_x1 = max(0, int(center_x - 1.25 * gauge_width))
+            crop_x2 = min(width, int(center_x + 1.25 * gauge_width))
+            crop_y1 = max(0, int(y1 - 1.75 * gauge_height))
+            crop_y2 = min(height, int(y1 + 0.10 * gauge_height))
+            if crop_x2 <= crop_x1 or crop_y2 <= crop_y1:
+                continue
+
+            crop = image[crop_y1:crop_y2, crop_x1:crop_x2]
+            results = self._predict(
+                crop,
+                image_size=self.letter_crop_image_size,
+                confidence_threshold=self.letter_confidence_threshold,
+            )
+            if not results:
+                continue
+            crop_letters, _ = self._extract_detections(
+                results[0].boxes,
+                confidence_threshold=self.letter_confidence_threshold,
+                offset=(crop_x1, crop_y1),
+                letters_only=True,
+            )
+            letters.extend(crop_letters)
+        return _deduplicate_letters(letters)
+
+    def _extract_detections(
+        self,
+        boxes,
+        confidence_threshold: float,
+        offset: Tuple[int, int] = (0, 0),
+        letters_only: bool = False,
+    ) -> Tuple[List[LetterDetection], List[GaugeDetection]]:
         letters: List[LetterDetection] = []
         gauges: List[GaugeDetection] = []
-        for box in results[0].boxes:
+        offset_x, offset_y = offset
+        for box in boxes:
             class_id = int(_scalar(box.cls[0]))
             confidence = float(_scalar(box.conf[0]))
+            if confidence < confidence_threshold:
+                continue
             name = self._class_name(class_id)
-            bbox = _bbox_tuple(box.xyxy[0])
+            local_bbox = _bbox_tuple(box.xyxy[0])
+            bbox = (
+                local_bbox[0] + offset_x,
+                local_bbox[1] + offset_y,
+                local_bbox[2] + offset_x,
+                local_bbox[3] + offset_y,
+            )
 
             if name in LETTER_CLASSES:
                 letters.append(
                     LetterDetection(letter=name, confidence=confidence, bbox=bbox)
                 )
-            elif name in GAUGE_COLORS:
+            elif not letters_only and name in GAUGE_COLORS:
                 gauges.append(
                     GaugeDetection(color=name, confidence=confidence, bbox=bbox)
                 )
-
-        pair, error = self._select_pair(letters, gauges)
-        return DetectionResult(letters=letters, gauges=gauges, pair=pair, error=error)
+        return letters, gauges
 
     def _class_name(self, class_id: int) -> str:
         if isinstance(self._names, Mapping):
@@ -205,6 +285,33 @@ class YOLODetector:
 def _bbox_center(bbox: BBox) -> Tuple[float, float]:
     x1, y1, x2, y2 = bbox
     return (x1 + x2) / 2.0, (y1 + y2) / 2.0
+
+
+def _deduplicate_letters(
+    letters: Sequence[LetterDetection],
+) -> List[LetterDetection]:
+    kept: List[LetterDetection] = []
+    for letter in sorted(letters, key=lambda item: item.confidence, reverse=True):
+        duplicate = any(
+            letter.letter == existing.letter
+            and _bbox_iou(letter.bbox, existing.bbox) >= 0.50
+            for existing in kept
+        )
+        if not duplicate:
+            kept.append(letter)
+    return kept
+
+
+def _bbox_iou(first: BBox, second: BBox) -> float:
+    x1 = max(first[0], second[0])
+    y1 = max(first[1], second[1])
+    x2 = min(first[2], second[2])
+    y2 = min(first[3], second[3])
+    intersection = max(0, x2 - x1) * max(0, y2 - y1)
+    first_area = max(0, first[2] - first[0]) * max(0, first[3] - first[1])
+    second_area = max(0, second[2] - second[0]) * max(0, second[3] - second[1])
+    union = first_area + second_area - intersection
+    return float(intersection) / float(union) if union > 0 else 0.0
 
 
 def _scalar(value) -> float:

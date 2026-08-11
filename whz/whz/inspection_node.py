@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 import rclpy
 from rcl_interfaces.msg import FloatingPointRange, IntegerRange, ParameterDescriptor
@@ -13,7 +14,13 @@ from whz.audio_player import AudioPlayer
 from whz.inspection import InspectionResult, InspectionRunner, Inspector
 from whz.paths import default_audio_dir, default_model_path
 from whz.rtsp_camera import DEFAULT_RTSP_URL, RTSPCamera
-from whz.yolo_detector import YOLODetector
+from whz.yolo_detector import (
+    DEFAULT_CONFIDENCE_THRESHOLD,
+    DEFAULT_IMAGE_SIZE,
+    DEFAULT_LETTER_CONFIDENCE_THRESHOLD,
+    DEFAULT_LETTER_CROP_IMAGE_SIZE,
+    YOLODetector,
+)
 
 
 def _integer_descriptor(description: str, minimum: int, maximum: int) -> ParameterDescriptor:
@@ -45,7 +52,6 @@ class WhzInspectionNode(Node):
 
     def __init__(self) -> None:
         super().__init__("whz_inspection_node")
-        self._camera = None
 
         self.declare_parameter(
             "rtsp_url",
@@ -89,13 +95,23 @@ class WhzInspectionNode(Node):
         )
         self.declare_parameter(
             "image_size",
-            320,
+            DEFAULT_IMAGE_SIZE,
             _integer_descriptor("YOLO square inference size", 160, 1280),
         )
         self.declare_parameter(
             "confidence_threshold",
-            0.30,
+            DEFAULT_CONFIDENCE_THRESHOLD,
             _float_descriptor("YOLO confidence threshold", 0.0, 1.0),
+        )
+        self.declare_parameter(
+            "letter_crop_image_size",
+            DEFAULT_LETTER_CROP_IMAGE_SIZE,
+            _integer_descriptor("Gauge-anchored letter inference size", 160, 1280),
+        )
+        self.declare_parameter(
+            "letter_confidence_threshold",
+            DEFAULT_LETTER_CONFIDENCE_THRESHOLD,
+            _float_descriptor("Gauge-anchored letter confidence threshold", 0.0, 1.0),
         )
         self.declare_parameter(
             "iou_threshold",
@@ -104,7 +120,7 @@ class WhzInspectionNode(Node):
         )
         self.declare_parameter(
             "prefer_hw_decode",
-            False,
+            True,
             ParameterDescriptor(description="Try Jetson hardware H.264 decode first", read_only=True),
         )
         self.declare_parameter(
@@ -125,6 +141,12 @@ class WhzInspectionNode(Node):
             confidence_threshold=float(
                 self.get_parameter("confidence_threshold").value
             ),
+            letter_crop_image_size=int(
+                self.get_parameter("letter_crop_image_size").value
+            ),
+            letter_confidence_threshold=float(
+                self.get_parameter("letter_confidence_threshold").value
+            ),
             iou_threshold=float(self.get_parameter("iou_threshold").value),
         )
         inspector = Inspector(
@@ -136,27 +158,30 @@ class WhzInspectionNode(Node):
             play_audio=bool(self.get_parameter("play_audio").value),
             min_agree_frames=min_agree_frames,
         )
-        self._camera = RTSPCamera(
-            url=self.get_parameter("rtsp_url").value,
-            connect_timeout_sec=float(self.get_parameter("connect_timeout_sec").value),
-            frame_timeout_sec=float(self.get_parameter("frame_timeout_sec").value),
-            prefer_hw_decode=bool(self.get_parameter("prefer_hw_decode").value),
-        )
         self._runner = InspectionRunner(
-            camera=self._camera,
+            camera=None,
             inspector=inspector,
             required_frames=required_frames,
             frame_timeout_sec=float(self.get_parameter("frame_timeout_sec").value),
+            camera_factory=lambda: RTSPCamera(
+                url=self.get_parameter("rtsp_url").value,
+                connect_timeout_sec=float(
+                    self.get_parameter("connect_timeout_sec").value
+                ),
+                frame_timeout_sec=float(self.get_parameter("frame_timeout_sec").value),
+                prefer_hw_decode=bool(
+                    self.get_parameter("prefer_hw_decode").value
+                ),
+            ),
         )
         self._service = self.create_service(Trigger, "/whz/inspect", self._on_inspect)
         self.get_logger().info(
             "WHZ inspection ready: service=/whz/inspect, model=%s, device=%s, "
-            "camera=%dx%d, vote=%d/%d"
+            "camera=on-demand, prefer_hw_decode=%s, vote=%d/%d"
             % (
                 self.get_parameter("model_path").value,
                 self.get_parameter("device").value,
-                self._camera.width,
-                self._camera.height,
+                self.get_parameter("prefer_hw_decode").value,
                 min_agree_frames,
                 required_frames,
             )
@@ -168,6 +193,8 @@ class WhzInspectionNode(Node):
         response: Trigger.Response,
     ) -> Trigger.Response:
         del request
+        started = time.monotonic()
+        self.get_logger().info("WHZ inspection request started")
         try:
             result = self._runner.run()
         except Exception as exc:  # noqa: BLE001
@@ -175,16 +202,16 @@ class WhzInspectionNode(Node):
 
         response.success = result.ok
         response.message = json.dumps(result.to_dict(), ensure_ascii=False)
+        elapsed = time.monotonic() - started
         if result.ok:
-            self.get_logger().info(response.message)
+            self.get_logger().info(
+                "WHZ inspection completed in %.3fs: %s" % (elapsed, response.message)
+            )
         else:
-            self.get_logger().warn(response.message)
+            self.get_logger().warn(
+                "WHZ inspection failed in %.3fs: %s" % (elapsed, response.message)
+            )
         return response
-
-    def destroy_node(self):
-        if self._camera is not None:
-            self._camera.close()
-        return super().destroy_node()
 
 
 def main(args=None) -> None:

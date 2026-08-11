@@ -74,12 +74,16 @@ class FakeCamera:
         self.frames = list(frames or [])
         self.error = error
         self.calls = []
+        self.close_calls = 0
 
     def read_frames(self, count, timeout_sec):
         self.calls.append((count, timeout_sec))
         if self.error is not None:
             raise self.error
         return self.frames[:count]
+
+    def close(self):
+        self.close_calls += 1
 
 
 class InspectorTests(unittest.TestCase):
@@ -182,6 +186,68 @@ class InspectorTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.error, "camera_frame_count_mismatch=2/3")
         self.assertEqual(result.total_frames, 2)
+
+    def test_on_demand_camera_is_closed_after_capture(self):
+        frames = [np.zeros((2, 2, 3), dtype=np.uint8) for _ in range(3)]
+        camera = FakeCamera(frames)
+        detector = FakeDetector([detection("D", "green") for _ in range(3)])
+        inspector = Inspector(detector, FakePlayer(), play_audio=False, min_agree_frames=2)
+        factory_calls = []
+
+        def camera_factory():
+            factory_calls.append(True)
+            return camera
+
+        runner = InspectionRunner(
+            None,
+            inspector,
+            required_frames=3,
+            frame_timeout_sec=0.5,
+            camera_factory=camera_factory,
+        )
+
+        result = runner.run()
+
+        self.assertTrue(result.ok)
+        self.assertEqual(len(factory_calls), 1)
+        self.assertEqual(camera.close_calls, 1)
+
+    def test_on_demand_camera_closes_after_read_error(self):
+        camera = FakeCamera(error=TimeoutError("no fresh frame"))
+        inspector = Inspector(FakeDetector([]), FakePlayer(), min_agree_frames=2)
+        runner = InspectionRunner(
+            None,
+            inspector,
+            required_frames=3,
+            frame_timeout_sec=0.5,
+            camera_factory=lambda: camera,
+        )
+
+        result = runner.run()
+
+        self.assertFalse(result.ok)
+        self.assertIn("camera_read_failed", result.error)
+        self.assertEqual(camera.close_calls, 1)
+
+    def test_on_demand_camera_open_error_is_structured(self):
+        inspector = Inspector(FakeDetector([]), FakePlayer(), min_agree_frames=2)
+
+        def camera_factory():
+            raise RuntimeError("RTSP unavailable")
+
+        runner = InspectionRunner(
+            None,
+            inspector,
+            required_frames=3,
+            frame_timeout_sec=0.5,
+            camera_factory=camera_factory,
+        )
+
+        result = runner.run()
+
+        self.assertFalse(result.ok)
+        self.assertIn("camera_open_failed", result.error)
+        self.assertEqual(result.total_frames, 0)
 
 
 if __name__ == "__main__":
