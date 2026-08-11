@@ -19,6 +19,7 @@ from nodes.decision.inspection_workflow import (
 
 RUNNER = REPO_ROOT / "scripts" / "nav2_whz_inspection_probe.py"
 LAUNCHER = REPO_ROOT / "scripts" / "run_inspection_navigation.sh"
+ONE_CLICK_LAUNCHER = REPO_ROOT / "scripts" / "start_inspection_one_click.sh"
 ROUTE_FILE = REPO_ROOT / "configs" / "navigation" / "waypoints_reordered_preview.yaml"
 
 
@@ -27,6 +28,7 @@ class Nav2WhzInspectionRunnerContractTests(unittest.TestCase):
     def setUpClass(cls):
         cls.runner = RUNNER.read_text(encoding="utf-8")
         cls.launcher = LAUNCHER.read_text(encoding="utf-8")
+        cls.one_click_launcher = ONE_CLICK_LAUNCHER.read_text(encoding="utf-8")
 
     def test_runner_is_valid_python_and_reuses_the_proven_probe(self):
         ast.parse(self.runner)
@@ -110,6 +112,14 @@ class Nav2WhzInspectionRunnerContractTests(unittest.TestCase):
         self.assertNotIn("--mission", invocation)
         self.assertNotIn("--auto-advance", invocation)
         self.assertIn("pos2b_lower_right=D", self.launcher)
+
+    def test_one_click_launcher_starts_full_inspection_directly(self):
+        self.assertIn(
+            'exec bash "$SCRIPT_DIR/run_inspection_navigation.sh" --full --confirm-motion',
+            self.one_click_launcher,
+        )
+        self.assertNotIn("--check-only", self.one_click_launcher)
+        self.assertNotIn("--single-d", self.one_click_launcher)
 
 
 class DedicatedInspectionWorkflowTests(unittest.TestCase):
