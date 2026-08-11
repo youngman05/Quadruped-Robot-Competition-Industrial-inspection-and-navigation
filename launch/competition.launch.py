@@ -13,8 +13,10 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
+from launch_ros.substitutions import FindPackageShare
 
 
 # ─── 路径 ────────────────────────────────────────────
@@ -33,6 +35,11 @@ def generate_launch_description() -> LaunchDescription:
     cmd_vel_bridge_init_dog = LaunchConfiguration("cmd_vel_bridge_init_dog", default="false")
     enable_depth_publisher = LaunchConfiguration("enable_depth_publisher", default="false")
     enable_whz = LaunchConfiguration("enable_whz", default="false")
+    whz_rtsp_url = LaunchConfiguration("whz_rtsp_url")
+    whz_model_path = LaunchConfiguration("whz_model_path")
+    whz_device = LaunchConfiguration("whz_device")
+    whz_required_frames = LaunchConfiguration("whz_required_frames")
+    whz_min_agree_frames = LaunchConfiguration("whz_min_agree_frames")
     auto_advance = LaunchConfiguration("auto_advance", default="false")
     enable_global_pose_manager = LaunchConfiguration("enable_global_pose_manager", default="false")
     global_pose_mode = LaunchConfiguration("global_pose_mode", default="legacy_static")
@@ -72,7 +79,31 @@ def generate_launch_description() -> LaunchDescription:
     )
     declare_enable_whz = DeclareLaunchArgument(
         "enable_whz", default_value="false",
-        description="启动 whz 巡检 (字母识别+仪表+语音播报)"
+        description="启动 whz RTSP 巡检 (YOLO 字母+仪表+语音播报)"
+    )
+    declare_whz_rtsp_url = DeclareLaunchArgument(
+        "whz_rtsp_url",
+        default_value="rtsp://192.168.1.120:8554/test",
+        description="Lite3 前置相机 RTSP URL",
+    )
+    declare_whz_model_path = DeclareLaunchArgument(
+        "whz_model_path",
+        default_value=PathJoinSubstitution([
+            FindPackageShare("whz"), "assets", "models", "gauge_best.pt",
+        ]),
+        description="WHZ YOLO 模型路径",
+    )
+    declare_whz_device = DeclareLaunchArgument(
+        "whz_device", default_value="0",
+        description="Ultralytics 推理设备，例如 0 或 cpu",
+    )
+    declare_whz_required_frames = DeclareLaunchArgument(
+        "whz_required_frames", default_value="3",
+        description="单次巡检读取的新帧数量",
+    )
+    declare_whz_min_agree_frames = DeclareLaunchArgument(
+        "whz_min_agree_frames", default_value="2",
+        description="巡检投票成功所需一致帧数",
     )
     declare_auto_advance = DeclareLaunchArgument(
         "auto_advance", default_value="false",
@@ -110,22 +141,18 @@ def generate_launch_description() -> LaunchDescription:
     )
 
     # ── whz 巡检 (字母+仪表+语音) ──
-    color_image_pub_node = Node(
-        package="quadruped_robot_competition",
-        executable="color_image_publisher",
-        name="color_image_publisher_node",
-        output="screen",
-        condition=IfCondition(enable_whz),
-    )
-
     whz_inspection_node = Node(
         package="whz",
         executable="inspection_node",
         name="whz_inspection_node",
         output="screen",
-        remappings=[
-            ("/camera/aligned_depth_to_color/image_raw", "/camera/depth/image_raw"),
-        ],
+        parameters=[{
+            "rtsp_url": whz_rtsp_url,
+            "model_path": whz_model_path,
+            "device": whz_device,
+            "required_frames": ParameterValue(whz_required_frames, value_type=int),
+            "min_agree_frames": ParameterValue(whz_min_agree_frames, value_type=int),
+        }],
         condition=IfCondition(enable_whz),
     )
 
@@ -248,6 +275,7 @@ def generate_launch_description() -> LaunchDescription:
             "║ navigation (Nav2): ", enable_navigation, "  ║\n",
             "║ cmd_vel_bridge   : ", enable_cmd_vel_bridge, "  ║\n",
             "║ depth_publisher  : ", enable_depth_publisher, "  ║\n",
+            "║ whz_inspection   : ", enable_whz, "  ║\n",
             "╚════════════════════════════════════════╝\n",
         ]
     )
@@ -262,13 +290,17 @@ def generate_launch_description() -> LaunchDescription:
         declare_cmd_vel_bridge_init_dog,
         declare_enable_depth_publisher,
         declare_enable_whz,
+        declare_whz_rtsp_url,
+        declare_whz_model_path,
+        declare_whz_device,
+        declare_whz_required_frames,
+        declare_whz_min_agree_frames,
         declare_auto_advance,
         declare_enable_global_pose_manager,
         declare_global_pose_mode,
         startup_info,
         gauge_node,
         yolo_node,
-        color_image_pub_node,
         whz_inspection_node,
         task_manager_node,
         speech_node,

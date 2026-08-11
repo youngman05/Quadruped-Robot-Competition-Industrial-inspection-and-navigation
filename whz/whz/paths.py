@@ -20,3 +20,7 @@ def default_audio_dir() -> Path:
 
 def default_template_dir() -> Path:
     return package_share_dir() / "assets" / "templates"
+
+
+def default_model_path() -> Path:
+    return package_share_dir() / "assets" / "models" / "gauge_best.pt"

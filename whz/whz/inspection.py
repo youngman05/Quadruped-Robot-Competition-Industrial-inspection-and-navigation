@@ -1,15 +1,27 @@
-"""Single-shot cabinet inspection pipeline."""
+"""Multi-frame cabinet inspection, voting, and one-shot audio playback."""
 
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Iterable, Optional
 
 from whz.audio_player import AudioPlayer
-from whz.gauge_detector import detect_gauge
-from whz.letter_detector import LetterDetector
+from whz.yolo_detector import YOLODetector
+
+
+COLOR_TO_STATE_KEY = {
+    "yellow": "low",
+    "green": "middle",
+    "red": "high",
+}
+
+STATE_DISPLAY = {
+    "low": ("偏低", "异常"),
+    "middle": ("正常", "正常"),
+    "high": ("偏高", "异常"),
+}
 
 
 @dataclass
@@ -17,13 +29,15 @@ class InspectionResult:
     ok: bool
     area: Optional[str] = None
     state_key: Optional[str] = None
-    level: Optional[str] = None
-    status: Optional[str] = None
+    is_abnormal: Optional[bool] = None
+    state_text: Optional[str] = None
+    status_text: Optional[str] = None
     color: Optional[str] = None
     audio_file: Optional[str] = None
-    letter_score: Optional[float] = None
+    audio_played: bool = False
+    letter_confidence: Optional[float] = None
     gauge_confidence: Optional[float] = None
-    letter_above_gauge: Optional[bool] = None
+    pair_score: Optional[float] = None
     agree_frames: Optional[int] = None
     total_frames: Optional[int] = None
     error: Optional[str] = None
@@ -33,31 +47,29 @@ class InspectionResult:
 
 
 class Inspector:
-    """Run letter recognition, gauge recognition, and optional audio playback."""
+    """Normalize paired detections, vote, then play exactly one announcement."""
 
     def __init__(
         self,
-        letter_detector: LetterDetector,
+        detector: YOLODetector,
         audio_player: AudioPlayer,
         play_audio: bool = True,
-        min_agree_frames: int = 1,
+        min_agree_frames: int = 2,
     ) -> None:
-        self.letter_detector = letter_detector
+        self.detector = detector
         self.audio_player = audio_player
         self.play_audio = bool(play_audio)
         self.min_agree_frames = max(1, int(min_agree_frames))
 
     def inspect_once(self, image) -> InspectionResult:
+        """Inspect one frame without audio; service audio is gated by voting."""
         try:
-            result = self._inspect_image(image)
-            if result.ok and self.play_audio and result.audio_file:
-                self.audio_player.play(Path(result.audio_file))
-            return result
+            return self._inspect_image(image)
         except Exception as exc:  # noqa: BLE001
             return InspectionResult(ok=False, error=str(exc))
 
     def inspect_frames(self, images: Iterable) -> InspectionResult:
-        frame_results = [self._inspect_image(image, play_audio=False) for image in images]
+        frame_results = [self.inspect_once(image) for image in images]
         successes = [result for result in frame_results if result.ok]
         total = len(frame_results)
         if not successes:
@@ -69,11 +81,20 @@ class Inspector:
             )
 
         votes = Counter((result.area, result.state_key) for result in successes)
-        (area, state_key), agree_count = votes.most_common(1)[0]
+        ranked_votes = votes.most_common()
+        (area, state_key), agree_count = ranked_votes[0]
+        if len(ranked_votes) > 1 and ranked_votes[1][1] == agree_count:
+            return InspectionResult(
+                ok=False,
+                error="ambiguous_vote",
+                total_frames=total,
+                agree_frames=agree_count,
+            )
         if agree_count < self.min_agree_frames:
             return InspectionResult(
                 ok=False,
-                error=f"not_enough_agreement={agree_count}/{self.min_agree_frames}",
+                error="not_enough_agreement=%d/%d"
+                % (agree_count, self.min_agree_frames),
                 area=area,
                 state_key=state_key,
                 total_frames=total,
@@ -87,71 +108,95 @@ class Inspector:
         ]
         best = max(
             matching,
-            key=lambda result: (result.letter_score or 0.0) + (result.gauge_confidence or 0.0),
+            key=lambda result: (
+                (result.letter_confidence or 0.0)
+                + (result.gauge_confidence or 0.0)
+                + (result.pair_score or 0.0)
+            ),
         )
-        best.agree_frames = agree_count
-        best.total_frames = total
-        if self.play_audio and best.audio_file:
-            try:
-                self.audio_player.play(Path(best.audio_file))
-            except Exception as exc:  # noqa: BLE001
-                return InspectionResult(
-                    ok=False,
-                    area=best.area,
-                    state_key=best.state_key,
-                    level=best.level,
-                    status=best.status,
-                    color=best.color,
-                    audio_file=best.audio_file,
-                    agree_frames=agree_count,
-                    total_frames=total,
-                    error=f"audio_play_failed: {exc}",
-                )
-        return best
+        best = replace(best, agree_frames=agree_count, total_frames=total)
 
-    def _inspect_image(self, image, play_audio: bool = False) -> InspectionResult:
-        del play_audio
-        depth = None
-        if isinstance(image, tuple):
-            image, depth = image
-
-        letter = self.letter_detector.detect(image)
-        if letter is None:
-            return InspectionResult(ok=False, error="letter_not_detected")
-
-        gauge = detect_gauge(image, depth)
-        if gauge is None:
-            return InspectionResult(ok=False, area=letter.area, error="gauge_not_detected")
-
-        if letter.bbox is None:
-            return InspectionResult(ok=False, area=letter.area, error="letter_bbox_missing")
-
-        x0, y0, x1, y1 = letter.bbox
-        letter_center_y = (y0 + y1) / 2.0
-        if letter_center_y >= gauge.center_y:
-            return InspectionResult(
+        if not self.play_audio or not best.audio_file:
+            return best
+        try:
+            self.audio_player.play(Path(best.audio_file))
+        except Exception as exc:  # noqa: BLE001
+            return replace(
+                best,
                 ok=False,
-                area=letter.area,
-                state_key=gauge.state_key,
-                level=gauge.level,
-                status=gauge.status,
-                color=gauge.color,
-                letter_score=round(letter.score, 4),
-                gauge_confidence=round(gauge.confidence, 4),
-                letter_above_gauge=False,
-                error="letter_not_above_gauge",
+                audio_played=False,
+                error="audio_play_failed: %s" % exc,
             )
+        return replace(best, audio_played=True)
 
-        audio_path = self.audio_player.audio_path_for(letter.area, gauge.state_key)
+    def _inspect_image(self, image) -> InspectionResult:
+        detection = self.detector.detect(image)
+        if not detection.ok or detection.pair is None:
+            return InspectionResult(ok=False, error=detection.error or "detection_failed")
+
+        pair = detection.pair
+        area = pair.letter.letter
+        color = pair.gauge.color
+        state_key = COLOR_TO_STATE_KEY.get(color)
+        if state_key is None:
+            return InspectionResult(ok=False, area=area, color=color, error="unknown_color")
+
+        state_text, status_text = STATE_DISPLAY[state_key]
+        is_abnormal = state_key != "middle"
+        audio_path = self.audio_player.audio_path_for(area, state_key)
         return InspectionResult(
             ok=True,
-            area=letter.area,
-            state_key=gauge.state_key,
-            level=gauge.level,
-            status=gauge.status,
-            color=gauge.color,
+            area=area,
+            state_key=state_key,
+            is_abnormal=is_abnormal,
+            state_text=state_text,
+            status_text=status_text,
+            color=color,
             audio_file=str(audio_path),
-            letter_score=round(letter.score, 4),
-            gauge_confidence=round(gauge.confidence, 4),
-            letter_above_gauge=True,
+            letter_confidence=round(pair.letter.confidence, 4),
+            gauge_confidence=round(pair.gauge.confidence, 4),
+            pair_score=round(pair.score, 4),
         )
+
+
+class InspectionRunner:
+    """ROS-free camera-to-result orchestration for tests and the service node."""
+
+    def __init__(
+        self,
+        camera,
+        inspector: Inspector,
+        required_frames: int = 3,
+        frame_timeout_sec: float = 2.0,
+    ) -> None:
+        self.camera = camera
+        self.inspector = inspector
+        self.required_frames = int(required_frames)
+        self.frame_timeout_sec = float(frame_timeout_sec)
+        if self.required_frames < 1:
+            raise ValueError("required_frames must be at least 1")
+        if self.inspector.min_agree_frames > self.required_frames:
+            raise ValueError("min_agree_frames cannot exceed required_frames")
+
+    def run(self) -> InspectionResult:
+        try:
+            frames = self.camera.read_frames(
+                count=self.required_frames,
+                timeout_sec=self.frame_timeout_sec,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return InspectionResult(
+                ok=False,
+                error="camera_read_failed: %s" % exc,
+                total_frames=0,
+                agree_frames=0,
+            )
+        if len(frames) != self.required_frames:
+            return InspectionResult(
+                ok=False,
+                error="camera_frame_count_mismatch=%d/%d"
+                % (len(frames), self.required_frames),
+                total_frames=len(frames),
+                agree_frames=0,
+            )
+        return self.inspector.inspect_frames(frames)

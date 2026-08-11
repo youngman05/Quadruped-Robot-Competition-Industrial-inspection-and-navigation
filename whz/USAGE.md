@@ -1,179 +1,160 @@
 # WHZ 使用说明
 
-`whz` 是配电柜巡检识别 ROS2 package。收到 `/whz/inspect` service 调用后，它会读取 3 帧图像，识别 A/B/C/D 区域和仪表状态；至少 2 帧结果一致时播放一次对应 MP3，并通过 service 返回 JSON。
+`whz` 通过 Lite3 前置 RTSP 相机完成一次按需巡检。节点常驻时只创建一个 YOLO 模型、执行一次预热，并保持一个低延迟 GStreamer 连接。
 
-## 1. 固定接口
+## 1. 接口与流程
 
 ```text
-彩色图像: /camera/color/image_raw
-对齐深度: /camera/aligned_depth_to_color/image_raw
 service: /whz/inspect
-service 类型: std_srvs/srv/Trigger
+type: std_srvs/srv/Trigger
 ```
 
-运行：
+```text
+读取 3 个不同的新帧
+-> YOLO 检测 A/B/C/D 和 green/red/yellow
+-> 按水平距离和上下关系配对字母与仪表
+-> 拒绝无空间配对或多个近似最优配对
+-> 对 (area, state_key) 做至少 2/3 投票
+-> 投票成功后播放对应 MP3 一次
+-> 返回 JSON
+```
+
+直接启动与调用：
 
 ```bash
 ros2 run whz inspection_node
-```
-
-调用：
-
-```bash
 ros2 service call /whz/inspect std_srvs/srv/Trigger {}
 ```
 
-## 2. 必要文件
+随比赛 launch 启动：
 
-字母模板：
-
-```text
-whz/assets/templates/A.png
-whz/assets/templates/B.png
-whz/assets/templates/C.png
-whz/assets/templates/D.png
+```bash
+ros2 launch quadruped_robot_competition competition.launch.py \
+  enable_whz:=true \
+  whz_rtsp_url:=rtsp://192.168.1.120:8554/test \
+  whz_device:=0 \
+  whz_required_frames:=3 \
+  whz_min_agree_frames:=2
 ```
 
-音频文件：
+`enable_whz=true` 只启动 `whz/inspection_node`，不会为 WHZ 启动 D455 `color_image_publisher`。
+
+## 2. 安装资源
 
 ```text
-whz/assets/audio/ALA.mp3  whz/assets/audio/AMN.mp3  whz/assets/audio/AHA.mp3
-whz/assets/audio/BLA.mp3  whz/assets/audio/BMN.mp3  whz/assets/audio/BHA.mp3
-whz/assets/audio/CLA.mp3  whz/assets/audio/CMN.mp3  whz/assets/audio/CHA.mp3
-whz/assets/audio/DLA.mp3  whz/assets/audio/DMN.mp3  whz/assets/audio/DHA.mp3
+whz/assets/models/gauge_best.pt
+whz/assets/audio/ALA.mp3 ... whz/assets/audio/DHA.mp3
 ```
 
-命名规则：
+正式模型 SHA-256：
 
 ```text
-第 1 位: A/B/C/D 区域
+3ed76de727a87be8d64cc3b259bf2b0ec39daaaa3fac1f3f97af249824abc648
+```
+
+模型类别必须为：
+
+```text
+A B C D green red yellow
+```
+
+音频文件命名规则：
+
+```text
+第 1 位: A/B/C/D
 第 2 位: L/M/H = low/middle/high
 第 3 位: A/N = abnormal/normal
 ```
 
-状态映射：
+建议在 Jetson 安装 `mpg123`。运行时还需要已验证版本的 Torch、Torchvision、Ultralytics、NumPy、PyGObject 和 GStreamer H.264 插件。
 
-```text
-黄色 -> low    -> 偏低 -> 异常 -> LA
-绿色 -> middle -> 正常 -> 正常 -> MN
-红色 -> high   -> 偏高 -> 异常 -> HA
-```
+## 3. 参数
 
-建议安装 MP3 播放器：
+| 参数 | 默认值 | 含义 |
+|---|---:|---|
+| `rtsp_url` | `rtsp://192.168.1.120:8554/test` | Lite3 前置相机地址 |
+| `model_path` | ament 安装目录下的 `gauge_best.pt` | 模型路径 |
+| `device` | `0` | Ultralytics 推理设备；CPU 测试可用 `cpu` |
+| `required_frames` | `3` | 每次调用读取的新帧数 |
+| `min_agree_frames` | `2` | 成功所需一致票数 |
+| `connect_timeout_sec` | `8.0` | RTSP 启动超时 |
+| `frame_timeout_sec` | `2.0` | 每个新帧的读取超时 |
+| `image_size` | `320` | YOLO 推理尺寸 |
+| `confidence_threshold` | `0.30` | YOLO 置信度阈值 |
+| `iou_threshold` | `0.50` | YOLO NMS IoU 阈值 |
+| `prefer_hw_decode` | `false` | 优先尝试 Jetson 硬解码 |
+| `play_audio` | `true` | 投票成功后播放一次 MP3 |
 
-```bash
-sudo apt install mpg123
-```
+`min_agree_frames` 不能大于 `required_frames`。这些资源型参数为启动期只读参数，修改后应重启节点。
 
-## 3. 使用前检查
+## 4. 返回 JSON
 
-确认上游图像 topic 存在并持续发布：
-
-```bash
-ros2 topic info /camera/color/image_raw
-ros2 topic hz /camera/color/image_raw
-ros2 topic info /camera/aligned_depth_to_color/image_raw
-ros2 topic hz /camera/aligned_depth_to_color/image_raw
-```
-
-确认 service 存在：
-
-```bash
-ros2 service list | grep whz
-```
-
-应看到：
-
-```text
-/whz/inspect
-```
-
-## 4. 识别逻辑
-
-字母识别：
-
-```text
-找白色面板 -> 取面板上半部分 -> 找黑色字母区域 -> 和 A/B/C/D 模板匹配
-```
-
-仪表识别：
-
-```text
-优先用 RealSense 深度找最近平面 -> 在最近平面内找仪表圆 -> 识别指针方向 -> 采样黄/绿/红
-```
-
-对应关系：
-
-```text
-字母必须在仪表圆心上方
-3 帧中至少 2 帧的 (区域, 状态) 一致才成功
-成功后只播放一次音频
-```
-
-## 5. 返回示例
-
-成功：
+成功示例：
 
 ```json
 {
   "ok": true,
   "area": "A",
   "state_key": "low",
-  "level": "偏低",
-  "status": "异常",
+  "is_abnormal": true,
+  "state_text": "偏低",
+  "status_text": "异常",
   "color": "yellow",
-  "audio_file": ".../ALA.mp3",
-  "letter_score": 0.88,
-  "gauge_confidence": 1.0,
-  "letter_above_gauge": true,
+  "audio_file": "/.../ALA.mp3",
+  "audio_played": true,
+  "letter_confidence": 0.88,
+  "gauge_confidence": 0.91,
+  "pair_score": 0.84,
   "agree_frames": 2,
   "total_frames": 3,
   "error": null
 }
 ```
 
-失败时 `ok=false`，错误原因在 `error` 字段。
+业务逻辑只使用 `area`、`state_key` 和 `is_abnormal`。`state_text`、`status_text` 仅用于中文显示，不参与判断。
 
-## 6. 可调参数位置
-
-字母识别：
+失败时 `ok=false`，常见 `error` 包括：
 
 ```text
-whz/whz/letter_detector.py
+letter_not_detected
+gauge_not_detected
+no_spatial_pair
+ambiguous_spatial_pair
+ambiguous_vote
+not_enough_agreement=1/2
+camera_read_failed: ...
+camera_frame_count_mismatch=2/3
+audio_play_failed: ...
 ```
 
-常调内容：
+## 5. 验证顺序
 
-```text
-模板匹配阈值 min_score
-字母候选区域大小过滤
-白色面板上半部分搜索范围
+本机 L1：
+
+```bash
+python3 -m unittest discover -s tests -p 'test_whz*.py' -v
 ```
 
-仪表识别：
+Jetson L2 模型加载，不打开相机：
 
-```text
-whz/whz/gauge_detector.py
+```bash
+source /opt/ros/foxy/setup.bash
+colcon build --packages-select whz
+source install/setup.bash
+python3 -c "from whz.paths import default_model_path; from whz.yolo_detector import YOLODetector; YOLODetector(default_model_path(), device='0'); print('model_ok')"
 ```
 
-常调内容：
+Jetson L4 相机与服务验证：
 
-```text
-深度平面容差 DEPTH_NEAR_MARGIN_M / DEPTH_FAR_MARGIN_M
-黄/绿/红 HSV 阈值 COLOR_RANGES
-指针方向颜色采样阈值
+```bash
+ros2 run whz inspection_node --ros-args -p play_audio:=false
+ros2 service call /whz/inspect std_srvs/srv/Trigger {}
 ```
 
-三帧投票：
+确认单帧、三帧投票和结果正确后，再启用音频：
 
-```text
-whz/whz/inspection_node.py
+```bash
+ros2 run whz inspection_node --ros-args -p play_audio:=true
 ```
 
-常调内容：
-
-```text
-REQUIRED_FRAMES = 3
-MIN_AGREE_FRAMES = 2
-FRAME_TIMEOUT_SEC = 2.0
-```
+先完成静止真机验证，再与 cuVSLAM + Nav2 同时运行但不发送目标。TaskManager 接入必须等上述识别与播报验收通过后进行。
