@@ -33,6 +33,7 @@ def make_args(test_lateral=False, test_yaw=False):
         combined_axes=False,
         test_lateral=test_lateral,
         test_yaw=test_yaw,
+        test_closed_yaw=False,
         armed=False,
     )
 
