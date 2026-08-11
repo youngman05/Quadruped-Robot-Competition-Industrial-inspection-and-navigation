@@ -56,6 +56,12 @@ task_manager_node:
     tick_rate: 10.0              # 状态机主循环频率 (Hz)
     require_stable_gauge: true   # 是否必须仪表稳定检测才推进
     auto_advance: false          # 调试: 自动推进阶段（跳过所有条件）
+    enable_phase2_map_switch: false
+    enable_depth_milestones: false
+    depth_mode_request_topic: "/depth/mode_request"
+    depth_mode_status_topic: "/depth/mode_status"
+    depth_safety_status_topic: "/depth/safety_gate_status"
+    depth_transition_timeout_sec: 8.0
     gauge_topic: "/gauge/status"
     yolo_topic: "/yolo/detections"
     slam_status_topic: "/visual_slam/status"

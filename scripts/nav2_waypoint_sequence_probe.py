@@ -37,6 +37,9 @@ from nodes.navigation.se2_pose_control import (
     YawOnlyController,
     YawOnlyControllerConfig,
 )
+from nodes.navigation.depth_contract import DepthMode
+from nodes.navigation.depth_mode_client import DepthModeClient
+from nodes.navigation.mission_depth_policy import MissionDepthPolicy
 from nodes.navigation.waypoint_calibration import (
     WaypointCalibrationError,
     describe_waypoint_route,
@@ -254,6 +257,9 @@ class Nav2WaypointSequenceProbe(Node):
         self.segment_start_time = None
         self.segment_trace = None
         self.segments = []
+        self.depth_policy = None
+        self.depth_mode_client = None
+        self.depth_transition_history = []
 
         cmd_qos = QoSProfile(
             history=HistoryPolicy.KEEP_LAST,
@@ -294,6 +300,15 @@ class Nav2WaypointSequenceProbe(Node):
             args.se2_cmd_topic,
             cmd_qos,
         )
+        if args.enable_depth_milestones:
+            self.depth_policy = MissionDepthPolicy()
+            self.depth_mode_client = DepthModeClient(
+                self,
+                request_topic=args.depth_mode_request_topic,
+                status_topic=args.depth_mode_status_topic,
+                safety_status_topic=args.depth_safety_status_topic,
+                transition_timeout_sec=args.depth_transition_timeout,
+            )
 
     def shutdown_background_listeners(self):
         listener = self.tf_listener
@@ -326,8 +341,6 @@ class Nav2WaypointSequenceProbe(Node):
             self.odom_node = None
 
     def _cmd_callback(self, msg):
-        if self.segment_cmd is None:
-            return
         linear_x = float(msg.linear.x)
         linear_y = float(msg.linear.y)
         linear_z = float(msg.linear.z)
@@ -341,6 +354,8 @@ class Nav2WaypointSequenceProbe(Node):
             "linear_y": linear_y,
             "angular_z": angular_z,
         }
+        if self.segment_cmd is None:
+            return
         self.segment_cmd["cmd_count"] += 1
         if abs(linear_x) > 1e-5 or abs(linear_y) > 1e-5 or abs(angular_z) > 1e-5:
             self.segment_cmd["nonzero_count"] += 1
@@ -515,17 +530,55 @@ class Nav2WaypointSequenceProbe(Node):
                 "segments": [],
             }
 
+        if self.depth_policy is not None:
+            initial_mode = self.depth_policy.mission_start()
+            transition = self._transition_depth_mode(
+                initial_mode,
+                "mission_start",
+            )
+            if not transition["succeeded"]:
+                return {
+                    "ok": False,
+                    "error": transition["error"],
+                    "segments": [],
+                    "depth_transitions": self.depth_transition_history,
+                }
+
         for index, goal in enumerate(goals, start=1):
+            waypoint_label = str(goal.get("label", ""))
+            if self.depth_policy is not None:
+                desired_mode = self.depth_policy.before_waypoint(waypoint_label)
+                if desired_mode is not None:
+                    transition = self._transition_depth_mode(
+                        desired_mode,
+                        "before:%s" % waypoint_label,
+                    )
+                    if not transition["succeeded"]:
+                        break
             segment = self.run_segment(index, goal)
             self.segments.append(segment)
+            if self.depth_policy is not None and segment.get("succeeded"):
+                desired_mode = self.depth_policy.waypoint_succeeded(waypoint_label)
+                if desired_mode is not None:
+                    transition = self._transition_depth_mode(
+                        desired_mode,
+                        "after_success:%s" % waypoint_label,
+                    )
+                    segment["depth_transition_after"] = transition
+                    if not transition["succeeded"]:
+                        break
             if self.args.stop_on_failure and not segment.get("succeeded"):
                 break
             if index < len(goals) and self.args.inter_goal_pause > 0.0:
                 self.spin_for(self.args.inter_goal_pause)
 
-        return {
+        summary = {
             "ok": bool(self.segments)
-            and all(segment.get("succeeded") for segment in self.segments),
+            and all(segment.get("succeeded") for segment in self.segments)
+            and all(
+                transition.get("succeeded")
+                for transition in self.depth_transition_history
+            ),
             "frame_id": self.args.frame_id,
             "base_frame": self.args.base_frame,
             "behavior_tree": self.args.behavior_tree or None,
@@ -536,6 +589,64 @@ class Nav2WaypointSequenceProbe(Node):
             ),
             "segments": self.segments,
         }
+        if self.depth_policy is not None:
+            summary["depth_transitions"] = self.depth_transition_history
+            summary["final_depth_mode"] = self.depth_mode_client.current_mode.value
+            failed = next(
+                (
+                    transition
+                    for transition in self.depth_transition_history
+                    if not transition.get("succeeded")
+                ),
+                None,
+            )
+            if failed is not None:
+                summary["error"] = failed.get("error")
+        return summary
+
+    def _transition_depth_mode(self, mode, milestone):
+        if mode is None or self.depth_mode_client is None:
+            return {"succeeded": True, "milestone": milestone, "mode": None}
+        transition = {
+            "milestone": milestone,
+            "mode": mode.value,
+            "succeeded": False,
+            "error": None,
+        }
+        self.depth_transition_history.append(transition)
+        stop_error = self._acquire_precision_zero_lease()
+        if stop_error is not None:
+            transition["error"] = "depth transition stop gate failed: %s" % stop_error
+            return transition
+        try:
+            request = self.depth_mode_client.begin_transition(
+                mode,
+                robot_stopped=True,
+            )
+            transition["request_id"] = None if request is None else request["request_id"]
+            deadline = time.monotonic() + self.args.depth_transition_timeout
+            while rclpy.ok() and time.monotonic() < deadline:
+                self._publish_precision_command(0.0, 0.0, 0.0)
+                rclpy.spin_once(self, timeout_sec=0.05)
+                readiness = self.depth_mode_client.readiness()
+                if self.depth_mode_client.end_to_end_ready(mode):
+                    transition["succeeded"] = True
+                    transition["error"] = None
+                    break
+            if not transition["succeeded"]:
+                readiness = self.depth_mode_client.readiness()
+                transition["error"] = readiness.reason
+                if readiness.ready:
+                    transition["error"] = self.depth_mode_client.end_to_end_reason(mode)
+                if self.depth_mode_client.last_status_error:
+                    transition["status_error"] = self.depth_mode_client.last_status_error
+        finally:
+            release_error = self._wait_for_precision_release()
+            transition["release_error"] = release_error
+            if release_error is not None:
+                transition["succeeded"] = False
+                transition["error"] = "depth transition release failed: %s" % release_error
+        return transition
 
     def resolve_goals(self):
         if self.args.waypoint_route:
@@ -1950,6 +2061,16 @@ def parse_args():
     parser.add_argument("--tf-timeout", type=float, default=0.2)
     parser.add_argument("--inter-goal-pause", type=float, default=2.0)
     parser.add_argument("--post-cancel-spin", type=float, default=1.0)
+    depth = parser.add_argument_group("staged D455 depth options")
+    depth.add_argument(
+        "--enable-depth-milestones",
+        action="store_true",
+        help="Apply the mission AVOIDANCE/DISABLED/MANIPULATION waypoint policy.",
+    )
+    depth.add_argument("--depth-mode-request-topic", default="/depth/mode_request")
+    depth.add_argument("--depth-mode-status-topic", default="/depth/mode_status")
+    depth.add_argument("--depth-safety-status-topic", default="/depth/safety_gate_status")
+    depth.add_argument("--depth-transition-timeout", type=float, default=8.0)
     se2 = parser.add_argument_group("SE(2) precision-control options")
     se2.add_argument(
         "--se2-cmd-topic",
@@ -2110,6 +2231,12 @@ def validate_args(args):
         raise SystemExit("--server-timeout must be > 0")
     if args.map_tf_timeout <= 0.0:
         raise SystemExit("--map-tf-timeout must be > 0")
+    if args.depth_transition_timeout <= 0.0:
+        raise SystemExit("--depth-transition-timeout must be > 0")
+    if args.enable_depth_milestones and not args.waypoint_route:
+        raise SystemExit(
+            "--enable-depth-milestones requires a named --waypoint-route"
+        )
     if args.tf_timeout <= 0.0:
         raise SystemExit("--tf-timeout must be > 0")
     if args.terminal_replan_stop:

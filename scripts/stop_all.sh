@@ -25,6 +25,7 @@ for name in task_manager initial_pose_publisher depth_publisher \
             gauge_status_publisher inspection_node whz_standalone \
             color_image_publisher yolo_detect_publisher \
             static_transform_publisher test_logger cmd_vel_arbiter cmd_vel_bridge \
+            depth_relay_publisher depth_safety_gate \
             map_server planner_server controller_server bt_navigator \
             recoveries_server lifecycle_manager; do
     pkill -9 -f "$name" 2>/dev/null

@@ -43,6 +43,14 @@ from nodes.navigation.navigation_client import (
     NavigationClient,
     WAYPOINTS,
 )
+from nodes.navigation.depth_contract import DepthMode
+from nodes.navigation.depth_mode_client import DepthModeClient
+from nodes.navigation.mission_depth_policy import MissionDepthPolicy
+from nodes.navigation.mission_route import (
+    OBSTACLE_ROUTE,
+    inspection_route_steps,
+    observation_steps,
+)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -152,6 +160,12 @@ class TaskManagerNode(Node):
         self.declare_parameter("inspection_only", False)
         self.declare_parameter("inspection_start_index", 0)
         self.declare_parameter("inspection_count", 0)
+        self.declare_parameter("enable_phase2_map_switch", False)
+        self.declare_parameter("enable_depth_milestones", False)
+        self.declare_parameter("depth_mode_request_topic", "/depth/mode_request")
+        self.declare_parameter("depth_mode_status_topic", "/depth/mode_status")
+        self.declare_parameter("depth_safety_status_topic", "/depth/safety_gate_status")
+        self.declare_parameter("depth_transition_timeout_sec", 8.0)
 
         # ── 读取参数 ──────────────────────────────
         self._timeout_per_phase = float(self.get_parameter("timeout_per_phase").value)
@@ -201,6 +215,25 @@ class TaskManagerNode(Node):
             self.get_parameter("inspection_start_index").value
         )
         inspection_count = int(self.get_parameter("inspection_count").value)
+        self._enable_phase2_map_switch = bool(
+            self.get_parameter("enable_phase2_map_switch").value
+        )
+        self._enable_depth_milestones = bool(
+            self.get_parameter("enable_depth_milestones").value
+        )
+        depth_mode_request_topic = str(
+            self.get_parameter("depth_mode_request_topic").value
+        )
+        depth_mode_status_topic = str(
+            self.get_parameter("depth_mode_status_topic").value
+        )
+        depth_safety_status_topic = str(
+            self.get_parameter("depth_safety_status_topic").value
+        )
+        self._depth_transition_timeout_sec = max(
+            0.1,
+            float(self.get_parameter("depth_transition_timeout_sec").value),
+        )
 
         # ── 发布者 ────────────────────────────────
         self._phase_pub = self.create_publisher(String, phase_topic, 10)
@@ -238,21 +271,42 @@ class TaskManagerNode(Node):
         self._nav_retry_counts: Dict[str, int] = {}
         self._nav_retry_not_before: Dict[str, float] = {}
         self._placement_arrival_time: Optional[float] = None
+        self._depth_policy = None
+        self._depth_mode_client = None
+        self._startup_depth_mode = None
+        self._depth_pending_mode = None
+        self._depth_pending_milestone = ""
+        self._depth_pending_request_id = ""
+        self._depth_pending_started = 0.0
+        self._obstacle_depth_mode = None
+        self._obstacle_depth_transition_complete = False
+        self._grab_depth_mode = None
+        self._grab_depth_transition_complete = False
+        self._depth_recorded_waypoints = set()
 
         # ── 地图切换客户端 ────────────────────────
         self._phase2_yaml = str(self.get_parameter("phase2_map_yaml").value)
-        self._map_client = self.create_client(LoadMap, "/map_server/load_map")
+        self._map_client = (
+            self.create_client(LoadMap, "/map_server/load_map")
+            if self._enable_phase2_map_switch
+            else None
+        )
         self._whz_client = self.create_client(Trigger, whz_service)
 
         # ── 导航客户端 (Nav2 NavigateToPose) ─────
         self._nav = NavigationClient(self)
+        if self._enable_depth_milestones:
+            self._depth_policy = MissionDepthPolicy()
+            self._depth_mode_client = DepthModeClient(
+                self,
+                request_topic=depth_mode_request_topic,
+                status_topic=depth_mode_status_topic,
+                safety_status_topic=depth_safety_status_topic,
+                transition_timeout_sec=self._depth_transition_timeout_sec,
+            )
+            self._startup_depth_mode = self._depth_policy.mission_start()
         # 4 个观察子步骤: 位置 + 朝向 + 说明
-        all_inspection_steps = [
-            {"waypoint": "pos1_middle",        "desc": "仰头看上柜底面 (上区仪表)"},
-            {"waypoint": "pos1_middle_turned", "desc": "180°转身看下柜顶面 (下区仪表)"},
-            {"waypoint": "pos2a_upper_right",  "desc": "看上柜右侧面 (上区字母)"},
-            {"waypoint": "pos2b_lower_right",  "desc": "看下柜右侧面 (下区字母)"},
-        ]
+        all_inspection_steps = list(observation_steps())
         if inspection_start_index < 0 or inspection_start_index >= len(all_inspection_steps):
             raise ValueError("inspection_start_index must be between 0 and 3")
         if inspection_count < 0:
@@ -272,6 +326,11 @@ class TaskManagerNode(Node):
         )
         if not self._inspection_requires_abcd and not self._inspection_only:
             raise ValueError("partial inspection selection requires inspection_only=true")
+        if self._inspection_requires_abcd:
+            self._inspection_route_steps = list(inspection_route_steps())
+        else:
+            self._inspection_route_steps = list(self._inspection_steps)
+        self._inspection_route_index = 0
         self._inspection_workflow = InspectionWorkflow(
             step_count=len(self._inspection_steps),
             settle_duration_sec=self._settle_duration_sec,
@@ -294,7 +353,9 @@ class TaskManagerNode(Node):
             f"| timeout={self._timeout_per_phase}s "
             f"| require_stable={self._require_stable} "
             f"| inspection_only={self._inspection_only} "
-            f"| inspection_steps={len(self._inspection_steps)}"
+            f"| inspection_steps={len(self._inspection_steps)} "
+            f"| depth_milestones={self._enable_depth_milestones} "
+            f"| phase2_map_switch={self._enable_phase2_map_switch}"
         )
 
     # ═══════════════════════════════════════════════════════════
@@ -336,6 +397,15 @@ class TaskManagerNode(Node):
         odom_fresh = (time.time() - self._last_odom_time) <= self._odom_timeout_sec
         if odom_fresh:
             self._slam_ok = True
+        if (
+            self._enable_depth_milestones
+            and odom_fresh
+            and not self._ensure_depth_mode(
+                self._startup_depth_mode,
+                "mission_start",
+            )
+        ):
+            return
 
         # 调试模式: 跳过所有条件直接推进
         if self._auto_advance and elapsed > 0.5:
@@ -359,50 +429,53 @@ class TaskManagerNode(Node):
         if self._handle_timeout(elapsed):
             return
 
-        # 子步骤定义
-        if not hasattr(self, "_obstacle_step"):
-            self._obstacle_step = 0  # 0=穿越障碍区, 1=安全区到观察位
+        if not hasattr(self, "_obstacle_route_index"):
+            self._obstacle_route_index = 0
+        route = OBSTACLE_ROUTE
+        waypoint = route[self._obstacle_route_index]
+        retry_key = "pass_obstacle:%s" % waypoint
+        if not self._navigation_retry_ready(retry_key):
+            return
+        if not self._nav.goal_sent and not self._nav.is_done():
+            self.get_logger().info(
+                "[越障 %d/%d] 导航到 %s"
+                % (self._obstacle_route_index + 1, len(route), waypoint)
+            )
+            self._nav.navigate_to_waypoint(waypoint)
+        if not self._nav.is_done():
+            return
+        if not self._nav.succeeded():
+            self._retry_navigation_or_abort(retry_key, waypoint)
+            return
 
-        # ── 子步骤 0: start → obstacle_cross_target (Nav2 全局 + 局部代价地图绕开锥桶) ──
-        if self._obstacle_step == 0:
-            if not self._navigation_retry_ready("pass_obstacle:cross"):
+        if waypoint == "obstacle_cross_target" and not self._obstacle_depth_transition_complete:
+            if self._obstacle_depth_mode is None:
+                self._obstacle_depth_mode = (
+                    self._depth_policy.waypoint_succeeded(waypoint)
+                    if self._depth_policy is not None
+                    else None
+                )
+            if not self._ensure_depth_mode(
+                self._obstacle_depth_mode,
+                "after_success:obstacle_cross_target",
+            ):
                 return
-            if not self._nav.goal_sent and not self._nav.is_done():
-                self.get_logger().info("[越障 1/2] 穿越障碍区...")
-                self._nav.navigate_to_waypoint("obstacle_cross_target")
+            self._obstacle_depth_transition_complete = True
 
-            if self._nav.is_done():
-                if self._nav.succeeded():
-                    self.get_logger().info("已到达越障接近点，继续进入观察位")
-                    self._clear_navigation_retry("pass_obstacle:cross")
-                    self._obstacle_step = 1
-                    self._nav.reset()
-                else:
-                    self._retry_navigation_or_abort(
-                        "pass_obstacle:cross",
-                        "越障接近点",
-                    )
+        self._clear_navigation_retry(retry_key)
+        if self._depth_policy is not None and waypoint not in self._depth_recorded_waypoints:
+            self._depth_policy.waypoint_succeeded(waypoint)
+            self._depth_recorded_waypoints.add(waypoint)
+        self._nav.reset()
+        self._obstacle_route_index += 1
+        if self._obstacle_route_index < len(route):
+            return
 
-        # ── 子步骤 1: 安全区内 → 第一个观察位 ──
-        elif self._obstacle_step == 1:
-            if not self._navigation_retry_ready("pass_obstacle:pos1_middle"):
-                return
-            if not self._nav.goal_sent and not self._nav.is_done():
-                self.get_logger().info("[越障 2/2] 安全区 → 观察位①...")
-                self._nav.navigate_to_waypoint("pos1_middle")
-
-            if self._nav.is_done():
-                if self._nav.succeeded():
-                    self.get_logger().info("已到达观察位①，切换任务地图并进入仪表检测")
-                    self._clear_navigation_retry("pass_obstacle:pos1_middle")
-                    self._switch_to_phase2_map()
-                    del self._obstacle_step
-                    self._advance_to_next_phase()
-                else:
-                    self._retry_navigation_or_abort(
-                        "pass_obstacle:pos1_middle",
-                        "安全区到观察位①",
-                    )
+        self.get_logger().info("已到达观察位①，保持 Phase 1 地图并进入巡检")
+        self._inspection_workflow.navigation_succeeded()
+        self._switch_to_phase2_map()
+        del self._obstacle_route_index
+        self._advance_to_next_phase()
 
     def _tick_inspect_gauges(self, elapsed: float) -> None:
         """Navigate, verify stop, call WHZ asynchronously, and store one result."""
@@ -442,9 +515,41 @@ class TaskManagerNode(Node):
                 self._advance_to_next_phase()
             return
 
-        step_info = self._inspection_steps[workflow.step_index]
+        if self._inspection_route_index >= len(self._inspection_route_steps):
+            self._abort("inspection route ended before workflow completion")
+            return
+        step_info = self._inspection_route_steps[self._inspection_route_index]
         wp = step_info["waypoint"]
         now = time.monotonic()
+
+        if step_info.get("kind") == "transit":
+            if workflow.stage != InspectionStage.NAVIGATING:
+                self._abort(
+                    "transit waypoint reached in inspection stage %s"
+                    % workflow.stage.value
+                )
+                return
+            retry_key = "inspection_transit:%d:%s" % (
+                self._inspection_route_index,
+                wp,
+            )
+            if not self._navigation_retry_ready(retry_key):
+                return
+            if not self._nav.goal_sent and not self._nav.is_done():
+                self.get_logger().info("[巡检转接] %s: %s" % (step_info["desc"], wp))
+                self._nav.navigate_to_waypoint(wp)
+            if not self._nav.is_done():
+                return
+            if not self._nav.succeeded():
+                self._retry_navigation_or_abort(retry_key, step_info["desc"])
+                return
+            self._clear_navigation_retry(retry_key)
+            if self._depth_policy is not None and wp not in self._depth_recorded_waypoints:
+                self._depth_policy.waypoint_succeeded(wp)
+                self._depth_recorded_waypoints.add(wp)
+            self._nav.reset()
+            self._inspection_route_index += 1
+            return
 
         if workflow.stage == InspectionStage.NAVIGATING:
             if now < self._inspection_retry_not_before:
@@ -464,6 +569,9 @@ class TaskManagerNode(Node):
                 return
             if self._nav.succeeded():
                 self.get_logger().info("已到达 %s，开始停稳确认" % wp)
+                if self._depth_policy is not None and wp not in self._depth_recorded_waypoints:
+                    self._depth_policy.waypoint_succeeded(wp)
+                    self._depth_recorded_waypoints.add(wp)
                 self._nav.reset()
                 self._inspection_retry_not_before = 0.0
                 workflow.navigation_succeeded()
@@ -609,6 +717,7 @@ class TaskManagerNode(Node):
             return
 
         self._store_inspection_reading(reading)
+        self._inspection_route_index += 1
         self._inspection_service_wait_started = None
         self.get_logger().info(
             "观察结果入账: %s区 %s/%s vote=%d/%d audio=%s"
@@ -636,18 +745,32 @@ class TaskManagerNode(Node):
         if self._handle_timeout(elapsed):
             return
 
+        if not self._grab_depth_transition_complete:
+            if self._grab_depth_mode is None:
+                self._grab_depth_mode = (
+                    self._depth_policy.before_waypoint("grab_area_approach")
+                    if self._depth_policy is not None
+                    else None
+                )
+            if not self._ensure_depth_mode(
+                self._grab_depth_mode,
+                "before:grab_area_approach",
+            ):
+                return
+            self._grab_depth_transition_complete = True
+
         # 先导航到抓取区
-        if not self._navigation_retry_ready("find_red_bar:grab_area"):
+        if not self._navigation_retry_ready("find_red_bar:grab_area_approach"):
             return
         if not self._nav.goal_sent and not self._nav.is_done():
-            self._nav.navigate_to_waypoint("grab_area")
+            self._nav.navigate_to_waypoint("grab_area_approach")
 
         if not self._nav.is_done():
             return
         if not self._nav.succeeded():
-            self._retry_navigation_or_abort("find_red_bar:grab_area", "抓取区")
+            self._retry_navigation_or_abort("find_red_bar:grab_area_approach", "抓取区")
             return
-        self._clear_navigation_retry("find_red_bar:grab_area")
+        self._clear_navigation_retry("find_red_bar:grab_area_approach")
 
         # 等待 YOLO 检测到红色条
         if self._latest_yolo and len(self._latest_yolo.red_bars) > 0:
@@ -687,7 +810,7 @@ class TaskManagerNode(Node):
         if not self._navigation_retry_ready(retry_key):
             return
         if not self._nav.goal_sent and not self._nav.is_done():
-            target = f"placement_{current_zone}"
+            target = f"placement_{current_zone}_approach"
             self._nav.navigate_to_waypoint(target)
 
         if not self._nav.is_done():
@@ -756,6 +879,82 @@ class TaskManagerNode(Node):
     def _navigation_retry_ready(self, key: str) -> bool:
         return time.monotonic() >= self._nav_retry_not_before.get(key, 0.0)
 
+    def _robot_stopped_for_depth_transition(self) -> bool:
+        odom_fresh = (time.time() - self._last_odom_time) <= self._odom_timeout_sec
+        return bool(
+            odom_fresh
+            and self._last_odom_linear_speed <= self._settle_linear_speed_mps
+            and self._last_odom_angular_speed <= self._settle_angular_speed_rps
+            and not self._nav.goal_sent
+        )
+
+    def _ensure_depth_mode(self, mode, milestone: str) -> bool:
+        if mode is None or self._depth_mode_client is None:
+            return True
+        readiness = self._depth_mode_client.readiness()
+        if self._depth_mode_client.end_to_end_ready(mode):
+            self._depth_pending_mode = None
+            self._depth_pending_milestone = ""
+            self._depth_pending_request_id = ""
+            self._depth_pending_started = 0.0
+            return True
+        if self._depth_pending_mode is None:
+            if not self._robot_stopped_for_depth_transition():
+                return False
+            request = self._depth_mode_client.begin_transition(
+                mode,
+                robot_stopped=True,
+            )
+            self._depth_pending_mode = mode
+            self._depth_pending_milestone = milestone
+            self._depth_pending_request_id = (
+                "" if request is None else request["request_id"]
+            )
+            self._depth_pending_started = time.monotonic()
+            self.get_logger().info(
+                "深度模式切换请求: %s milestone=%s request=%s"
+                % (mode.value, milestone, self._depth_pending_request_id or "already_ready")
+            )
+            return False
+        if self._depth_pending_mode != mode:
+            self._abort(
+                "depth transition collision: pending=%s requested=%s"
+                % (self._depth_pending_mode.value, mode.value)
+            )
+            return False
+        readiness = self._depth_mode_client.readiness()
+        if self._depth_mode_client.end_to_end_ready(mode):
+            self.get_logger().info(
+                "深度模式已确认: %s milestone=%s"
+                % (mode.value, self._depth_pending_milestone)
+            )
+            self._depth_pending_mode = None
+            self._depth_pending_milestone = ""
+            self._depth_pending_request_id = ""
+            self._depth_pending_started = 0.0
+            return True
+        if (
+            self._depth_pending_started > 0.0
+            and time.monotonic() - self._depth_pending_started
+            > self._depth_transition_timeout_sec
+        ):
+            reason = (
+                self._depth_mode_client.end_to_end_reason(mode)
+                if readiness.ready
+                else readiness.reason
+            )
+            self._abort(
+                "depth pipeline readiness timed out at %s: %s"
+                % (self._depth_pending_milestone, reason)
+            )
+            return False
+        if readiness.mode == DepthMode.FAULT:
+            self._abort(
+                "depth transition failed at %s: %s"
+                % (self._depth_pending_milestone, readiness.reason)
+            )
+        return False
+
     def _enter_phase(self, phase: Phase) -> None:
         """进入新阶段，执行入口动作并发布状态。"""
         if phase == Phase.ABORT:
@@ -789,6 +988,9 @@ class TaskManagerNode(Node):
 
     def _switch_to_phase2_map(self) -> None:
         """越障完成后切换地图: 障碍区封堵, 后续不走回头路."""
+        if not self._enable_phase2_map_switch:
+            self.get_logger().info("保持 competition_field_phase1 地图，不执行阶段切图")
+            return
         if not self._map_client.wait_for_service(timeout_sec=3.0):
             self.get_logger().warn("map_server 不可用, 跳过地图切换")
             return
@@ -945,6 +1147,31 @@ class TaskManagerNode(Node):
             "abnormal_handled": self._abnormal_handled,
             "abort_reason": self._abort_reason,
             "navigation": self._nav.status_dict(),
+            "depth": {
+                "enabled": self._enable_depth_milestones,
+                "current_mode": (
+                    self._depth_mode_client.current_mode.value
+                    if self._depth_mode_client is not None
+                    else DepthMode.DISABLED.value
+                ),
+                "pending_mode": (
+                    self._depth_pending_mode.value
+                    if self._depth_pending_mode is not None
+                    else None
+                ),
+                "pending_milestone": self._depth_pending_milestone or None,
+                "pending_request_id": self._depth_pending_request_id or None,
+                "safety_ready": (
+                    self._depth_mode_client.safety_ready
+                    if self._depth_mode_client is not None
+                    else None
+                ),
+                "safety_reason": (
+                    self._depth_mode_client.safety_reason
+                    if self._depth_mode_client is not None
+                    else None
+                ),
+            },
             "inspection": {
                 "stage": self._inspection_workflow.stage.value,
                 "step_index": self._inspection_workflow.step_index,

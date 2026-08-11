@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================
 #  四足机器人竞赛 — 鲁棒一键启动
-#  用法: bash scripts/start_competition.sh [--dog] [--cmd-vel-bridge] [--prepare-lite3-motion] [--yolo] [--whz] [--task-manager] [--auto-advance] [--camera-relay] [--depth-relay]
+#  用法: bash scripts/start_competition.sh [--dog] [--cmd-vel-bridge] [--prepare-lite3-motion] [--yolo] [--whz] [--task-manager] [--auto-advance] [--camera-relay] [--depth-relay] [--depth-pipeline]
 # ==============================================
 # 注意: 不用 set -e，每个步骤自行容错
 
@@ -18,6 +18,7 @@ trap 'echo ""; echo "Ctrl+C → 清理..."; bash scripts/stop_all.sh' INT TERM
 # ── 参数解析 ──────────────────────────────
 ENABLE_YOLO=false; ENABLE_WHZ=false; ENABLE_DOG=false; ENABLE_CMD_VEL_BRIDGE=false; ENABLE_CMD_VEL_BRIDGE_INIT=false; PREPARE_LITE3_MOTION=false
 ENABLE_CAMERA_RELAY=false; ENABLE_DEPTH_RELAY=false
+ENABLE_DEPTH_PIPELINE=false
 ENABLE_TASK_MANAGER=false; AUTO_ADVANCE=false; DO_STAND=false
 for arg in "$@"; do
     case $arg in
@@ -31,6 +32,7 @@ for arg in "$@"; do
         --auto-advance) ENABLE_TASK_MANAGER=true; AUTO_ADVANCE=true ;;
         --camera-relay) ENABLE_CAMERA_RELAY=true ;;
         --depth-relay) ENABLE_DEPTH_RELAY=true ;;
+        --depth-pipeline) ENABLE_DEPTH_RELAY=true; ENABLE_DEPTH_PIPELINE=true ;;
         --relays) ENABLE_CAMERA_RELAY=true; ENABLE_DEPTH_RELAY=true ;;
         --stand) DO_STAND=true ;;   # force stand toggle (dog lying down)
     esac
@@ -40,7 +42,7 @@ echo ''
 echo '==================================='
 echo ' 四足机器人竞赛系统 v2 — 鲁棒启动'
 echo '==================================='
-echo " DOG=$ENABLE_DOG  CMD_VEL_BRIDGE=$ENABLE_CMD_VEL_BRIDGE  BRIDGE_INIT_DOG=$ENABLE_CMD_VEL_BRIDGE_INIT  PREPARE_LITE3_MOTION=$PREPARE_LITE3_MOTION  YOLO=$ENABLE_YOLO  WHZ=$ENABLE_WHZ  CAMERA_RELAY=$ENABLE_CAMERA_RELAY  DEPTH_RELAY=$ENABLE_DEPTH_RELAY  TASK_MANAGER=$ENABLE_TASK_MANAGER  AUTO_ADVANCE=$AUTO_ADVANCE"
+echo " DOG=$ENABLE_DOG  CMD_VEL_BRIDGE=$ENABLE_CMD_VEL_BRIDGE  BRIDGE_INIT_DOG=$ENABLE_CMD_VEL_BRIDGE_INIT  PREPARE_LITE3_MOTION=$PREPARE_LITE3_MOTION  YOLO=$ENABLE_YOLO  WHZ=$ENABLE_WHZ  CAMERA_RELAY=$ENABLE_CAMERA_RELAY  DEPTH_RELAY=$ENABLE_DEPTH_RELAY  DEPTH_PIPELINE=$ENABLE_DEPTH_PIPELINE  TASK_MANAGER=$ENABLE_TASK_MANAGER  AUTO_ADVANCE=$AUTO_ADVANCE"
 
 export CUVSLAM_MOUNT_MODE="${CUVSLAM_MOUNT_MODE:-robot}"
 export CUVSLAM_PROFILE="${CUVSLAM_PROFILE:-custom}"
@@ -54,6 +56,9 @@ export ENABLE_LOOP_METRICS_RECORDER="${ENABLE_LOOP_METRICS_RECORDER:-false}"
 export STARTUP_TOPIC_CHECKS="${STARTUP_TOPIC_CHECKS:-false}"
 export STARTUP_RATE_PROBES="${STARTUP_RATE_PROBES:-false}"
 FINAL_BRIDGE_CAMERA_WORLD_REBASE="${FINAL_BRIDGE_CAMERA_WORLD_REBASE:-base_start}"
+if $ENABLE_DEPTH_PIPELINE; then
+    export CUVSLAM_ENABLE_DEPTH="${CUVSLAM_ENABLE_DEPTH:-true}"
+fi
 
 # ═══════════════════════════════════════════
 # [0] 清理旧进程
@@ -130,14 +135,17 @@ fi
 
 if $ENABLE_DEPTH_RELAY; then
     docker cp scripts/depth_relay_docker.py $CN:/tmp/ 2>/dev/null || true
+    docker cp src/nodes/navigation/depth_contract.py $CN:/tmp/depth_contract.py 2>/dev/null || true
     docker exec -d $CN bash -c \
       "source /opt/ros/humble/setup.bash && \
        source /workspaces/isaac_ros-dev/install/setup.bash && \
-       python3 /tmp/depth_relay_docker.py > /tmp/dep.log 2>&1"
+       python3 /tmp/depth_relay_docker.py \
+         --control-strategy '${DEPTH_CONTROL_STRATEGY:-consumer_only}' \
+         > /tmp/dep.log 2>&1"
     for i in $(seq 1 10); do
         sleep 1
-        FRAMES=$(docker exec $CN bash -c 'cat /tmp/dep.log 2>/dev/null' | grep -c 'Depth' || true)
-        if [ "$FRAMES" -gt 0 ]; then break; fi
+        READY=$(docker exec $CN bash -c 'cat /tmp/dep.log 2>/dev/null' | grep -c 'depth relay ready' || true)
+        if [ "$READY" -gt 0 ]; then break; fi
     done
     echo "  Depth:  $(docker exec $CN tail -1 /tmp/dep.log 2>/dev/null || echo 'OK')"
 else
@@ -241,6 +249,7 @@ ros2 launch quadruped_robot_competition competition.launch.py \
   enable_cmd_vel_bridge:=$ENABLE_CMD_VEL_BRIDGE \
   cmd_vel_bridge_init_dog:=$ENABLE_CMD_VEL_BRIDGE_INIT \
   enable_depth_publisher:=false \
+  enable_depth_pipeline:=$ENABLE_DEPTH_PIPELINE \
   enable_yolo:=$YF enable_whz:=$WF \
   auto_advance:=$AUTO_ADVANCE > /tmp/competition.log 2>&1 &
 COMP_PID=$!

@@ -56,15 +56,23 @@ def _deg_to_quat(yaw_deg: float) -> tuple[float, float, float, float]:
 _RAW_WAYPOINTS: dict[str, dict] = {
     # Coordinates below are base_link navigation centers, not task-object centers.
     "start":                   {"x_mm": 4650, "y_mm": 5250, "yaw_deg": 180,  "label": "出发区"},
+    "pos1_left_clear":         {"x_mm":  600, "y_mm": 3100, "yaw_deg": -90,  "label": "左侧安全转接点"},
     "pos1_middle":             {"x_mm": 1500, "y_mm": 2750, "yaw_deg": -90,  "label": "观察位① 仰头看上柜底面"},
     "pos1_middle_turned":      {"x_mm": 1500, "y_mm": 2750, "yaw_deg":  90,  "label": "观察位① 转身看下柜顶面"},
+    "upper_corner_clear":      {"x_mm": 2600, "y_mm": 2750, "yaw_deg": 180,  "label": "上柜拐角安全转接点"},
+    "lower_corner_clear":      {"x_mm": 2600, "y_mm": 2750, "yaw_deg": 180,  "label": "下柜拐角安全转接点"},
     "pos2a_upper_right":       {"x_mm": 2600, "y_mm": 1500, "yaw_deg": 180,  "label": "观察位②a 看上柜右侧面"},
     "pos2b_lower_right":       {"x_mm": 2600, "y_mm": 4000, "yaw_deg": 180,  "label": "观察位②b 看下柜右侧面"},
     "grab_area":               {"x_mm": 3100, "y_mm": 4000, "yaw_deg": 0,    "label": "抓取区左侧接近点"},
+    "grab_area_approach":      {"x_mm": 3100, "y_mm": 4000, "yaw_deg": 0,    "label": "抓取区左侧接近点"},
     "placement_A":             {"x_mm": 3250, "y_mm": 1050, "yaw_deg": -90,  "label": "A放置区接近点"},
     "placement_B":             {"x_mm": 3750, "y_mm": 1050, "yaw_deg": -90,  "label": "B放置区接近点"},
     "placement_C":             {"x_mm": 4250, "y_mm": 1050, "yaw_deg": -90,  "label": "C放置区接近点"},
     "placement_D":             {"x_mm": 4650, "y_mm": 1050, "yaw_deg": -90,  "label": "D放置区接近点"},
+    "placement_A_approach":    {"x_mm": 3250, "y_mm": 1050, "yaw_deg": -90,  "label": "A放置区接近点"},
+    "placement_B_approach":    {"x_mm": 3750, "y_mm": 1050, "yaw_deg": -90,  "label": "B放置区接近点"},
+    "placement_C_approach":    {"x_mm": 4250, "y_mm": 1050, "yaw_deg": -90,  "label": "C放置区接近点"},
+    "placement_D_approach":    {"x_mm": 4650, "y_mm": 1050, "yaw_deg": -90,  "label": "D放置区接近点"},
     # 原 x=500mm 适合作为前缘/通过语义点，不适合作为 Nav2 base_link 中心目标。
     # 2026-07-27 真机验证 x=1050mm / ROS x=1.05m 可成功到达。
     "obstacle_cross_target":   {"x_mm": 1050, "y_mm": 5250, "yaw_deg": 180,  "label": "穿越障碍区 → 左侧安全走廊接近点"},

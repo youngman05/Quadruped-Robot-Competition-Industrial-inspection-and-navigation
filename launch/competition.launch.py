@@ -34,6 +34,8 @@ def generate_launch_description() -> LaunchDescription:
     enable_cmd_vel_bridge = LaunchConfiguration("enable_cmd_vel_bridge", default="false")
     cmd_vel_bridge_init_dog = LaunchConfiguration("cmd_vel_bridge_init_dog", default="false")
     enable_depth_publisher = LaunchConfiguration("enable_depth_publisher", default="false")
+    enable_depth_pipeline = LaunchConfiguration("enable_depth_pipeline", default="false")
+    depth_frames_dir = LaunchConfiguration("depth_frames_dir")
     enable_whz = LaunchConfiguration("enable_whz", default="false")
     whz_rtsp_url = LaunchConfiguration("whz_rtsp_url")
     whz_model_path = LaunchConfiguration("whz_model_path")
@@ -76,6 +78,18 @@ def generate_launch_description() -> LaunchDescription:
     declare_enable_depth_publisher = DeclareLaunchArgument(
         "enable_depth_publisher", default_value="false",
         description="启动 Host D455 depth publisher。默认关闭，避免和 Docker/cuVSLAM 抢占 D455。"
+    )
+    declare_enable_depth_pipeline = DeclareLaunchArgument(
+        "enable_depth_pipeline",
+        default_value="false",
+        description="启动共享深度桥、动态障碍层和 fail-closed 速度门。默认关闭。",
+    )
+    declare_depth_frames_dir = DeclareLaunchArgument(
+        "depth_frames_dir",
+        default_value=str(
+            Path.home() / "workspaces" / "isaac_ros-dev" / "camera_frames"
+        ),
+        description="Docker depth relay 与 Host bridge 的共享目录。",
     )
     declare_enable_whz = DeclareLaunchArgument(
         "enable_whz", default_value="false",
@@ -169,6 +183,8 @@ def generate_launch_description() -> LaunchDescription:
             {
                 "auto_advance": auto_advance,
                 "phase2_map_yaml": str(PROJECT_ROOT / "navi" / "map" / "competition_field_phase2.yaml"),
+                "enable_phase2_map_switch": False,
+                "enable_depth_milestones": enable_depth_pipeline,
             },
         ],
         output="screen",
@@ -258,6 +274,10 @@ def generate_launch_description() -> LaunchDescription:
         PythonLaunchDescriptionSource(
             str(PROJECT_ROOT / "launch" / "navigation.launch.py")
         ),
+        launch_arguments={
+            "enable_depth_pipeline": enable_depth_pipeline,
+            "depth_frames_dir": depth_frames_dir,
+        }.items(),
         condition=IfCondition(enable_navigation),
     )
 
@@ -275,6 +295,7 @@ def generate_launch_description() -> LaunchDescription:
             "║ navigation (Nav2): ", enable_navigation, "  ║\n",
             "║ cmd_vel_bridge   : ", enable_cmd_vel_bridge, "  ║\n",
             "║ depth_publisher  : ", enable_depth_publisher, "  ║\n",
+            "║ depth_pipeline   : ", enable_depth_pipeline, "  ║\n",
             "║ whz_inspection   : ", enable_whz, "  ║\n",
             "╚════════════════════════════════════════╝\n",
         ]
@@ -289,6 +310,8 @@ def generate_launch_description() -> LaunchDescription:
         declare_enable_cmd_vel_bridge,
         declare_cmd_vel_bridge_init_dog,
         declare_enable_depth_publisher,
+        declare_enable_depth_pipeline,
+        declare_depth_frames_dir,
         declare_enable_whz,
         declare_whz_rtsp_url,
         declare_whz_model_path,

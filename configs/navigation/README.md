@@ -6,7 +6,8 @@ Nav2 导航参数配置。
 
 | 文件 | 用途 |
 |------|------|
-| `nav2_params.yaml` | Nav2 全局/局部代价地图、规划器、控制器参数 |
+| `nav2_params.yaml` | 已验证的静态地图 Nav2 参数，默认使用 |
+| `nav2_depth_obstacles.yaml` | 可选 D455 点云动态障碍层 overlay，默认不加载 |
 | `navigate_terminal_no_replanning.xml` | 终点邻域单次规划 BT；无周期重规划和运动恢复 |
 
 完整航点 probe 默认在距离目标 `0.35m` 时取消周期重规划目标，确认
@@ -17,7 +18,7 @@ Nav2 导航参数配置。
 ## 关键参数
 
 - `global_costmap`：静态层加载 PGM 地图，分辨率 0.025m
-- `local_costmap`：D455 深度点云障碍物层，滚动窗口 2m × 2m
+- `local_costmap`：默认仅静态层和膨胀层；启用深度 overlay 后增加 VoxelLayer
 - `planner`：NavFn 全局路径规划
 - `controller`：RegulatedPurePursuit 路径跟踪（适合四足）
 - `goal tolerance`：goal checker 与 DWB 的 XY 容差同步为 0.30m，朝向容差为 0.30rad
@@ -118,3 +119,49 @@ official physical start, cuVSLAM cold-start procedure, and `map -> base_link`
 frame convention. The `action` fields are calibration metadata; this Nav-only
 probe records them in output but does not execute grasp, placement, or vision
 tasks.
+
+## Staged D455 depth pipeline
+
+The competition launch keeps the validated static-only Nav2 path by default.
+`enable_depth_pipeline:=true` is an explicit opt-in that changes the velocity
+chain to:
+
+```text
+/cmd_vel_nav2 + /cmd_vel_precision
+  -> cmd_vel_arbiter -> /cmd_vel_selected
+  -> depth_safety_gate -> /cmd_vel
+```
+
+It also starts `depth_relay_publisher`, publishes a decimated optical-frame
+PointCloud2, and loads `nav2_depth_obstacles.yaml` after `nav2_params.yaml`.
+The legacy `depth_publisher` is not part of this chain because it opens the
+D455 again and would contend with the RealSense owner inside the cuVSLAM
+container.
+
+Mission modes follow three route milestones:
+
+- `AVOIDANCE`: before mission motion through `obstacle_cross_target`.
+- `DISABLED`: after `obstacle_cross_target` through the inspection route.
+- `MANIPULATION`: after `pos2b_lower_right`, before `grab_area_approach`, and
+  through grasp and placement.
+- `BOOTING` and `FAULT`: fail-closed modes that publish zero velocity.
+
+Every transition requires a stopped robot and a matching request ID from the
+Docker controller. Enabling a mode also requires fresh depth, PointCloud2,
+optical TF, and a local costmap update after the current mode's first cloud
+before non-zero velocity is released. Controller process IDs, monotonic ages,
+file mtimes, frame sequence numbers, and CRC32 prevent persisted or torn shared
+files from satisfying a new mission.
+Entering `DISABLED` still requires an explicit healthy ACK; disappearance of
+frames is not treated as success.
+
+The Docker relay defaults to `consumer_only`. This leaves the validated
+infrared/IMU/cuVSLAM owner untouched and disables relay/downstream work.
+`DEPTH_CONTROL_STRATEGY=parameter` additionally changes the RealSense
+`enable_depth` parameter, but must not be used until a stationary Jetson A/B
+test proves infrared, IMU, cuVSLAM tracking, and `/odom` remain healthy.
+
+The local implementation is selected from the stack launcher with
+`--depth-pipeline`; the existing `run_full_navigation.sh` intentionally does
+not pass this flag. Hardware deployment and motion validation remain separate
+gates.
