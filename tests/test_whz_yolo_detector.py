@@ -70,6 +70,23 @@ class GaugeAnchoredModel(FakeModel):
         return [SimpleNamespace(boxes=[])]
 
 
+class GaugeAnchoredMissModel(FakeModel):
+    def predict(self, **kwargs):
+        self.predict_calls += 1
+        self.last_kwargs = kwargs
+        image = kwargs["source"]
+        if image.shape == (720, 1280, 3):
+            return [
+                SimpleNamespace(
+                    boxes=[
+                        fake_box(0, 0.55, (844, 428, 880, 472)),
+                        fake_box(5, 0.86, (819, 515, 925, 650)),
+                    ]
+                )
+            ]
+        return [SimpleNamespace(boxes=[])]
+
+
 class YOLODetectorTests(unittest.TestCase):
     def test_model_is_constructed_and_warmed_once(self):
         factory_calls = []
@@ -122,6 +139,25 @@ class YOLODetectorTests(unittest.TestCase):
         self.assertEqual(model.predict_calls, 3)
         self.assertEqual(model.last_kwargs["imgsz"], 320)
         self.assertEqual(model.last_kwargs["conf"], 0.15)
+
+    def test_full_frame_letter_is_fallback_when_gauge_crop_misses(self):
+        model = GaugeAnchoredMissModel()
+
+        with tempfile.TemporaryDirectory() as directory:
+            model_path = Path(directory) / "model.pt"
+            model_path.write_bytes(b"test")
+            detector = YOLODetector(
+                model_path=model_path,
+                device="cpu",
+                model_factory=lambda _: model,
+            )
+            result = detector.detect(np.zeros((720, 1280, 3), dtype=np.uint8))
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.pair.letter.letter, "A")
+        self.assertAlmostEqual(result.pair.letter.confidence, 0.55, places=5)
+        self.assertEqual(result.pair.gauge.color, "red")
+        self.assertEqual(model.predict_calls, 3)
 
     def test_pairing_uses_geometry_instead_of_global_gauge_confidence(self):
         detector = pairing_detector()

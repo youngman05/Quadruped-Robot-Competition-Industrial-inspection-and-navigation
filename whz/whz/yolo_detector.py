@@ -139,11 +139,10 @@ class YOLODetector:
             results[0].boxes,
             confidence_threshold=self.confidence_threshold,
         )
-        letters = (
-            self._detect_gauge_anchored_letters(image, gauges)
-            if gauges
-            else full_letters
+        anchored_letters = (
+            self._detect_gauge_anchored_letters(image, gauges) if gauges else []
         )
+        letters = anchored_letters or full_letters
 
         pair, error = self._select_pair(letters, gauges)
         return DetectionResult(letters=letters, gauges=gauges, pair=pair, error=error)
