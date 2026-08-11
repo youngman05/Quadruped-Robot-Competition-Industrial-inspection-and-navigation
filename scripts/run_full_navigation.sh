@@ -6,7 +6,7 @@ set -Eeuo pipefail
 
 readonly DEPLOY_REPO="${NAV_DEPLOY_REPO:-/home/superwfx666/quadruped-robot-competition-nav2-dwb-deploy}"
 readonly EXPECTED_BRANCH="Stonefield/nav2-foxy-dwb-integration"
-readonly EXPECTED_COMMIT="94137ea0bbc10b0e46b684fad5f9c123aced6bfc"
+readonly EXPECTED_COMMIT="62e7d204fa63d85360a894f08e530fda29ad35b5"
 readonly SPEED_PARAMS_PATH="configs/navigation/nav2_params.yaml"
 readonly SPEED_ARBITER_PATH="src/nodes/navigation/cmd_vel_arbiter.py"
 readonly SPEED_BRIDGE_PATH="src/nodes/navigation/cmd_vel_bridge.py"
