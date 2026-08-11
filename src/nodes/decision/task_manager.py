@@ -4,7 +4,6 @@
 掌控比赛全流程，协调感知、导航、语音、机械臂各模块。
 
 订阅:
-    /gauge/status          std_msgs/String  仪表检测结果 (JSON)
     /yolo/detections       std_msgs/String  YOLO 实例分割结果 (JSON)
     /visual_slam/status    std_msgs/String  VO 定位状态
 
@@ -21,18 +20,25 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Odometry
 from std_msgs.msg import String
+from std_srvs.srv import Trigger
 
 from nav2_msgs.srv import LoadMap
+from nodes.decision.inspection_workflow import (
+    InspectionContractError,
+    InspectionReading,
+    InspectionStage,
+    InspectionWorkflow,
+)
 from nodes.navigation.navigation_client import (
     NavigationClient,
     WAYPOINTS,
@@ -133,6 +139,19 @@ class TaskManagerNode(Node):
         self.declare_parameter("odom_timeout_sec", 1.0)
         self.declare_parameter("phase_topic", "/task/phase")
         self.declare_parameter("status_topic", "/task/status")
+        self.declare_parameter("whz_service", "/whz/inspect")
+        self.declare_parameter("max_nav_retries", 3)
+        self.declare_parameter("max_inspection_retries", 3)
+        self.declare_parameter("retry_delay_sec", 1.0)
+        self.declare_parameter("settle_duration_sec", 1.0)
+        self.declare_parameter("settle_linear_speed_mps", 0.02)
+        self.declare_parameter("settle_angular_speed_rps", 0.05)
+        self.declare_parameter("inspection_service_wait_sec", 5.0)
+        self.declare_parameter("inspection_response_timeout_sec", 20.0)
+        self.declare_parameter("require_inspection_audio", True)
+        self.declare_parameter("inspection_only", False)
+        self.declare_parameter("inspection_start_index", 0)
+        self.declare_parameter("inspection_count", 0)
 
         # ── 读取参数 ──────────────────────────────
         self._timeout_per_phase = float(self.get_parameter("timeout_per_phase").value)
@@ -140,13 +159,48 @@ class TaskManagerNode(Node):
         self._require_stable = bool(self.get_parameter("require_stable_gauge").value)
         self._auto_advance = bool(self.get_parameter("auto_advance").value)
 
-        gauge_topic = str(self.get_parameter("gauge_topic").value)
         yolo_topic = str(self.get_parameter("yolo_topic").value)
         slam_status_topic = str(self.get_parameter("slam_status_topic").value)
         odom_topic = str(self.get_parameter("odom_topic").value)
         phase_topic = str(self.get_parameter("phase_topic").value)
         status_topic = str(self.get_parameter("status_topic").value)
         self._odom_timeout_sec = float(self.get_parameter("odom_timeout_sec").value)
+        whz_service = str(self.get_parameter("whz_service").value)
+        self._max_nav_retries = max(
+            0, int(self.get_parameter("max_nav_retries").value)
+        )
+        self._max_inspection_retries = max(
+            0, int(self.get_parameter("max_inspection_retries").value)
+        )
+        self._retry_delay_sec = max(
+            0.0, float(self.get_parameter("retry_delay_sec").value)
+        )
+        self._settle_duration_sec = max(
+            0.0, float(self.get_parameter("settle_duration_sec").value)
+        )
+        self._settle_linear_speed_mps = max(
+            0.0, float(self.get_parameter("settle_linear_speed_mps").value)
+        )
+        self._settle_angular_speed_rps = max(
+            0.0, float(self.get_parameter("settle_angular_speed_rps").value)
+        )
+        self._inspection_service_wait_sec = max(
+            0.1, float(self.get_parameter("inspection_service_wait_sec").value)
+        )
+        self._inspection_response_timeout_sec = max(
+            0.1,
+            float(self.get_parameter("inspection_response_timeout_sec").value),
+        )
+        self._require_inspection_audio = bool(
+            self.get_parameter("require_inspection_audio").value
+        )
+        self._inspection_only = bool(
+            self.get_parameter("inspection_only").value
+        )
+        inspection_start_index = int(
+            self.get_parameter("inspection_start_index").value
+        )
+        inspection_count = int(self.get_parameter("inspection_count").value)
 
         # ── 发布者 ────────────────────────────────
         self._phase_pub = self.create_publisher(String, phase_topic, 10)
@@ -154,9 +208,6 @@ class TaskManagerNode(Node):
         self._speech_pub = self.create_publisher(String, "/speech/text", 10)
 
         # ── 订阅者 ────────────────────────────────
-        self._gauge_sub = self.create_subscription(
-            String, gauge_topic, self._on_gauge_status, 10,
-        )
         self._yolo_sub = self.create_subscription(
             String, yolo_topic, self._on_yolo_detections, 10,
         )
@@ -178,25 +229,60 @@ class TaskManagerNode(Node):
         self._latest_yolo: Optional[YoloDetection] = None
         self._slam_ok: bool = False                  # SLAM 定位是否正常
         self._last_odom_time: float = 0.0
+        self._last_odom_linear_speed: float = float("inf")
+        self._last_odom_angular_speed: float = float("inf")
         self._abnormal_zones: List[str] = []           # 所有异常区域字母 (可能有1~4个)
         self._abnormal_handled: int = 0                # 已完成抓取放置的异常数
         self._phase_seq_idx: int = 0                  # 在 PHASE_SEQUENCE 中的位置
+        self._abort_reason: str = ""
+        self._nav_retry_counts: Dict[str, int] = {}
+        self._nav_retry_not_before: Dict[str, float] = {}
+        self._placement_arrival_time: Optional[float] = None
 
         # ── 地图切换客户端 ────────────────────────
         self._phase2_yaml = str(self.get_parameter("phase2_map_yaml").value)
         self._map_client = self.create_client(LoadMap, "/map_server/load_map")
+        self._whz_client = self.create_client(Trigger, whz_service)
 
         # ── 导航客户端 (Nav2 NavigateToPose) ─────
         self._nav = NavigationClient(self)
         # 4 个观察子步骤: 位置 + 朝向 + 说明
-        self._inspection_steps = [
+        all_inspection_steps = [
             {"waypoint": "pos1_middle",        "desc": "仰头看上柜底面 (上区仪表)"},
             {"waypoint": "pos1_middle_turned", "desc": "180°转身看下柜顶面 (下区仪表)"},
             {"waypoint": "pos2a_upper_right",  "desc": "看上柜右侧面 (上区字母)"},
             {"waypoint": "pos2b_lower_right",  "desc": "看下柜右侧面 (下区字母)"},
         ]
-        self._inspection_step: int = 0           # 当前子步骤 (0-3)
-        self._gauges_filled_count: int = 0       # 已填入的仪表数量
+        if inspection_start_index < 0 or inspection_start_index >= len(all_inspection_steps):
+            raise ValueError("inspection_start_index must be between 0 and 3")
+        if inspection_count < 0:
+            raise ValueError("inspection_count must be non-negative")
+        inspection_end = (
+            len(all_inspection_steps)
+            if inspection_count == 0
+            else inspection_start_index + inspection_count
+        )
+        if inspection_end > len(all_inspection_steps):
+            raise ValueError("inspection selection exceeds the four configured steps")
+        self._inspection_steps = all_inspection_steps[
+            inspection_start_index:inspection_end
+        ]
+        self._inspection_requires_abcd = (
+            inspection_start_index == 0 and len(self._inspection_steps) == 4
+        )
+        if not self._inspection_requires_abcd and not self._inspection_only:
+            raise ValueError("partial inspection selection requires inspection_only=true")
+        self._inspection_workflow = InspectionWorkflow(
+            step_count=len(self._inspection_steps),
+            settle_duration_sec=self._settle_duration_sec,
+            max_nav_retries=self._max_nav_retries,
+            max_inspection_retries=self._max_inspection_retries,
+        )
+        self._inspection_future = None
+        self._inspection_request_started: float = 0.0
+        self._inspection_service_wait_started: Optional[float] = None
+        self._inspection_retry_not_before: float = 0.0
+        self._inspection_request_id: int = 0
 
         # ── 主循环定时器 ──────────────────────────
         self._timer = self.create_timer(1.0 / self._tick_rate, self._state_machine_tick)
@@ -206,7 +292,9 @@ class TaskManagerNode(Node):
         self.get_logger().info(
             f"Task Manager 启动完成 | tick_rate={self._tick_rate} Hz "
             f"| timeout={self._timeout_per_phase}s "
-            f"| require_stable={self._require_stable}"
+            f"| require_stable={self._require_stable} "
+            f"| inspection_only={self._inspection_only} "
+            f"| inspection_steps={len(self._inspection_steps)}"
         )
 
     # ═══════════════════════════════════════════════════════════
@@ -251,13 +339,20 @@ class TaskManagerNode(Node):
 
         # 调试模式: 跳过所有条件直接推进
         if self._auto_advance and elapsed > 0.5:
-            self._advance_to_next_phase()
+            if self._inspection_only:
+                self._enter_phase(Phase.INSPECT_GAUGES)
+            else:
+                self._advance_to_next_phase()
             return
 
         # 正式条件: SLAM 就绪 + 至少收到过一次 gauge/yolo 数据
         if odom_fresh and elapsed > 1.0:
-            self.get_logger().info("各子系统就绪，进入越障巡航阶段")
-            self._advance_to_next_phase()
+            if self._inspection_only:
+                self.get_logger().info("定位就绪，进入限定观察位巡检")
+                self._enter_phase(Phase.INSPECT_GAUGES)
+            else:
+                self.get_logger().info("各子系统就绪，进入越障巡航阶段")
+                self._advance_to_next_phase()
 
     def _tick_pass_obstacle(self, elapsed: float) -> None:
         """PASS_OBSTACLE: 两步走 — 先穿障碍区到底，再到安全区观察位。"""
@@ -270,6 +365,8 @@ class TaskManagerNode(Node):
 
         # ── 子步骤 0: start → obstacle_cross_target (Nav2 全局 + 局部代价地图绕开锥桶) ──
         if self._obstacle_step == 0:
+            if not self._navigation_retry_ready("pass_obstacle:cross"):
+                return
             if not self._nav.goal_sent and not self._nav.is_done():
                 self.get_logger().info("[越障 1/2] 穿越障碍区...")
                 self._nav.navigate_to_waypoint("obstacle_cross_target")
@@ -277,14 +374,19 @@ class TaskManagerNode(Node):
             if self._nav.is_done():
                 if self._nav.succeeded():
                     self.get_logger().info("已到达越障接近点，继续进入观察位")
+                    self._clear_navigation_retry("pass_obstacle:cross")
                     self._obstacle_step = 1
                     self._nav.reset()
                 else:
-                    self.get_logger().warn("越障导航失败，重试...")
-                    self._nav.reset()
+                    self._retry_navigation_or_abort(
+                        "pass_obstacle:cross",
+                        "越障接近点",
+                    )
 
         # ── 子步骤 1: 安全区内 → 第一个观察位 ──
         elif self._obstacle_step == 1:
+            if not self._navigation_retry_ready("pass_obstacle:pos1_middle"):
+                return
             if not self._nav.goal_sent and not self._nav.is_done():
                 self.get_logger().info("[越障 2/2] 安全区 → 观察位①...")
                 self._nav.navigate_to_waypoint("pos1_middle")
@@ -292,20 +394,32 @@ class TaskManagerNode(Node):
             if self._nav.is_done():
                 if self._nav.succeeded():
                     self.get_logger().info("已到达观察位①，切换任务地图并进入仪表检测")
+                    self._clear_navigation_retry("pass_obstacle:pos1_middle")
                     self._switch_to_phase2_map()
                     del self._obstacle_step
                     self._advance_to_next_phase()
                 else:
-                    self.get_logger().warn("安全区导航失败，重试...")
-                    self._nav.reset()
+                    self._retry_navigation_or_abort(
+                        "pass_obstacle:pos1_middle",
+                        "安全区到观察位①",
+                    )
 
     def _tick_inspect_gauges(self, elapsed: float) -> None:
-        """INSPECT_GAUGES: 4 个观察位，到位置后拍一帧→识别→播报→关。"""
+        """Navigate, verify stop, call WHZ asynchronously, and store one result."""
         if self._handle_timeout(elapsed):
             return
 
-        # ── 全部 4 个子步骤完成 → 收尾 ──────────
-        if self._inspection_step >= len(self._inspection_steps):
+        workflow = self._inspection_workflow
+        if workflow.stage == InspectionStage.ABORTED:
+            self._abort(workflow.abort_reason)
+            return
+
+        if workflow.stage == InspectionStage.COMPLETE:
+            if self._inspection_requires_abcd:
+                workflow.require_complete_abcd()
+                if workflow.stage == InspectionStage.ABORTED:
+                    self._abort(workflow.abort_reason)
+                    return
             abnormal = [
                 info for info in self._gauge_info.values()
                 if info.status and info.status != "normal"
@@ -322,137 +436,200 @@ class TaskManagerNode(Node):
             else:
                 self.get_logger().info("巡检完成 — 未发现异常")
             self._abnormal_handled = 0
-            self._advance_to_next_phase()
+            if self._inspection_only:
+                self._enter_phase(Phase.FINISH)
+            else:
+                self._advance_to_next_phase()
             return
 
-        step_info = self._inspection_steps[self._inspection_step]
+        step_info = self._inspection_steps[workflow.step_index]
         wp = step_info["waypoint"]
+        now = time.monotonic()
 
-        # ── 导航到当前观察位 ──────────────────────
-        if not self._nav.goal_sent and not self._nav.is_done():
-            self.get_logger().info(
-                f"[观察 {self._inspection_step+1}/4] {step_info['desc']}"
-            )
-            self._nav.navigate_to_waypoint(wp)
+        if workflow.stage == InspectionStage.NAVIGATING:
+            if now < self._inspection_retry_not_before:
+                return
+            if not self._nav.goal_sent and not self._nav.is_done():
+                self.get_logger().info(
+                    "[观察 %d/%d] 导航: %s"
+                    % (
+                        workflow.step_index + 1,
+                        workflow.step_count,
+                        step_info["desc"],
+                    )
+                )
+                self._nav.navigate_to_waypoint(wp)
 
-        # 导航失败 → 重试
-        if self._nav.is_done():
-            if not self._nav.succeeded():
-                self.get_logger().warn(f"到{wp}导航失败，重试...")
+            if not self._nav.is_done():
+                return
+            if self._nav.succeeded():
+                self.get_logger().info("已到达 %s，开始停稳确认" % wp)
                 self._nav.reset()
+                self._inspection_retry_not_before = 0.0
+                workflow.navigation_succeeded()
                 return
 
-        # ── 已到达 → 拍一帧, 识别, 播报, 关 ──────
-        if not hasattr(self, "_inspect_done"):
-            self._inspect_done = False
-
-        if self._inspect_done:
-            return  # already processed, wait for step advance
-
-        self._inspect_done = True
-        self._run_whz_inline(step_info["desc"])
-
-    def _run_whz_inline(self, desc: str):
-        """Capture one relay frame, run letter+gauge detection, play audio."""
-        import cv2, numpy as np, sys, time
-        from pathlib import Path
-        from collections import Counter
-
-        self.get_logger().info(f"[whz] 拍一帧识别: {desc}")
-
-        # Lazy-load whz modules (only during inspection, keeps CPU free otherwise)
-        _WS = Path(__file__).resolve().parents[3]
-        _WHZ = _WS / "whz" / "whz"
-        if str(_WHZ) not in sys.path:
-            sys.path.insert(0, str(_WHZ))
-        from letter_detector import LetterDetector
-        from gauge_detector import detect_gauge
-        from audio_player import AudioPlayer
-
-        relay_dir = Path.home() / "workspaces" / "isaac_ros-dev" / "camera_frames"
-        jpg = relay_dir / "latest_color.jpg"
-        raw = relay_dir / "latest_depth.raw"
-        meta = relay_dir / "latest_depth_meta.txt"
-
-        if not jpg.exists():
-            self.get_logger().error("[whz] 无 relay JPEG, 跳过")
-            self._advance_step()
+            reason = self._nav.failure_reason or self._nav.result_name
+            self._nav.reset()
+            if workflow.navigation_failed(reason):
+                self._inspection_retry_not_before = now + self._retry_delay_sec
+                self.get_logger().warn(
+                    "到%s导航失败，重试 %d/%d: %s"
+                    % (
+                        wp,
+                        workflow.nav_retries,
+                        workflow.max_nav_retries,
+                        reason,
+                    )
+                )
+            else:
+                self._abort(workflow.abort_reason)
             return
 
-        # Wait for a fresh frame (up to 2s)
-        color = None
-        for _ in range(20):
-            color = cv2.imread(str(jpg), cv2.IMREAD_COLOR)
-            if color is not None and color.shape[0] > 0:
-                break
-            time.sleep(0.1)
-
-        if color is None:
-            self.get_logger().error("[whz] JPEG 读取失败")
-            self._advance_step()
+        if workflow.stage == InspectionStage.SETTLING:
+            odom_fresh = (
+                time.time() - self._last_odom_time
+            ) <= self._odom_timeout_sec
+            stationary = (
+                odom_fresh
+                and self._last_odom_linear_speed <= self._settle_linear_speed_mps
+                and self._last_odom_angular_speed <= self._settle_angular_speed_rps
+            )
+            if workflow.update_stationary(now, stationary):
+                self._inspection_service_wait_started = now
+                self.get_logger().info(
+                    "停稳确认通过: linear=%.4f m/s angular=%.4f rad/s"
+                    % (
+                        self._last_odom_linear_speed,
+                        self._last_odom_angular_speed,
+                    )
+                )
             return
 
-        # Depth (optional)
-        depth = None
-        if raw.exists():
-            try:
-                data = raw.read_bytes()
-                w, h = 640, 360
-                if meta.exists():
-                    parts = meta.read_text().strip().split()
-                    if len(parts) >= 2:
-                        w, h = int(parts[0]), int(parts[1])
-                if len(data) == w * h * 2:
-                    depth = np.frombuffer(data, dtype=np.uint16).reshape(h, w).astype(np.float32) * 0.001
-            except Exception:
-                pass
+        if workflow.stage == InspectionStage.WAITING_SERVICE:
+            if self._whz_client.service_is_ready():
+                self._inspection_request_id += 1
+                self._inspection_future = self._whz_client.call_async(Trigger.Request())
+                self._inspection_request_started = now
+                workflow.service_started()
+                self.get_logger().info(
+                    "WHZ request %d started: %s"
+                    % (self._inspection_request_id, step_info["desc"])
+                )
+                return
 
-        # Detect
-        template_dir = _WS / "whz" / "assets" / "templates"
-        audio_dir = _WS / "whz" / "assets" / "audio"
-        letter_det = LetterDetector(template_dir, min_score=0.38)
-        audio = AudioPlayer(audio_dir, timeout_sec=10.0)
-
-        letter = letter_det.detect(color)
-        gauge = detect_gauge(color, depth)
-
-        if letter is None or gauge is None:
-            err = f"letter={'OK' if letter else 'FAIL'} gauge={'OK' if gauge else 'FAIL'}"
-            self.get_logger().warn(f"[whz] 检测失败: {err}")
-            self._advance_step()
+            if self._inspection_service_wait_started is None:
+                self._inspection_service_wait_started = now
+            if now - self._inspection_service_wait_started < self._inspection_service_wait_sec:
+                return
+            self._inspection_service_wait_started = None
+            if workflow.inspection_failed("service_unavailable"):
+                self.get_logger().warn(
+                    "WHZ service unavailable，重试 %d/%d"
+                    % (
+                        workflow.inspection_retries,
+                        workflow.max_inspection_retries,
+                    )
+                )
+            else:
+                self._abort(workflow.abort_reason)
             return
 
-        area = letter.area
-        state = gauge.state_key
+        if workflow.stage != InspectionStage.INSPECTING:
+            self._abort("unexpected_inspection_stage=%s" % workflow.stage.value)
+            return
+
+        if self._inspection_future is None:
+            self._abort("inspection_future_missing")
+            return
+
+        if not self._inspection_future.done():
+            if now - self._inspection_request_started > self._inspection_response_timeout_sec:
+                self._inspection_future = None
+                workflow.inspection_timed_out(
+                    "%.1fs" % self._inspection_response_timeout_sec
+                )
+                self._abort(workflow.abort_reason)
+            return
+
+        try:
+            response = self._inspection_future.result()
+        except Exception as exc:  # noqa: BLE001
+            self._inspection_future = None
+            if workflow.inspection_failed("service_future_error: %s" % exc):
+                self.get_logger().warn(
+                    "WHZ service future failed，重试 %d/%d: %s"
+                    % (
+                        workflow.inspection_retries,
+                        workflow.max_inspection_retries,
+                        exc,
+                    )
+                )
+            else:
+                self._abort(workflow.abort_reason)
+            return
+
+        self._inspection_future = None
+        if response is None:
+            if workflow.inspection_failed("empty_service_response"):
+                self.get_logger().warn(
+                    "WHZ returned no response，重试 %d/%d"
+                    % (
+                        workflow.inspection_retries,
+                        workflow.max_inspection_retries,
+                    )
+                )
+            else:
+                self._abort(workflow.abort_reason)
+            return
+
+        try:
+            reading = InspectionReading.from_trigger(
+                response.success,
+                response.message,
+                require_audio=self._require_inspection_audio,
+            )
+        except InspectionContractError as exc:
+            if workflow.inspection_failed(str(exc)):
+                self.get_logger().warn(
+                    "WHZ inspection rejected，重试 %d/%d: %s"
+                    % (
+                        workflow.inspection_retries,
+                        workflow.max_inspection_retries,
+                        exc,
+                    )
+                )
+            else:
+                self._abort(workflow.abort_reason)
+            return
+
+        workflow.inspection_succeeded(reading)
+        if workflow.stage == InspectionStage.ABORTED:
+            self._abort(workflow.abort_reason)
+            return
+
+        self._store_inspection_reading(reading)
+        self._inspection_service_wait_started = None
         self.get_logger().info(
-            f"[whz] 检测成功: {area}区 {gauge.color}/{gauge.status} "
-            f"letter_score={letter.score:.3f} gauge_conf={gauge.confidence:.3f}"
+            "观察结果入账: %s区 %s/%s vote=%d/%d audio=%s"
+            % (
+                reading.area,
+                reading.color,
+                reading.status,
+                reading.agree_frames,
+                reading.total_frames,
+                reading.audio_played,
+            )
         )
 
-        # Play audio (blocking, but only ~2s)
-        try:
-            audio.play(audio.audio_path_for(area, state))
-        except Exception:
-            pass
-
-        # Save result
-        if area in self._gauge_info:
-            info = self._gauge_info[area]
-            info.detected = True
-            info.stable_detected = True
-            info.letter = area
-            info.color = gauge.color
-            info.level = gauge.level
-            info.status = gauge.status
-
-        self._advance_step()
-
-    def _advance_step(self):
-        """Move to next inspection sub-step."""
-        self._inspect_done = False
-        self._inspection_step += 1
-        self._nav.reset()
-        self.get_logger().info(f"观察子步骤完成 → {self._inspection_step}/4")
+    def _store_inspection_reading(self, reading: InspectionReading) -> None:
+        info = self._gauge_info[reading.area]
+        info.detected = True
+        info.stable_detected = True
+        info.letter = reading.area
+        info.color = reading.color
+        info.level = reading.state_key
+        info.status = reading.status
 
     def _tick_find_red_bar(self, elapsed: float) -> None:
         """FIND_RED_BAR: 导航到抓取区，寻找并定位红色条。"""
@@ -460,14 +637,17 @@ class TaskManagerNode(Node):
             return
 
         # 先导航到抓取区
+        if not self._navigation_retry_ready("find_red_bar:grab_area"):
+            return
         if not self._nav.goal_sent and not self._nav.is_done():
             self._nav.navigate_to_waypoint("grab_area")
 
-        if self._nav.is_done():
-            if not self._nav.succeeded():
-                self.get_logger().warn("抓取区导航失败，重试...")
-                self._nav.reset()
-                return
+        if not self._nav.is_done():
+            return
+        if not self._nav.succeeded():
+            self._retry_navigation_or_abort("find_red_bar:grab_area", "抓取区")
+            return
+        self._clear_navigation_retry("find_red_bar:grab_area")
 
         # 等待 YOLO 检测到红色条
         if self._latest_yolo and len(self._latest_yolo.red_bars) > 0:
@@ -476,7 +656,7 @@ class TaskManagerNode(Node):
             self.get_logger().info(
                 f"检测到红色条 (距离={dist}m)，进入抓取阶段"
             )
-            self._nav.cancel()
+            self._nav.reset()
             self._advance_to_next_phase()
 
     def _tick_grasp_bar(self, elapsed: float) -> None:
@@ -503,25 +683,35 @@ class TaskManagerNode(Node):
         current_zone = self._abnormal_zones[self._abnormal_handled]
 
         # 导航到对应放置区
+        retry_key = "placement:%s" % current_zone
+        if not self._navigation_retry_ready(retry_key):
+            return
         if not self._nav.goal_sent and not self._nav.is_done():
             target = f"placement_{current_zone}"
             self._nav.navigate_to_waypoint(target)
 
-        if self._nav.is_done():
-            if not self._nav.succeeded():
-                self.get_logger().warn(f"{current_zone}放置区导航失败，重试...")
-                self._nav.reset()
-                return
+        if not self._nav.is_done():
+            return
+        if not self._nav.succeeded():
+            self._retry_navigation_or_abort(
+                retry_key,
+                "%s放置区" % current_zone,
+            )
+            return
+        self._clear_navigation_retry(retry_key)
+        if self._placement_arrival_time is None:
+            self._placement_arrival_time = time.monotonic()
 
         # TODO: 接入机械臂反馈 —— 收到 "place_success" 时推进
         # 当前占位: 到达后 1 秒视为放置完成
-        if elapsed > 1.0:
+        if time.monotonic() - self._placement_arrival_time > 1.0:
             self._abnormal_handled += 1
             remaining = len(self._abnormal_zones) - self._abnormal_handled
             self.get_logger().info(
                 f"{current_zone}区放置完成 ({self._abnormal_handled}/{len(self._abnormal_zones)})"
                 + (f"，剩余 {remaining} 趟" if remaining > 0 else "，全部完成！")
             )
+            self._placement_arrival_time = None
             if remaining > 0:
                 # 折返：回到抓取区取下一个红色块
                 self._nav.reset()
@@ -533,8 +723,47 @@ class TaskManagerNode(Node):
     #  阶段推进
     # ═══════════════════════════════════════════════════════════
 
+    def _abort(self, reason: str) -> None:
+        if self._phase == Phase.ABORT:
+            return
+        self._abort_reason = str(reason)
+        self.get_logger().error("任务中止: %s" % self._abort_reason)
+        self._enter_phase(Phase.ABORT)
+
+    def _retry_navigation_or_abort(self, key: str, label: str) -> bool:
+        reason = self._nav.failure_reason or self._nav.result_name
+        retries = self._nav_retry_counts.get(key, 0)
+        self._nav.reset()
+        if retries >= self._max_nav_retries:
+            self._abort(
+                "%s导航在%d次尝试后失败: %s"
+                % (label, self._max_nav_retries + 1, reason)
+            )
+            return False
+        retries += 1
+        self._nav_retry_counts[key] = retries
+        self._nav_retry_not_before[key] = time.monotonic() + self._retry_delay_sec
+        self.get_logger().warn(
+            "%s导航失败，重试 %d/%d: %s"
+            % (label, retries, self._max_nav_retries, reason)
+        )
+        return True
+
+    def _clear_navigation_retry(self, key: str) -> None:
+        self._nav_retry_counts.pop(key, None)
+        self._nav_retry_not_before.pop(key, None)
+
+    def _navigation_retry_ready(self, key: str) -> bool:
+        return time.monotonic() >= self._nav_retry_not_before.get(key, 0.0)
+
     def _enter_phase(self, phase: Phase) -> None:
         """进入新阶段，执行入口动作并发布状态。"""
+        if phase == Phase.ABORT:
+            if self._nav.goal_sent:
+                self._nav.cancel()
+            self._inspection_future = None
+        if phase == Phase.PLACE_TO_ABNORMAL_ZONE:
+            self._placement_arrival_time = None
         self._phase = phase
         self._phase_enter_time = time.time()
 
@@ -597,60 +826,16 @@ class TaskManagerNode(Node):
     def _handle_timeout(self, elapsed: float) -> bool:
         """检查超时。返回 True 表示已超时并中止。"""
         if elapsed > self._timeout_per_phase:
-            self.get_logger().error(
-                f"阶段 {self._phase.label()} 超时 "
-                f"({elapsed:.1f}s > {self._timeout_per_phase}s)，进入中止状态!"
+            self._abort(
+                "阶段 %s 超时 (%.1fs > %.1fs)"
+                % (self._phase.label(), elapsed, self._timeout_per_phase)
             )
-            self._enter_phase(Phase.ABORT)
             return True
         return False
 
     # ═══════════════════════════════════════════════════════════
     #  订阅回调
     # ═══════════════════════════════════════════════════════════
-
-    def _on_gauge_status(self, msg: String) -> None:
-        """解析 /gauge/status JSON，更新仪表信息。"""
-        try:
-            data = json.loads(msg.data)
-        except (json.JSONDecodeError, TypeError) as exc:
-            self.get_logger().warn(f"gauge/status JSON 解析失败: {exc}")
-            return
-
-        # 用 stable_* 字段（按照 CONTRIBUTING.md 要求）
-        if self._require_stable:
-            if not data.get("stable_detected"):
-                return
-            color = data.get("stable_color")
-            level = data.get("stable_level")
-            status = data.get("stable_status")
-            angle = data.get("stable_angle")
-            detected = data.get("stable_detected", False)
-        else:
-            color = data.get("color")
-            level = data.get("level")
-            status = data.get("status")
-            angle = data.get("angle")
-            detected = data.get("detected", False)
-
-        # 通过 YOLO 确定当前瞄准的是哪个字母的仪表
-        # gauge_status 本身不区分 A/B/C/D，需要配合 YOLO 定位
-        # 这里做一个简化: 如果当前阶段是 INSPECT_GAUGES，按顺序填充
-        if self._phase == Phase.INSPECT_GAUGES:
-            # 找到第一个尚未稳定检测的仪表，填入当前数据
-            for letter in "ABCD":
-                info = self._gauge_info[letter]
-                if not info.stable_detected and detected:
-                    info.detected = True
-                    info.stable_detected = True
-                    info.color = color
-                    info.level = level
-                    info.status = status
-                    info.angle = angle
-                    self.get_logger().info(
-                        f"仪表 {letter} 区: color={color} level={level} status={status}"
-                    )
-                    break
 
     def _on_yolo_detections(self, msg: String) -> None:
         """解析 /yolo/detections JSON，提取仪表/字母/红条/绿条。"""
@@ -705,7 +890,13 @@ class TaskManagerNode(Node):
 
     def _on_odom(self, msg: Odometry) -> None:
         """Track host-side localization readiness from /odom."""
-        del msg
+        twist = msg.twist.twist
+        self._last_odom_linear_speed = math.sqrt(
+            twist.linear.x * twist.linear.x
+            + twist.linear.y * twist.linear.y
+            + twist.linear.z * twist.linear.z
+        )
+        self._last_odom_angular_speed = abs(twist.angular.z)
         self._last_odom_time = time.time()
         self._slam_ok = True
 
@@ -752,7 +943,27 @@ class TaskManagerNode(Node):
             ),
             "abnormal_zones": self._abnormal_zones,
             "abnormal_handled": self._abnormal_handled,
+            "abort_reason": self._abort_reason,
             "navigation": self._nav.status_dict(),
+            "inspection": {
+                "stage": self._inspection_workflow.stage.value,
+                "step_index": self._inspection_workflow.step_index,
+                "step_count": self._inspection_workflow.step_count,
+                "nav_retries": self._inspection_workflow.nav_retries,
+                "inspection_retries": self._inspection_workflow.inspection_retries,
+                "areas": sorted(self._inspection_workflow.readings),
+                "abort_reason": self._inspection_workflow.abort_reason,
+                "last_linear_speed_mps": (
+                    self._last_odom_linear_speed
+                    if math.isfinite(self._last_odom_linear_speed)
+                    else None
+                ),
+                "last_angular_speed_rps": (
+                    self._last_odom_angular_speed
+                    if math.isfinite(self._last_odom_angular_speed)
+                    else None
+                ),
+            },
             "gauges": gauge_data,
             "yolo": yolo_summary,
         }
@@ -767,6 +978,9 @@ class TaskManagerNode(Node):
 
     def destroy_node(self) -> bool:
         self.get_logger().info("Task Manager 关闭中...")
+        if self._nav.goal_sent:
+            self._nav.cancel()
+        self._inspection_future = None
         return super().destroy_node()
 
 

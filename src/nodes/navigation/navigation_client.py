@@ -22,6 +22,20 @@ import math
 
 FIELD_HEIGHT_MM = 6000.0
 
+_STATUS_SUCCEEDED = 4
+_STATUS_CANCELED = 5
+_STATUS_ABORTED = 6
+_PENDING_RESULTS = frozenset(("sending", "active"))
+_TERMINAL_RESULTS = frozenset((
+    "succeeded",
+    "aborted",
+    "canceled",
+    "rejected",
+    "unavailable",
+    "unknown_waypoint",
+    "error",
+))
+
 
 def _mm_to_ros(x_mm: float, y_mm: float) -> tuple[float, float]:
     """Convert mm field coords (origin top-left) to ROS map coords (origin bottom-left)."""
@@ -105,17 +119,20 @@ class NavigationClient:
         self._goal_sent = False
         self._goal_result = None
         self._current_waypoint: str | None = None
+        self._result_name = "idle"
+        self._failure_reason = ""
+        self._generation = 0
 
         self._logger.info("NavigationClient ready")
 
     # ── public API ──────────────────────────────────────────
 
     def navigate_to_waypoint(self, waypoint_name: str) -> bool:
-        """Send navigation goal to a named waypoint. Returns True if goal accepted."""
+        """Submit a goal for a named waypoint; acceptance arrives asynchronously."""
         if waypoint_name not in WAYPOINTS:
-            self._logger.error(
-                f"Unknown waypoint '{waypoint_name}'. Available: {list(WAYPOINTS)}"
-            )
+            reason = f"Unknown waypoint '{waypoint_name}'. Available: {list(WAYPOINTS)}"
+            self._logger.error(reason)
+            self._mark_terminal("unknown_waypoint", reason)
             return False
 
         wp = WAYPOINTS[waypoint_name]
@@ -131,13 +148,16 @@ class NavigationClient:
         qx: float = 0.0, qy: float = 0.0, qz: float = 0.0, qw: float = 1.0,
         waypoint_label: str = "",
     ) -> bool:
-        """Send a NavigateToPose goal. Returns True if accepted."""
+        """Submit a NavigateToPose goal; acceptance arrives asynchronously."""
         from nav2_msgs.action import NavigateToPose
         from geometry_msgs.msg import PoseStamped
 
-        if not self._action_client.wait_for_server(timeout_sec=5.0):
-            self._logger.error("NavigateToPose action server not available")
-            self._goal_sent = False
+        label = waypoint_label or f"({x:.2f}, {y:.2f})"
+        self._current_waypoint = label
+        if not self._action_client.server_is_ready():
+            reason = "NavigateToPose action server not available"
+            self._logger.error(reason)
+            self._mark_terminal("unavailable", reason)
             return False
 
         pose = PoseStamped()
@@ -158,91 +178,147 @@ class NavigationClient:
         self._goal_handle = None
         self._goal_result = None
         self._goal_sent = True
-        self._current_waypoint = waypoint_label
+        self._result_name = "sending"
+        self._failure_reason = ""
+        self._generation += 1
+        generation = self._generation
 
-        send_goal_future = self._action_client.send_goal_async(
-            goal_msg, feedback_callback=self._feedback_callback
-        )
-        send_goal_future.add_done_callback(self._goal_response_callback)
+        try:
+            send_goal_future = self._action_client.send_goal_async(
+                goal_msg, feedback_callback=self._feedback_callback
+            )
+            send_goal_future.add_done_callback(
+                lambda future: self._goal_response_callback(future, generation)
+            )
+        except Exception as exc:  # noqa: BLE001
+            reason = "send_goal_async failed: %s" % exc
+            self._logger.error(reason)
+            self._mark_terminal("error", reason)
+            return False
 
-        label = waypoint_label or f"({x:.2f}, {y:.2f})"
         self._logger.info(f"Nav goal sent → {label}")
         return True
 
     def cancel(self):
         """Cancel the current navigation goal."""
+        self._generation += 1
         if self._goal_handle is not None:
             self._logger.info("Cancelling navigation goal")
             self._goal_handle.cancel_goal_async()
-        self._goal_sent = False
-        self._goal_handle = None
-        self._goal_result = None
+        self._mark_terminal("canceled", "navigation canceled by TaskManager")
 
     def is_done(self) -> bool:
         """Check if the current navigation goal has completed."""
-        return self._goal_result is not None
+        return self._result_name in _TERMINAL_RESULTS
 
     def succeeded(self) -> bool:
         """Check if the last goal completed successfully."""
-        if self._goal_result is None:
-            return False
-        from action_msgs.msg import GoalStatus
-        return self._goal_result.status == GoalStatus.STATUS_SUCCEEDED
+        return self._result_name == "succeeded"
 
     def reset(self):
         """Reset state for a new goal."""
+        self._generation += 1
         self._goal_sent = False
         self._goal_handle = None
         self._goal_result = None
         self._current_waypoint = None
+        self._result_name = "idle"
+        self._failure_reason = ""
 
     @property
     def goal_sent(self) -> bool:
         """True if a goal has been sent but not yet resolved."""
-        return self._goal_sent and self._goal_result is None
+        return self._goal_sent and self._result_name in _PENDING_RESULTS
 
     @property
     def current_waypoint(self) -> str:
         return self._current_waypoint or ""
 
+    @property
+    def result_name(self) -> str:
+        return self._result_name
+
+    @property
+    def failure_reason(self) -> str:
+        return self._failure_reason
+
     def status_dict(self) -> dict:
         """Return a dict suitable for task_manager's status JSON."""
-        result = "unknown"
-        if self._goal_result is not None:
-            from action_msgs.msg import GoalStatus
-            status_names = {
-                GoalStatus.STATUS_SUCCEEDED: "succeeded",
-                GoalStatus.STATUS_ABORTED: "aborted",
-                GoalStatus.STATUS_CANCELED: "canceled",
-                GoalStatus.STATUS_UNKNOWN: "unknown",
-            }
-            result = status_names.get(self._goal_result.status, f"code_{self._goal_result.status}")
         return {
             "nav_goal_sent": self._goal_sent,
             "nav_goal_reached": self.succeeded(),
-            "nav_result": result,
+            "nav_result": self._result_name,
+            "nav_failure_reason": self._failure_reason,
             "current_waypoint": self._current_waypoint or "",
         }
 
     # ── action callbacks ────────────────────────────────────
 
-    def _goal_response_callback(self, future):
-        from rclpy.action import GoalResponse
-        goal_handle = future.result()
+    def _goal_response_callback(self, future, generation):
+        try:
+            goal_handle = future.result()
+        except Exception as exc:  # noqa: BLE001
+            if generation == self._generation:
+                reason = "goal response failed: %s" % exc
+                self._logger.error(reason)
+                self._mark_terminal("error", reason)
+            return
+
+        if generation != self._generation:
+            if goal_handle and goal_handle.accepted:
+                goal_handle.cancel_goal_async()
+            return
         if not goal_handle or not goal_handle.accepted:
-            self._logger.warn("Nav goal rejected by server")
-            self._goal_sent = False
+            reason = "Nav goal rejected by server"
+            self._logger.warn(reason)
+            self._mark_terminal("rejected", reason)
             return
         self._goal_handle = goal_handle
-        result_future = goal_handle.get_result_async()
-        result_future.add_done_callback(self._result_callback)
-
-    def _result_callback(self, future):
-        self._goal_result = future.result()
-        if self._goal_result is not None:
-            self._logger.info(
-                f"Nav goal finished: status={self._goal_result.status}"
+        self._result_name = "active"
+        try:
+            result_future = goal_handle.get_result_async()
+            result_future.add_done_callback(
+                lambda result: self._result_callback(result, generation)
             )
+        except Exception as exc:  # noqa: BLE001
+            reason = "get_result_async failed: %s" % exc
+            self._logger.error(reason)
+            self._mark_terminal("error", reason)
+
+    def _result_callback(self, future, generation):
+        if generation != self._generation:
+            return
+        try:
+            self._goal_result = future.result()
+        except Exception as exc:  # noqa: BLE001
+            reason = "navigation result failed: %s" % exc
+            self._logger.error(reason)
+            self._mark_terminal("error", reason)
+            return
+        if self._goal_result is None:
+            reason = "navigation result was empty"
+            self._logger.error(reason)
+            self._mark_terminal("error", reason)
+            return
+
+        status = self._goal_result.status
+        status_names = {
+            _STATUS_SUCCEEDED: "succeeded",
+            _STATUS_CANCELED: "canceled",
+            _STATUS_ABORTED: "aborted",
+        }
+        result_name = status_names.get(status, "error")
+        reason = "" if result_name == "succeeded" else "action_status=%s" % status
+        self._mark_terminal(result_name, reason, keep_result=True)
+        self._logger.info("Nav goal finished: status=%s (%s)" % (status, result_name))
+
+    def _mark_terminal(self, result_name, reason, keep_result=False):
+        self._goal_sent = False
+        self._goal_handle = None
+        if not keep_result:
+            self._goal_result = None
+        self._result_name = result_name
+        self._failure_reason = str(reason)
 
     def _feedback_callback(self, feedback_msg):
         # Could log distance remaining, but keeping quiet for now
