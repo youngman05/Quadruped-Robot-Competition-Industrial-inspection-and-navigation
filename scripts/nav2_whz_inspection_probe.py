@@ -6,12 +6,16 @@ from __future__ import annotations
 import json
 import math
 import os
+import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Dict, Tuple
 
 import rclpy
+from geometry_msgs.msg import Twist
+from rclpy.executors import SingleThreadedExecutor
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from std_srvs.srv import Trigger
 
 from nav2_waypoint_sequence_probe import (
@@ -173,8 +177,34 @@ class Nav2WhzInspectionProbe(Nav2WaypointSequenceProbe):
 
     def __init__(self, args, config: InspectionConfig):
         self.latest_odom_received_monotonic = float("-inf")
+        self.latest_safety_output_cmd = None
+        self.safety_cmd_node = None
+        self.safety_cmd_executor = None
+        self.safety_cmd_thread = None
         super().__init__(args)
         self.config = config
+        cmd_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10,
+            reliability=ReliabilityPolicy.RELIABLE,
+        )
+        self.safety_cmd_node = rclpy.create_node(
+            "nav2_whz_inspection_cmd_listener"
+        )
+        self.safety_cmd_node.create_subscription(
+            Twist,
+            args.cmd_vel_topic,
+            self._safety_cmd_callback,
+            cmd_qos,
+        )
+        self.safety_cmd_executor = SingleThreadedExecutor()
+        self.safety_cmd_executor.add_node(self.safety_cmd_node)
+        self.safety_cmd_thread = threading.Thread(
+            target=self.safety_cmd_executor.spin,
+            name="nav2-whz-inspection-cmd-listener",
+            daemon=True,
+        )
+        self.safety_cmd_thread.start()
         self.whz_client = self.create_client(Trigger, config.service_name)
         self.workflow = InspectionWorkflow(
             step_count=len(config.targets),
@@ -190,10 +220,34 @@ class Nav2WhzInspectionProbe(Nav2WaypointSequenceProbe):
         self.latest_odom_received_monotonic = time.monotonic()
         super()._odom_callback(msg)
 
+    def _safety_cmd_callback(self, msg):
+        self.latest_safety_output_cmd = {
+            "monotonic_time": time.monotonic(),
+            "linear_x": float(msg.linear.x),
+            "linear_y": float(msg.linear.y),
+            "angular_z": float(msg.angular.z),
+        }
+
+    def shutdown_background_listeners(self):
+        executor = self.safety_cmd_executor
+        node = self.safety_cmd_node
+        if executor is not None:
+            executor.shutdown()
+        if self.safety_cmd_thread is not None and self.safety_cmd_thread.is_alive():
+            self.safety_cmd_thread.join(timeout=2.0)
+        self.safety_cmd_thread = None
+        if executor is not None and node is not None:
+            executor.remove_node(node)
+        self.safety_cmd_executor = None
+        if node is not None:
+            node.destroy_node()
+            self.safety_cmd_node = None
+        super().shutdown_background_listeners()
+
     def _stationary_sample(self):
         now = time.monotonic()
         odom = self.latest_odom
-        output = self.latest_output_cmd
+        output = self.latest_safety_output_cmd
         odom_age = now - self.latest_odom_received_monotonic
         cmd_age = (
             now - output["monotonic_time"]

@@ -52,6 +52,19 @@ class Nav2WhzInspectionRunnerContractTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.runner)
 
+    def test_stop_gate_uses_a_dedicated_cmd_vel_executor(self):
+        required = (
+            "nav2_whz_inspection_cmd_listener",
+            "self.safety_cmd_executor = SingleThreadedExecutor()",
+            "target=self.safety_cmd_executor.spin",
+            "self.latest_safety_output_cmd",
+            "output = self.latest_safety_output_cmd",
+            "super().shutdown_background_listeners()",
+        )
+        for token in required:
+            with self.subTest(token=token):
+                self.assertIn(token, self.runner)
+
     def test_runner_has_explicit_abort_and_finish_states(self):
         self.assertIn('"FINISH"', self.runner)
         self.assertIn('"ABORT"', self.runner)
