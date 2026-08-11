@@ -91,11 +91,11 @@ controller_server:
       debug_trajectory_details: false
       min_vel_x: 0.0
       min_vel_y: 0.0
-      max_vel_x: 0.12
+      max_vel_x: 0.24
       max_vel_y: 0.0
-      max_vel_theta: 0.15
+      max_vel_theta: 0.30
       min_speed_xy: 0.0
-      max_speed_xy: 0.12
+      max_speed_xy: 0.24
       min_speed_theta: 0.0
       acc_lim_x: 0.35
       acc_lim_y: 0.0
@@ -214,7 +214,7 @@ recoveries_server:
     simulate_ahead_time: 2.0
     # Keep recovery turns within the same envelope as DWB during live
     # map-boundary diagnosis. The default BT can still invoke Spin safely.
-    max_rotational_vel: 0.15
+    max_rotational_vel: 0.30
     min_rotational_vel: 0.05
     rotational_acc_lim: 0.4
 

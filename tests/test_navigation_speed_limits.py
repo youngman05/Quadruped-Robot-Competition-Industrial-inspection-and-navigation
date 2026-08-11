@@ -3,7 +3,8 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_FORWARD_LIMIT = 0.12
+EXPECTED_FORWARD_LIMIT = 0.24
+EXPECTED_ANGULAR_LIMIT = 0.30
 
 
 def declared_default(path, parameter_name):
@@ -49,17 +50,28 @@ def yaml_block_scalars(path, block_name):
 
 
 class NavigationSpeedLimitTests(unittest.TestCase):
-    def test_forward_limits_are_consistent(self):
+    def test_navigation_limits_are_consistent(self):
         params_path = REPO_ROOT / "configs" / "navigation" / "nav2_params.yaml"
         follow_path = yaml_block_scalars(params_path, "FollowPath")
 
         self.assertEqual(follow_path["max_vel_x"], EXPECTED_FORWARD_LIMIT)
         self.assertEqual(follow_path["max_speed_xy"], EXPECTED_FORWARD_LIMIT)
+        self.assertEqual(follow_path["max_vel_theta"], EXPECTED_ANGULAR_LIMIT)
+
+        recoveries = yaml_block_scalars(params_path, "recoveries_server")
+        self.assertEqual(
+            recoveries["max_rotational_vel"],
+            EXPECTED_ANGULAR_LIMIT,
+        )
 
         arbiter_path = REPO_ROOT / "src" / "nodes" / "navigation" / "cmd_vel_arbiter.py"
         self.assertEqual(
             declared_default(arbiter_path, "max_vx"),
             EXPECTED_FORWARD_LIMIT,
+        )
+        self.assertEqual(
+            declared_default(arbiter_path, "max_wz"),
+            EXPECTED_ANGULAR_LIMIT,
         )
 
         bridge_path = REPO_ROOT / "src" / "nodes" / "navigation" / "cmd_vel_bridge.py"
@@ -70,6 +82,10 @@ class NavigationSpeedLimitTests(unittest.TestCase):
         self.assertEqual(
             declared_default(bridge_path, "hard_max_speed_xy"),
             EXPECTED_FORWARD_LIMIT,
+        )
+        self.assertEqual(
+            declared_default(bridge_path, "hard_max_az"),
+            EXPECTED_ANGULAR_LIMIT,
         )
 
 
