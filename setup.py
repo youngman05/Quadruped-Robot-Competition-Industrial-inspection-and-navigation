@@ -42,6 +42,8 @@ setup(
             "cmd_vel_bridge = nodes.navigation.cmd_vel_bridge:main",
             "depth_relay_publisher = nodes.navigation.depth_relay_publisher:main",
             "depth_safety_gate = nodes.navigation.depth_safety_gate:main",
+            "cone_scan_udp_bridge = nodes.navigation.cone_scan_udp_bridge:main",
+            "cone_scan_safety_gate = nodes.navigation.cone_scan_safety_gate:main",
         ],
     },
 )

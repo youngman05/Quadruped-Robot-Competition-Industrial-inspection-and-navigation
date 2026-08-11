@@ -35,6 +35,7 @@ def generate_launch_description() -> LaunchDescription:
     cmd_vel_bridge_init_dog = LaunchConfiguration("cmd_vel_bridge_init_dog", default="false")
     enable_depth_publisher = LaunchConfiguration("enable_depth_publisher", default="false")
     enable_depth_pipeline = LaunchConfiguration("enable_depth_pipeline", default="false")
+    enable_cone_avoidance = LaunchConfiguration("enable_cone_avoidance", default="false")
     depth_frames_dir = LaunchConfiguration("depth_frames_dir")
     enable_whz = LaunchConfiguration("enable_whz", default="false")
     whz_rtsp_url = LaunchConfiguration("whz_rtsp_url")
@@ -90,6 +91,11 @@ def generate_launch_description() -> LaunchDescription:
             Path.home() / "workspaces" / "isaac_ros-dev" / "camera_frames"
         ),
         description="Docker depth relay 与 Host bridge 的共享目录。",
+    )
+    declare_enable_cone_avoidance = DeclareLaunchArgument(
+        "enable_cone_avoidance",
+        default_value="false",
+        description="启动 D455 LaserScan UDP、本地锥桶代价层和 fail-closed 速度门。默认关闭。",
     )
     declare_enable_whz = DeclareLaunchArgument(
         "enable_whz", default_value="false",
@@ -242,7 +248,10 @@ def generate_launch_description() -> LaunchDescription:
             "base_link", "camera_link",
         ],
         output="screen",
-        condition=IfCondition(enable_navigation),
+        condition=IfCondition(PythonExpression([
+            "'", enable_navigation, "' == 'true' and '",
+            enable_cone_avoidance, "' != 'true'",
+        ])),
     )
 
     depth_pub_node = Node(
@@ -277,6 +286,7 @@ def generate_launch_description() -> LaunchDescription:
         launch_arguments={
             "enable_depth_pipeline": enable_depth_pipeline,
             "depth_frames_dir": depth_frames_dir,
+            "enable_cone_avoidance": enable_cone_avoidance,
         }.items(),
         condition=IfCondition(enable_navigation),
     )
@@ -296,6 +306,7 @@ def generate_launch_description() -> LaunchDescription:
             "║ cmd_vel_bridge   : ", enable_cmd_vel_bridge, "  ║\n",
             "║ depth_publisher  : ", enable_depth_publisher, "  ║\n",
             "║ depth_pipeline   : ", enable_depth_pipeline, "  ║\n",
+            "║ cone_avoidance   : ", enable_cone_avoidance, "  ║\n",
             "║ whz_inspection   : ", enable_whz, "  ║\n",
             "╚════════════════════════════════════════╝\n",
         ]
@@ -312,6 +323,7 @@ def generate_launch_description() -> LaunchDescription:
         declare_enable_depth_publisher,
         declare_enable_depth_pipeline,
         declare_depth_frames_dir,
+        declare_enable_cone_avoidance,
         declare_enable_whz,
         declare_whz_rtsp_url,
         declare_whz_model_path,

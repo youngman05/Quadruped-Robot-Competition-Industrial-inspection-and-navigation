@@ -26,6 +26,7 @@ for name in task_manager initial_pose_publisher depth_publisher \
             color_image_publisher yolo_detect_publisher \
             static_transform_publisher test_logger cmd_vel_arbiter cmd_vel_bridge \
             depth_relay_publisher depth_safety_gate \
+            cone_scan_udp_bridge cone_scan_safety_gate \
             map_server planner_server controller_server bt_navigator \
             recoveries_server lifecycle_manager; do
     pkill -9 -f "$name" 2>/dev/null
@@ -42,7 +43,7 @@ sleep 1
 # 4. 杀掉桥接进程
 echo "[4] 停止桥接..."
 pkill -9 -f "final_bridge"         2>/dev/null
-pkill -9 -f "udp_exporter"         2>/dev/null
+pkill -9 -f "cuvslam_odometry_udp_exporter" 2>/dev/null
 pkill -9 -f "_ros2_daemon"         2>/dev/null
 sleep 1
 
@@ -52,7 +53,7 @@ CN=$(docker ps --format '{{.Names}}' 2>/dev/null | grep cuvslam | head -1)
 if [ -n "$CN" ]; then
     docker exec $CN pkill -f camera_relay       2>/dev/null || true
     docker exec $CN pkill -f depth_relay        2>/dev/null || true
-    docker exec $CN pkill -f udp_exporter       2>/dev/null || true
+    docker exec $CN pkill -f '[c]uvslam_odometry_udp_exporter.py' 2>/dev/null || true
     docker exec $CN pkill -f loop_metrics_recorder 2>/dev/null || true
 fi
 

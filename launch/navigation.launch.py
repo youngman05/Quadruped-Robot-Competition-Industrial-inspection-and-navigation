@@ -7,7 +7,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, LogInfo, TimerAction
 from launch.conditions import IfCondition, UnlessCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
 
@@ -15,6 +15,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PARAMS = str(PROJECT_ROOT / "configs" / "navigation" / "nav2_params.yaml")
 DEFAULT_DEPTH_PARAMS = str(
     PROJECT_ROOT / "configs" / "navigation" / "nav2_depth_obstacles.yaml"
+)
+DEFAULT_CONE_PARAMS = str(
+    PROJECT_ROOT / "configs" / "navigation" / "nav2_cone_obstacles.yaml"
 )
 DEFAULT_MAP = str(PROJECT_ROOT / "navi" / "map" / "competition_field_phase1.yaml")
 DEFAULT_BT_XML = str(
@@ -30,6 +33,20 @@ def generate_launch_description() -> LaunchDescription:
     enable_depth_pipeline = LaunchConfiguration("enable_depth_pipeline")
     depth_params_file = LaunchConfiguration("depth_params_file")
     depth_frames_dir = LaunchConfiguration("depth_frames_dir")
+    enable_cone_avoidance = LaunchConfiguration("enable_cone_avoidance")
+    cone_params_file = LaunchConfiguration("cone_params_file")
+    static_mode = PythonExpression([
+        "'", enable_depth_pipeline, "' != 'true' and '",
+        enable_cone_avoidance, "' != 'true'",
+    ])
+    depth_mode = PythonExpression([
+        "'", enable_depth_pipeline, "' == 'true' and '",
+        enable_cone_avoidance, "' != 'true'",
+    ])
+    cone_mode = PythonExpression([
+        "'", enable_cone_avoidance, "' == 'true' and '",
+        enable_depth_pipeline, "' != 'true'",
+    ])
 
     declare_params = DeclareLaunchArgument(
         "params_file",
@@ -60,6 +77,19 @@ def generate_launch_description() -> LaunchDescription:
             Path.home() / "workspaces" / "isaac_ros-dev" / "camera_frames"
         ),
         description="Host directory shared with the Docker depth relay.",
+    )
+    declare_enable_cone_avoidance = DeclareLaunchArgument(
+        "enable_cone_avoidance",
+        default_value="false",
+        description=(
+            "Enable latest-only D455 LaserScan UDP, local NonPersistentVoxelLayer, "
+            "and the fail-closed cone scan velocity gate."
+        ),
+    )
+    declare_cone_params = DeclareLaunchArgument(
+        "cone_params_file",
+        default_value=DEFAULT_CONE_PARAMS,
+        description="Local-only NonPersistentVoxelLayer parameter overlay.",
     )
 
     map_server = Node(
@@ -99,7 +129,7 @@ def generate_launch_description() -> LaunchDescription:
         output="screen",
         parameters=[params_file],
         remappings=[("/cmd_vel", "/cmd_vel_nav2")],
-        condition=UnlessCondition(enable_depth_pipeline),
+        condition=IfCondition(static_mode),
     )
     controller_depth = Node(
         package="nav2_controller",
@@ -108,7 +138,16 @@ def generate_launch_description() -> LaunchDescription:
         output="screen",
         parameters=[params_file, depth_params_file],
         remappings=[("/cmd_vel", "/cmd_vel_nav2")],
-        condition=IfCondition(enable_depth_pipeline),
+        condition=IfCondition(depth_mode),
+    )
+    controller_cone = Node(
+        package="nav2_controller",
+        executable="controller_server",
+        name="controller_server",
+        output="screen",
+        parameters=[params_file, cone_params_file],
+        remappings=[("/cmd_vel", "/cmd_vel_nav2")],
+        condition=IfCondition(cone_mode),
     )
 
     recoveries = Node(
@@ -126,7 +165,7 @@ def generate_launch_description() -> LaunchDescription:
         name="cmd_vel_arbiter",
         output="screen",
         parameters=[{"output_topic": "/cmd_vel"}],
-        condition=UnlessCondition(enable_depth_pipeline),
+        condition=IfCondition(static_mode),
     )
     cmd_vel_arbiter_gated = Node(
         package="quadruped_robot_competition",
@@ -134,7 +173,15 @@ def generate_launch_description() -> LaunchDescription:
         name="cmd_vel_arbiter",
         output="screen",
         parameters=[{"output_topic": "/cmd_vel_selected"}],
-        condition=IfCondition(enable_depth_pipeline),
+        condition=IfCondition(depth_mode),
+    )
+    cmd_vel_arbiter_cone = Node(
+        package="quadruped_robot_competition",
+        executable="cmd_vel_arbiter",
+        name="cmd_vel_arbiter",
+        output="screen",
+        parameters=[{"output_topic": "/cmd_vel_selected"}],
+        condition=IfCondition(cone_mode),
     )
 
     depth_relay_publisher = Node(
@@ -143,7 +190,7 @@ def generate_launch_description() -> LaunchDescription:
         name="depth_relay_publisher",
         output="screen",
         parameters=[{"frames_dir": depth_frames_dir}],
-        condition=IfCondition(enable_depth_pipeline),
+        condition=IfCondition(depth_mode),
     )
     depth_optical_tf = Node(
         package="tf2_ros",
@@ -155,14 +202,28 @@ def generate_launch_description() -> LaunchDescription:
             "camera_link", "camera_depth_optical_frame",
         ],
         output="screen",
-        condition=IfCondition(enable_depth_pipeline),
+        condition=IfCondition(depth_mode),
     )
     depth_safety_gate = Node(
         package="quadruped_robot_competition",
         executable="depth_safety_gate",
         name="depth_safety_gate",
         output="screen",
-        condition=IfCondition(enable_depth_pipeline),
+        condition=IfCondition(depth_mode),
+    )
+    cone_scan_udp_bridge = Node(
+        package="quadruped_robot_competition",
+        executable="cone_scan_udp_bridge",
+        name="cone_scan_udp_bridge",
+        output="screen",
+        condition=IfCondition(cone_mode),
+    )
+    cone_scan_safety_gate = Node(
+        package="quadruped_robot_competition",
+        executable="cone_scan_safety_gate",
+        name="cone_scan_safety_gate",
+        output="screen",
+        condition=IfCondition(cone_mode),
     )
 
     bt_navigator = Node(
@@ -188,7 +249,9 @@ def generate_launch_description() -> LaunchDescription:
             params_file,
             " | depth_pipeline: ",
             enable_depth_pipeline,
-            " | cmd_vel: Nav2/precision -> arbiter -> optional depth gate -> /cmd_vel",
+            " | cone_avoidance: ",
+            enable_cone_avoidance,
+            " | cmd_vel: Nav2/precision -> arbiter -> optional sensor gate -> /cmd_vel",
         ]
     )
 
@@ -198,17 +261,23 @@ def generate_launch_description() -> LaunchDescription:
         declare_enable_depth_pipeline,
         declare_depth_params,
         declare_depth_frames_dir,
+        declare_enable_cone_avoidance,
+        declare_cone_params,
         startup_info,
         map_server,
         cmd_vel_arbiter_direct,
         cmd_vel_arbiter_gated,
+        cmd_vel_arbiter_cone,
         depth_relay_publisher,
         depth_optical_tf,
         depth_safety_gate,
+        cone_scan_udp_bridge,
+        cone_scan_safety_gate,
         planner_static,
         planner_depth,
         controller_static,
         controller_depth,
+        controller_cone,
         recoveries,
         bt_navigator,
         TimerAction(period=3.0, actions=[lifecycle]),

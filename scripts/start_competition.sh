@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================
 #  四足机器人竞赛 — 鲁棒一键启动
-#  用法: bash scripts/start_competition.sh [--dog] [--cmd-vel-bridge] [--prepare-lite3-motion] [--yolo] [--whz] [--task-manager] [--auto-advance] [--camera-relay] [--depth-relay] [--depth-pipeline]
+#  用法: bash scripts/start_competition.sh [--dog] [--cmd-vel-bridge] [--prepare-lite3-motion] [--yolo] [--whz] [--task-manager] [--auto-advance] [--camera-relay] [--depth-relay] [--depth-pipeline] [--cone-avoidance]
 # ==============================================
 # 注意: 不用 set -e，每个步骤自行容错
 
@@ -19,6 +19,7 @@ trap 'echo ""; echo "Ctrl+C → 清理..."; bash scripts/stop_all.sh' INT TERM
 ENABLE_YOLO=false; ENABLE_WHZ=false; ENABLE_DOG=false; ENABLE_CMD_VEL_BRIDGE=false; ENABLE_CMD_VEL_BRIDGE_INIT=false; PREPARE_LITE3_MOTION=false
 ENABLE_CAMERA_RELAY=false; ENABLE_DEPTH_RELAY=false
 ENABLE_DEPTH_PIPELINE=false
+ENABLE_CONE_AVOIDANCE=false
 ENABLE_TASK_MANAGER=false; AUTO_ADVANCE=false; DO_STAND=false
 for arg in "$@"; do
     case $arg in
@@ -33,16 +34,22 @@ for arg in "$@"; do
         --camera-relay) ENABLE_CAMERA_RELAY=true ;;
         --depth-relay) ENABLE_DEPTH_RELAY=true ;;
         --depth-pipeline) ENABLE_DEPTH_RELAY=true; ENABLE_DEPTH_PIPELINE=true ;;
+        --cone-avoidance) ENABLE_CONE_AVOIDANCE=true ;;
         --relays) ENABLE_CAMERA_RELAY=true; ENABLE_DEPTH_RELAY=true ;;
         --stand) DO_STAND=true ;;   # force stand toggle (dog lying down)
     esac
 done
 
+if $ENABLE_DEPTH_PIPELINE && $ENABLE_CONE_AVOIDANCE; then
+    echo "ERROR: --depth-pipeline and --cone-avoidance are mutually exclusive"
+    exit 2
+fi
+
 echo ''
 echo '==================================='
 echo ' 四足机器人竞赛系统 v2 — 鲁棒启动'
 echo '==================================='
-echo " DOG=$ENABLE_DOG  CMD_VEL_BRIDGE=$ENABLE_CMD_VEL_BRIDGE  BRIDGE_INIT_DOG=$ENABLE_CMD_VEL_BRIDGE_INIT  PREPARE_LITE3_MOTION=$PREPARE_LITE3_MOTION  YOLO=$ENABLE_YOLO  WHZ=$ENABLE_WHZ  CAMERA_RELAY=$ENABLE_CAMERA_RELAY  DEPTH_RELAY=$ENABLE_DEPTH_RELAY  DEPTH_PIPELINE=$ENABLE_DEPTH_PIPELINE  TASK_MANAGER=$ENABLE_TASK_MANAGER  AUTO_ADVANCE=$AUTO_ADVANCE"
+echo " DOG=$ENABLE_DOG  CMD_VEL_BRIDGE=$ENABLE_CMD_VEL_BRIDGE  BRIDGE_INIT_DOG=$ENABLE_CMD_VEL_BRIDGE_INIT  PREPARE_LITE3_MOTION=$PREPARE_LITE3_MOTION  YOLO=$ENABLE_YOLO  WHZ=$ENABLE_WHZ  CAMERA_RELAY=$ENABLE_CAMERA_RELAY  DEPTH_RELAY=$ENABLE_DEPTH_RELAY  DEPTH_PIPELINE=$ENABLE_DEPTH_PIPELINE  CONE_AVOIDANCE=$ENABLE_CONE_AVOIDANCE  TASK_MANAGER=$ENABLE_TASK_MANAGER  AUTO_ADVANCE=$AUTO_ADVANCE"
 
 export CUVSLAM_MOUNT_MODE="${CUVSLAM_MOUNT_MODE:-robot}"
 export CUVSLAM_PROFILE="${CUVSLAM_PROFILE:-custom}"
@@ -56,8 +63,13 @@ export ENABLE_LOOP_METRICS_RECORDER="${ENABLE_LOOP_METRICS_RECORDER:-false}"
 export STARTUP_TOPIC_CHECKS="${STARTUP_TOPIC_CHECKS:-false}"
 export STARTUP_RATE_PROBES="${STARTUP_RATE_PROBES:-false}"
 FINAL_BRIDGE_CAMERA_WORLD_REBASE="${FINAL_BRIDGE_CAMERA_WORLD_REBASE:-base_start}"
-if $ENABLE_DEPTH_PIPELINE; then
+if $ENABLE_DEPTH_PIPELINE || $ENABLE_CONE_AVOIDANCE; then
     export CUVSLAM_ENABLE_DEPTH="${CUVSLAM_ENABLE_DEPTH:-true}"
+fi
+export CONE_AVOIDANCE_ENABLE="$ENABLE_CONE_AVOIDANCE"
+CUVSLAM_DOCKER_DOMAIN_ID="${CUVSLAM_DOCKER_DOMAIN_ID:-0}"
+if $ENABLE_CONE_AVOIDANCE; then
+    CUVSLAM_DOCKER_DOMAIN_ID="${CONE_DOCKER_ROS_DOMAIN_ID:-42}"
 fi
 
 # ═══════════════════════════════════════════
@@ -77,6 +89,8 @@ CN=$(docker ps --format '{{.Names}}' 2>/dev/null | grep cuvslam || true)
 if [ -z "$CN" ]; then
     echo "  启动 Docker (需要 ~90s)..."
     PROJECT_DIR="$PROJECT_ROOT" \
+    ROS_DOMAIN_ID="$CUVSLAM_DOCKER_DOMAIN_ID" \
+    CONE_AVOIDANCE_ENABLE="$CONE_AVOIDANCE_ENABLE" \
     CUVSLAM_MOUNT_MODE="$CUVSLAM_MOUNT_MODE" CUVSLAM_PROFILE="$CUVSLAM_PROFILE" \
       CUVSLAM_PUBLISH_ODOM_TO_BASE_TF=false CUVSLAM_PUBLISH_MAP_TO_ODOM_TF=false \
       bash scripts/start_cuvslam_rviz_gui.sh --no-rviz > /tmp/cuvslam_start.log 2>&1 &
@@ -103,6 +117,23 @@ if [ -z "$CN" ]; then
     done
 else
     echo "  Docker 已在运行: $CN"
+fi
+if $ENABLE_CONE_AVOIDANCE; then
+    CONTAINER_ROS_DOMAIN_ID=$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$CN" 2>/dev/null | sed -n 's/^ROS_DOMAIN_ID=//p' | tail -1)
+    if [ -z "$CONTAINER_ROS_DOMAIN_ID" ] || [ "$CONTAINER_ROS_DOMAIN_ID" = "0" ]; then
+        echo "ERROR: cone avoidance requires the Humble container DDS domain to differ from Host Foxy domain 0"
+        exit 1
+    fi
+    if ! docker exec "$CN" bash -lc \
+      "source /opt/ros/humble/setup.bash && source /workspaces/isaac_ros-dev/install/setup.bash && ros2 topic list 2>/dev/null | grep -Fx '/cone_obstacle/scan_humble' >/dev/null"; then
+        echo "ERROR: existing cuVSLAM container has no cone scan pipeline; stop it and restart with --cone-avoidance"
+        exit 1
+    fi
+    if ! docker exec "$CN" pgrep -f '[c]one_scan_udp_exporter.py' >/dev/null; then
+        echo "ERROR: cone scan UDP exporter is not running in $CN"
+        exit 1
+    fi
+    echo "  Cone scan: Humble DDS domain $CONTAINER_ROS_DOMAIN_ID -> UDP 127.0.0.1:19002 -> Foxy DDS domain 0"
 fi
 # 杀掉高CPU的 loop_metrics
 docker exec $CN pkill -f loop_metrics_recorder 2>/dev/null && echo "  loop_metrics killed" || true
@@ -159,7 +190,7 @@ echo ''
 echo '[3/6] UDP 桥接...'
 # 清理旧桥接
 pkill -9 -f final_bridge 2>/dev/null || true
-docker exec $CN pkill -f udp_exporter 2>/dev/null || true
+docker exec $CN pkill -f '[c]uvslam_odometry_udp_exporter.py' 2>/dev/null || true
 sleep 1
 
 source /opt/ros/foxy/setup.bash 2>/dev/null || true
@@ -250,6 +281,7 @@ ros2 launch quadruped_robot_competition competition.launch.py \
   cmd_vel_bridge_init_dog:=$ENABLE_CMD_VEL_BRIDGE_INIT \
   enable_depth_publisher:=false \
   enable_depth_pipeline:=$ENABLE_DEPTH_PIPELINE \
+  enable_cone_avoidance:=$ENABLE_CONE_AVOIDANCE \
   enable_yolo:=$YF enable_whz:=$WF \
   auto_advance:=$AUTO_ADVANCE > /tmp/competition.log 2>&1 &
 COMP_PID=$!

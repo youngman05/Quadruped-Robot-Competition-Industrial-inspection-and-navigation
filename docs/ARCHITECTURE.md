@@ -181,41 +181,19 @@ docker exec <容器名> pkill -f loop_metrics_recorder
 
 ## 4. 感知层：YOLO + WHZ
 
-### 4.1 YOLO 锥桶检测
+### 4.1 D455 锥桶局部避障
 
-**工作方式**: 单帧检测（不是连续），在 `PASS_OBSTACLE` 阶段开始时运行一次。
+锥桶避障不再使用一次性 YOLO 检测，也不向全局 A* 注入障碍。启用 `--cone-avoidance` 后，现有 D455 owner 在 Humble 容器内增加以下 CPU-only 链路：
 
-**流程**:
-```
-task_manager._tick_pass_obstacle()
-  → _run_yolo_cone_detect()
-    → subprocess: python3 scripts/yolo_detect_once.py (timeout 60s)
-      → 读取 relay JPEG
-      → 读取 relay depth
-      → YOLO 推理 (class_id=2 = obstacle cone)
-      → 计算锥桶 3D 位置 (camera → base_link → map)
-      → 输出 JSON
-    → 解析 JSON，注入 A* 障碍物栅格 (20cm 膨胀半径)
-  → 然后 A* 规划路径 → 导航
+```text
+D455 depth -> decimation x4 -> pointcloud
+  -> pointcloud_to_laserscan(target_frame=base_link, height filtered)
+  -> 180-beam CRC UDP (latest only)
+  -> Foxy /cone_obstacle/scan
+  -> local NonPersistentVoxelLayer -> DWB
 ```
 
-**输出格式** (JSON):
-```json
-[
-  {"center_px": [320, 240], "angle_h_deg": -5.3, "angle_v_deg": -2.1, "distance_m": 1.85}
-]
-```
-
-**已知问题**: YOLO 模型加载约 45-60s，可能超时。超时后进入无锥桶导航（走直线）。
-
-**调试**:
-```bash
-# 单独测试 YOLO
-python3 scripts/yolo_detect_once.py
-
-# 查看 YOLO 日志（比赛内）
-grep "YOLO" /tmp/competition.log
-```
+UDP 包同时携带 `stream_id`、递增序号、源时间戳和深度有效率/左中右覆盖率。Host 会排空旧包并拒绝 CRC 错误、序号回退、超过 250 ms 的源数据、空深度和单飞点。速度链路中的独立 cone safety gate 需要至少连续 3 帧健康数据；断流或异常立即输出零速度。global costmap 继续只使用静态地图，Host 不接收点云也不依赖相机 TF。
 
 ### 4.2 WHZ 仪表检测
 

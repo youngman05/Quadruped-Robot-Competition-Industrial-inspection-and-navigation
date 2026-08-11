@@ -23,6 +23,7 @@
   <exec_depend>nav2_lifecycle_manager</exec_depend>
   <exec_depend>nav2_recoveries</exec_depend>
   <exec_depend>nav2_costmap_2d</exec_depend>
+  <exec_depend>nonpersistent_voxel_layer</exec_depend>
   <exec_depend>dwb_core</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>cv_bridge</exec_depend>

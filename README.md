@@ -10,7 +10,7 @@
 
 | 任务 | 比赛要求 | 本仓库对应模块 |
 |---|---|---|
-| 避障任务 | 从出发区自主穿越障碍区域，避开随机放置的 2 个锥形桶 | D455 + YOLO / 深度点云 + Nav2 local costmap |
+| 避障任务 | 从出发区自主穿越障碍区域，避开随机放置的 2 个锥形桶 | D455 深度降采样 + LaserScan UDP + Nav2 local costmap |
 | 巡检识别 | 自主前往检测区域，识别 A/B/C/D 区域与仪表盘状态，并进行语音播报 | YOLO 字母/目标检测 + OpenCV 仪表识别 + task_manager + speech |
 | 长条抓取任务 | 找到红色异常长条，搬运到异常仪表对应的 A/B/C/D 放置区 | YOLO 红/绿长条检测 + Nav2 到点；机械臂控制另行接入 |
 
@@ -33,8 +33,8 @@ Intel RealSense D455
   ├─ RGB 图像
   │   ├─ OpenCV 仪表盘识别 -> /gauge/status
   │   └─ YOLOv8 实例分割  -> /yolo/detections
-  ├─ Depth 图像
-  │   └─ depth_publisher -> PointCloud2 -> Nav2 costmap
+  ├─ Depth 图像（与 cuVSLAM 共用同一个 RealSense 进程）
+  │   └─ decimation x4 -> pointcloud_to_laserscan(base_link) -> UDP -> local costmap
   └─ IR 双目 + IMU
       └─ Isaac ROS Visual SLAM / cuVSLAM -> odom / TF
 
@@ -143,7 +143,7 @@ map -> odom -> base_link -> camera_link -> camera_infra*
 
 ### Nav2 导航
 
-导航主线是 **Nav2 + PGM 静态地图 + D455 深度点云局部避障**。
+导航主线是 **Nav2 + PGM 静态地图 + D455 深度扫描局部避障**。锥桶避障为显式 opt-in：Humble 容器内完成 decimation、点云投影、TF 和高度过滤，只把约 180 束 `LaserScan` 通过 latest-only UDP 送到 Foxy；Host 仅在 local costmap 加载 `NonPersistentVoxelLayer`，global costmap 始终保持静态地图。
 
 仓库内相关文件：
 
@@ -165,7 +165,7 @@ Nav2 配置要点：
 | 定位 | cuVSLAM，不使用 AMCL |
 | 全局规划器 | NavFn，`use_astar: true` |
 | 局部控制器 | DWB |
-| 局部避障 | D455 depth -> PointCloud2 -> VoxelLayer（第一轮先验证静态地图+DWB闭环） |
+| 局部避障 | D455 depth -> decimation x4 -> base_link LaserScan UDP -> NonPersistentVoxelLayer（仅 local） |
 | 机器人 footprint | 约 `1.0 m x 0.5 m` |
 
 导航任务点定义在 `navigation_client.py` 和 `navi/map/navi_map_data.py` 中，包括：
