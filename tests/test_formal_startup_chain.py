@@ -74,9 +74,15 @@ class FormalStartupChainContractTests(unittest.TestCase):
             "nav2_costmap_2d/NonPersistentVoxelLayer",
             "libnonpersistent_voxel_layer_core.so",
             'snapshot_value "plugin_library"',
+            'pkg_resources.load_entry_point(',
+            '"cmd_vel_arbiter", "cone_scan_udp_bridge", "cone_scan_safety_gate"',
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.script)
+        self.assertNotIn(
+            "export PYTHONPATH=/opt/ros/foxy/lib/python3.8/site-packages",
+            self.script,
+        )
 
     def test_success_banner_is_after_fail_closed_runtime_gate(self):
         banner = self.script.index("GO: 启动完成，运行验收通过!")

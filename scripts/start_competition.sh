@@ -189,6 +189,19 @@ fi
 snapshot_value "nonpersistent_voxel_layer_prefix" "$PLUGIN_PREFIX"
 snapshot_value "plugin_xml" "$PLUGIN_XML"
 snapshot_value "plugin_library" "$PLUGIN_LIBRARY"
+snapshot_value "PYTHONPATH" "${PYTHONPATH:-}"
+
+if $ENABLE_CONE_AVOIDANCE; then
+    python3 - <<'PY' \
+        || startup_no_go "formal cone Python entry points are not loadable"
+import pkg_resources
+
+for name in ("cmd_vel_arbiter", "cone_scan_udp_bridge", "cone_scan_safety_gate"):
+    pkg_resources.load_entry_point(
+        "quadruped-robot-competition", "console_scripts", name
+    )
+PY
+fi
 
 echo " Formal environment preflight passed"
 echo "  Nav2 BT: $NAV2_BT_PREFIX"
@@ -332,7 +345,6 @@ export RMW_IMPLEMENTATION=rmw_fastrtps_cpp ROS_DOMAIN_ID=0
 if [ -f "$PROJECT_ROOT/configs/ros/fastrtps_no_shm.xml" ]; then
     export FASTRTPS_DEFAULT_PROFILES_FILE="$PROJECT_ROOT/configs/ros/fastrtps_no_shm.xml"
 fi
-export PYTHONPATH=/opt/ros/foxy/lib/python3.8/site-packages
 
 nohup python3 scripts/final_bridge.py \
   --camera-world-rebase "$FINAL_BRIDGE_CAMERA_WORLD_REBASE" \
