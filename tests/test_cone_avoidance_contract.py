@@ -9,6 +9,7 @@ NAV_LAUNCH = REPO_ROOT / "launch" / "navigation.launch.py"
 COMP_LAUNCH = REPO_ROOT / "launch" / "competition.launch.py"
 CONE_PARAMS = REPO_ROOT / "configs" / "navigation" / "nav2_cone_obstacles.yaml"
 BASE_PARAMS = REPO_ROOT / "configs" / "navigation" / "nav2_params.yaml"
+CONE_DOCKERFILE = REPO_ROOT / "docker" / "Dockerfile.cuvslam-cone"
 
 
 class ConeAvoidanceContractTests(unittest.TestCase):
@@ -79,6 +80,30 @@ class ConeAvoidanceContractTests(unittest.TestCase):
             line for line in source.splitlines() if "--cone-avoidance)" in line
         )
         self.assertNotIn("ENABLE_DEPTH_RELAY", case_line)
+
+    def test_cone_image_dependency_is_pinned_and_checked_without_devices(self):
+        dockerfile = CONE_DOCKERFILE.read_text(encoding="utf-8")
+        launcher = CUVSLAM_START.read_text(encoding="utf-8")
+        competition = COMPETITION_START.read_text(encoding="utf-8")
+        self.assertIn(
+            "ros-humble-pointcloud-to-laserscan=${POINTCLOUD_TO_LASERSCAN_VERSION}",
+            dockerfile,
+        )
+        self.assertIn("2.0.1-3focal.20231003.024830", dockerfile)
+        self.assertIn("docker run --rm --network none", launcher)
+        self.assertIn("check_cone_image_dependencies", launcher)
+        self.assertIn(
+            'export IMAGE="${IMAGE:-isaac_ros_cuvslam_runtime:humble-rs-cone}"',
+            competition,
+        )
+
+    def test_cone_pipeline_readiness_retries_topic_and_exporter(self):
+        source = COMPETITION_START.read_text(encoding="utf-8")
+        self.assertIn("CONE_PIPELINE_READY=false", source)
+        self.assertIn("for _ in $(seq 1 20); do", source)
+        self.assertIn("timeout 5 ros2 topic list", source)
+        self.assertIn("[c]one_scan_udp_exporter.py", source)
+        self.assertIn("CONE_PIPELINE_READY=true", source)
 
     def test_package_installs_bridge_gate_and_nonpersistent_dependency(self):
         setup = (REPO_ROOT / "setup.py").read_text(encoding="utf-8")

@@ -70,6 +70,7 @@ export CONE_AVOIDANCE_ENABLE="$ENABLE_CONE_AVOIDANCE"
 CUVSLAM_DOCKER_DOMAIN_ID="${CUVSLAM_DOCKER_DOMAIN_ID:-0}"
 if $ENABLE_CONE_AVOIDANCE; then
     CUVSLAM_DOCKER_DOMAIN_ID="${CONE_DOCKER_ROS_DOMAIN_ID:-42}"
+    export IMAGE="${IMAGE:-isaac_ros_cuvslam_runtime:humble-rs-cone}"
 fi
 
 # ═══════════════════════════════════════════
@@ -124,13 +125,18 @@ if $ENABLE_CONE_AVOIDANCE; then
         echo "ERROR: cone avoidance requires the Humble container DDS domain to differ from Host Foxy domain 0"
         exit 1
     fi
-    if ! docker exec "$CN" bash -lc \
-      "source /opt/ros/humble/setup.bash && source /workspaces/isaac_ros-dev/install/setup.bash && ros2 topic list 2>/dev/null | grep -Fx '/cone_obstacle/scan_humble' >/dev/null"; then
+    CONE_PIPELINE_READY=false
+    for _ in $(seq 1 20); do
+        if docker exec "$CN" bash -lc \
+          "source /opt/ros/humble/setup.bash && source /workspaces/isaac_ros-dev/install/setup.bash && timeout 5 ros2 topic list 2>/dev/null | grep -Fx '/cone_obstacle/scan_humble' >/dev/null" \
+          && docker exec "$CN" pgrep -f '[c]one_scan_udp_exporter.py' >/dev/null; then
+            CONE_PIPELINE_READY=true
+            break
+        fi
+        sleep 1
+    done
+    if ! $CONE_PIPELINE_READY; then
         echo "ERROR: existing cuVSLAM container has no cone scan pipeline; stop it and restart with --cone-avoidance"
-        exit 1
-    fi
-    if ! docker exec "$CN" pgrep -f '[c]one_scan_udp_exporter.py' >/dev/null; then
-        echo "ERROR: cone scan UDP exporter is not running in $CN"
         exit 1
     fi
     echo "  Cone scan: Humble DDS domain $CONTAINER_ROS_DOMAIN_ID -> UDP 127.0.0.1:19002 -> Foxy DDS domain 0"

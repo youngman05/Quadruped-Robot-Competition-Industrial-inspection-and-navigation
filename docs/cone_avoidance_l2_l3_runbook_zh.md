@@ -1,6 +1,6 @@
 # 锥桶避障 L2/L3 无执行器验收规程
 
-> 状态：L0/L1、Jetson L2 与 L3-S 已完成；L3-D 尚未执行。L2 证据目录为 `/home/superwfx666/competition_logs/cone_l2_l3/20260812_164907_phase94_l2`，L3-S 证据目录为 `/home/superwfx666/competition_logs/cone_l2_l3/20260812_183742_phase95_l3s`。
+> 状态：L0/L1、Jetson L2、L3-S 与 L3-D 均已完成，结论为 L3-D GO。L2 证据目录为 `/home/superwfx666/competition_logs/cone_l2_l3/20260812_164907_phase94_l2`，L3-S 证据目录为 `/home/superwfx666/competition_logs/cone_l2_l3/20260812_183742_phase95_l3s`，L3-D 证据目录为 `/home/superwfx666/competition_logs/cone_l2_l3/20260812_185325_phase96_l3d/B3_reconnect_20260812_222610`。
 
 本文用于在不连接 Lite3 执行链路、不发送导航目标的条件下，依次验证 Foxy 插件加载、隔离 UDP/ROS 故障注入、D455 实际扫描、速度门、local costmap 标记/清除和资源开销。L4 机器狗运动不在本文范围内。
 
@@ -48,6 +48,29 @@ sha256sum \
   configs/navigation/nav2_cone_obstacles.yaml \
   | tee "$EVIDENCE/source_sha256.txt"
 ```
+
+### 3.1 固定 Humble 锥桶镜像
+
+基础 cuVSLAM 镜像不包含 `pointcloud_to_laserscan`。首次部署或 Dockerfile 变化后构建固定派生镜像：
+
+```bash
+export CONE_IMAGE=isaac_ros_cuvslam_runtime:humble-rs-cone
+docker build --pull=false --no-cache \
+  -f docker/Dockerfile.cuvslam-cone \
+  -t "$CONE_IMAGE" .
+
+# 不挂载 /dev、不加入 ROS 图，仅验证镜像内依赖。
+docker run --rm --network none "$CONE_IMAGE" bash -lc \
+  'source /opt/ros/humble/setup.bash && \
+   ros2 pkg prefix pointcloud_to_laserscan && \
+   ros2 pkg executables pointcloud_to_laserscan | \
+     grep -F "pointcloud_to_laserscan pointcloud_to_laserscan_node"'
+
+docker image inspect --format '{{.Id}} {{.Created}} {{.Size}}' "$CONE_IMAGE" \
+  | tee "$EVIDENCE/cone_image.txt"
+```
+
+`start_competition.sh --cone-avoidance` 默认使用上述 tag。验收若显式传入 `IMAGE`，必须把实际 image ID 记录到证据目录。
 
 先清理旧栈，再确认没有执行器进程。此时机器狗仍须保持物理隔离。
 
@@ -264,9 +287,10 @@ bash scripts/start_competition.sh --cone-avoidance
 终端 B：
 
 ```bash
+export CONE_PLUGIN_WS="$HOME/cone_l2_plugin_ws_2_2_1"
 source /opt/ros/foxy/setup.bash
-source "$HOME/nav2_foxy_overlay_ws/install/setup.bash" 2>/dev/null || true
-source "$REPO/install/setup.bash"
+source "$CONE_PLUGIN_WS/install/local_setup.bash"
+source "$REPO/install/local_setup.bash"
 export ROS_DOMAIN_ID=0
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 
@@ -279,9 +303,9 @@ ros2 topic info /cmd_vel --verbose \
   | tee "$EVIDENCE/l3d_cmd_vel_qos.txt"
 timeout 20 ros2 topic hz /cone_obstacle/scan \
   | tee "$EVIDENCE/l3d_scan_hz.txt"
-timeout 10 ros2 topic echo --once /cone_obstacle/scan \
+timeout 3 ros2 topic echo /cone_obstacle/scan \
   | tee "$EVIDENCE/l3d_scan_once.txt"
-timeout 10 ros2 topic echo --once /cone_obstacle/health \
+timeout 3 ros2 topic echo /cone_obstacle/health \
   | tee "$EVIDENCE/l3d_health_once.txt"
 ```
 
@@ -313,12 +337,15 @@ docker exec "$CN" bash -lc \
 先记录净空基线，并开始 rosbag：
 
 ```bash
-timeout 10 ros2 topic echo --once /local_costmap/costmap_raw/data \
-  | tee "$EVIDENCE/local_clear_before.txt"
-timeout 10 ros2 topic echo --once /global_costmap/costmap_raw/data \
-  | tee "$EVIDENCE/global_before.txt"
+python3 scripts/cone_costmap_snapshot.py \
+  --topic /local_costmap/costmap_raw \
+  --output "$EVIDENCE/local_clear_before.json"
+python3 scripts/cone_costmap_snapshot.py \
+  --topic /global_costmap/costmap_raw \
+  --output "$EVIDENCE/global_before.json"
 
 ros2 bag record -o "$EVIDENCE/cone_costmap_timing" \
+  --qos-profile-overrides-path configs/ros/cone_rosbag_qos.yaml \
   /cone_acceptance/marker \
   /cone_obstacle/scan \
   /cone_obstacle/health \
@@ -326,6 +353,8 @@ ros2 bag record -o "$EVIDENCE/cone_costmap_timing" \
   /local_costmap/costmap_raw \
   /global_costmap/costmap_raw
 ```
+
+`/cone_obstacle/scan` 发布端使用 `BEST_EFFORT`。必须显式加载上述 QoS 覆盖；否则 Foxy rosbag2 可能创建该话题但实际记录 0 条消息。停止录包后用 `ros2 bag info` 核对六个话题的消息数均大于 0，并对 SQLite 执行 `PRAGMA integrity_check`。
 
 另开终端，按下列顺序操作，每次保持至少 5 秒：
 
@@ -340,12 +369,21 @@ ros2 topic pub --once /cone_acceptance/marker std_msgs/msg/String "{data: CONE_O
 停止 rosbag 后保存最终快照：
 
 ```bash
-timeout 10 ros2 topic echo --once /local_costmap/costmap_raw/data \
-  | tee "$EVIDENCE/local_clear_after.txt"
-timeout 10 ros2 topic echo --once /global_costmap/costmap_raw/data \
-  | tee "$EVIDENCE/global_after.txt"
-sha256sum "$EVIDENCE/global_before.txt" "$EVIDENCE/global_after.txt" \
-  | tee "$EVIDENCE/global_hashes.txt"
+python3 scripts/cone_costmap_snapshot.py \
+  --topic /local_costmap/costmap_raw \
+  --output "$EVIDENCE/local_clear_after.json"
+python3 scripts/cone_costmap_snapshot.py \
+  --topic /global_costmap/costmap_raw \
+  --output "$EVIDENCE/global_after.json"
+
+python3 - "$EVIDENCE/global_before.json" "$EVIDENCE/global_after.json" <<'PY'
+import json
+import sys
+
+before, after = (json.load(open(path, encoding="utf-8")) for path in sys.argv[1:])
+assert before["data_sha256"] == after["data_sha256"], "global costmap data changed"
+print("global_data_sha256=%s" % before["data_sha256"])
+PY
 ```
 
 必须从 bag/RViz 同时确认：
@@ -354,7 +392,7 @@ sha256sum "$EVIDENCE/global_before.txt" "$EVIDENCE/global_after.txt" \
 - 锥桶移出并出现健康 clear scan 后，local 动态标记在 1 秒内消失。该清除来自 `NonPersistentVoxelLayer` 每周期重置，不依赖 raytrace clearing。
 - 首次 `healthy=true` 到第三个连续健康帧之前，gate 不得 `allowed=true`。
 - 记录首次 local 标记与首次 `allowed=true` 的时间差。若存在锥桶时 gate 已放行，但 local costmap 在随后一个 5 Hz 更新周期内仍未标记，判 NO-GO。
-- `global_before.txt` 与 `global_after.txt` 的 data 内容一致；header 时间变化不参与比较。
+- `global_before.json` 与 `global_after.json` 的 `data_sha256` 一致；header 时间不参与哈希。
 
 ## 8. D455 静态 A/B 资源对比
 
@@ -402,18 +440,27 @@ docker stats --no-stream \
 
 ## 9. 清理
 
+L3-D 不调用通用 `stop_all.sh`，因为该脚本会向速度话题短暂发布零 `Twist`，不符合本验收的“完全不发布速度”证据边界。应在启动终端对本轮 launcher 发送 `Ctrl+C`/`SIGINT`，等待其子节点退出；随后只停止本轮新建的精确容器名，并恢复验收前暂时停止的 D455 服务。
+
 ```bash
-cd "$REPO"
-bash scripts/stop_all.sh
-pkill -f 'cone_scan_l2_l3_probe.py' 2>/dev/null || true
+# STACK_PID 是启动 L3-D 时保存的本轮 launcher PID。
+kill -INT "$STACK_PID"
+wait "$STACK_PID" || true
+
+# 只处理启动前后容器差集确认出的本轮容器，不使用模糊名称批量删除。
+docker stop -t 20 "$L3D_CONTAINER" 2>/dev/null || true
+docker rm "$L3D_CONTAINER" 2>/dev/null || true
+
+# 如果验收前临时停止了历史 D455 服务，恢复同一个既有容器。
+docker start d455_yolo_repro_20260811
 
 pgrep -af 'cone_scan|pointcloud_to_laserscan|transfer|motion_sender|cmd_vel_bridge|task_manager' \
   | tee "$EVIDENCE/processes_after_cleanup.txt"
-docker ps --format '{{.Names}}' | grep cuvslam \
+docker ps --format '{{.Names}}' | grep -F "$L3D_CONTAINER" \
   | tee "$EVIDENCE/containers_after_cleanup.txt"
 ```
 
-两个 cleanup 文件都应为空。若不为空，先保存 PID/日志并人工处理，不能直接进入运动测试。
+两个 cleanup 文件都应为空。然后验证历史 D455 容器 ID、镜像、命令、网络模式和 restart policy 与验收前一致，并分别测量 color/depth 频率。若不为空或恢复校验失败，先保存 PID/日志并人工处理，不能直接进入运动测试。
 
 ## 10. Go/No-Go
 

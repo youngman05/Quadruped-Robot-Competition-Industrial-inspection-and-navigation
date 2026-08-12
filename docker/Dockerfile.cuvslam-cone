@@ -1,0 +1,8 @@
+ARG BASE_IMAGE=isaac_ros_cuvslam_runtime:humble-rs
+FROM ${BASE_IMAGE}
+
+ARG POINTCLOUD_TO_LASERSCAN_VERSION=2.0.1-3focal.20231003.024830
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ros-humble-pointcloud-to-laserscan=${POINTCLOUD_TO_LASERSCAN_VERSION} \
+ && rm -rf /var/lib/apt/lists/*

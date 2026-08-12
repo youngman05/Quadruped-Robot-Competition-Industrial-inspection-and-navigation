@@ -184,6 +184,7 @@ class ConeL2L3ContractTests(unittest.TestCase):
             "three_frame_warmup",
             "/cone_l3/cmd_out",
             "ros2 topic hz /cone_obstacle/scan",
+            "cone_costmap_snapshot.py",
             "/local_costmap/costmap_raw",
             "/global_costmap/costmap_raw",
             "首次 local 标记",
@@ -229,6 +230,44 @@ class ConeL2L3ContractTests(unittest.TestCase):
             'source "$HOME/nav2_foxy_overlay_ws/install/setup.bash"',
             l2_section,
         )
+
+    def test_runbook_l3d_uses_pinned_cone_image_and_foxy_compatible_echo(self):
+        source = RUNBOOK_PATH.read_text(encoding="utf-8")
+        l3d_section = source.split("## 6. L3-D", 1)[1]
+        self.assertIn("docker/Dockerfile.cuvslam-cone", source)
+        self.assertIn("docker run --rm --network none", source)
+        self.assertIn('source "$CONE_PLUGIN_WS/install/local_setup.bash"', l3d_section)
+        self.assertNotIn(
+            'source "$HOME/nav2_foxy_overlay_ws/install/setup.bash"',
+            l3d_section,
+        )
+        self.assertNotIn("ros2 topic echo --once", l3d_section)
+        self.assertNotIn("/costmap_raw/data", l3d_section)
+        self.assertIn('before["data_sha256"] == after["data_sha256"]', l3d_section)
+
+    def test_runbook_records_best_effort_scan_with_explicit_rosbag_qos(self):
+        source = RUNBOOK_PATH.read_text(encoding="utf-8")
+        qos_path = REPO_ROOT / "configs" / "ros" / "cone_rosbag_qos.yaml"
+        qos = qos_path.read_text(encoding="utf-8")
+        self.assertIn(
+            "--qos-profile-overrides-path configs/ros/cone_rosbag_qos.yaml",
+            source,
+        )
+        self.assertIn("/cone_obstacle/scan:", qos)
+        self.assertIn("reliability: best_effort", qos)
+        self.assertIn("durability: volatile", qos)
+        self.assertIn("Foxy rosbag2", source)
+        self.assertIn("PRAGMA integrity_check", source)
+
+    def test_runbook_l3d_cleanup_does_not_publish_zero_twist(self):
+        source = RUNBOOK_PATH.read_text(encoding="utf-8")
+        cleanup = source.split("## 9. 清理", 1)[1].split("## 10. Go/No-Go", 1)[0]
+        self.assertNotIn("stop_all.sh", "\n".join(
+            line for line in cleanup.splitlines() if not line.startswith("L3-D 不调用")
+        ))
+        self.assertIn('kill -INT "$STACK_PID"', cleanup)
+        self.assertIn("恢复同一个既有容器", cleanup)
+        self.assertIn("完全不发布速度", cleanup)
 
 
 if __name__ == "__main__":

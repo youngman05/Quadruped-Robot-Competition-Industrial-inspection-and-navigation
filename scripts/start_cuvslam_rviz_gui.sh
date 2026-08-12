@@ -316,6 +316,14 @@ wait_for_topic() {
   done
 }
 
+check_cone_image_dependencies() {
+  docker run --rm --network none "$IMAGE" bash -lc \
+    "source /opt/ros/humble/setup.bash && \
+     ros2 pkg prefix pointcloud_to_laserscan >/dev/null && \
+     ros2 pkg executables pointcloud_to_laserscan | \
+       grep -F 'pointcloud_to_laserscan pointcloud_to_laserscan_node' >/dev/null"
+}
+
 write_rviz_config() {
   cat >"$RVIZ_CONFIG" <<RVIZ
 Panels:
@@ -883,6 +891,12 @@ fi
 [[ -d "$ISAAC_WS" ]] || die "Isaac ROS workspace not found: $ISAAC_WS"
 [[ -f "$ISAAC_WS/install/setup.bash" ]] || die "Missing install/setup.bash in $ISAAC_WS"
 docker image inspect "$IMAGE" >/dev/null 2>&1 || die "Docker image not found: $IMAGE"
+case "${CONE_AVOIDANCE_ENABLE,,}" in
+  1|true|yes|on)
+    check_cone_image_dependencies || \
+      die "Cone Docker image lacks pointcloud_to_laserscan: $IMAGE. Build docker/Dockerfile.cuvslam-cone or set IMAGE to an equivalent pinned image."
+    ;;
+esac
 
 if [[ "$SKIP_INPUT_TEST" -eq 0 ]]; then
   INPUT_VALIDATOR_SRC=""
