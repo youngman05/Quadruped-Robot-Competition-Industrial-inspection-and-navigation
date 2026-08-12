@@ -10,6 +10,7 @@ from nodes.navigation.cone_scan_protocol import (
     depth_coverage_is_healthy,
     encode_packet,
     filter_short_finite_runs,
+    scan_observation_is_healthy,
     scan_returns_are_healthy,
 )
 
@@ -80,11 +81,14 @@ class ConeScanProtocolTests(unittest.TestCase):
         self.assertFalse(depth_coverage_is_healthy(empty))
         self.assertFalse(depth_coverage_is_healthy(single))
 
-    def test_empty_scan_and_flying_points_are_unhealthy(self):
+    def test_empty_scan_is_clear_but_flying_points_are_unhealthy(self):
         self.assertFalse(scan_returns_are_healthy([math.inf] * 180))
+        self.assertTrue(scan_observation_is_healthy([math.inf] * 180))
         self.assertFalse(scan_returns_are_healthy([math.inf, 0.5, math.inf]))
+        self.assertFalse(scan_observation_is_healthy([math.inf, 0.5, math.inf]))
         self.assertFalse(scan_returns_are_healthy([0.5, math.inf, 0.6, 0.7]))
         self.assertTrue(scan_returns_are_healthy([math.inf, 0.5, 0.6, 0.7]))
+        self.assertTrue(scan_observation_is_healthy([math.inf, 0.5, 0.6, 0.7]))
 
     def test_short_flying_point_runs_are_removed(self):
         actual = filter_short_finite_runs(

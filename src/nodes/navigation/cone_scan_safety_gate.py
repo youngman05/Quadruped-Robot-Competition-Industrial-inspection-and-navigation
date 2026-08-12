@@ -32,7 +32,9 @@ class ConeScanSafetyGate(Node):
         self.declare_parameter("output_rate_hz", 40.0)
         self.declare_parameter("status_rate_hz", 5.0)
         self.declare_parameter("command_timeout_sec", 0.35)
-        self.declare_parameter("health_timeout_sec", 0.25)
+        # At 40 Hz, a 0.20 s lease leaves one 25 ms output tick plus
+        # scheduling margin inside the externally claimed 250 ms deadline.
+        self.declare_parameter("health_timeout_sec", 0.20)
         self.declare_parameter("required_consecutive_frames", 3)
 
         output_rate = max(5.0, float(self.get_parameter("output_rate_hz").value))

@@ -301,3 +301,19 @@ def scan_returns_are_healthy(
 ) -> bool:
     """Reject empty scans and isolated flying points."""
     return longest_finite_run(ranges) >= max(2, int(min_contiguous_beams))
+
+
+def scan_observation_is_healthy(
+    ranges: Iterable[float],
+    min_contiguous_beams: int = 3,
+) -> bool:
+    """Accept a clear scan, but reject finite returns shorter than the threshold.
+
+    A healthy depth image with no finite LaserScan returns is a valid clear-space
+    observation.  Once any finite return exists, it must contain a contiguous run
+    long enough to represent an obstacle rather than a flying pixel.
+    """
+    values = tuple(float(value) for value in ranges)
+    if not any(math.isfinite(value) for value in values):
+        return True
+    return scan_returns_are_healthy(values, min_contiguous_beams)

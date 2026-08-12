@@ -19,7 +19,7 @@ from nodes.navigation.cone_scan_protocol import (
     decode_packet,
     depth_coverage_is_healthy,
     longest_finite_run,
-    scan_returns_are_healthy,
+    scan_observation_is_healthy,
 )
 
 try:
@@ -201,11 +201,11 @@ class ConeScanUdpBridge(Node):
         ):
             self._reject("decimated depth coverage is unhealthy", packet)
             return
-        if not scan_returns_are_healthy(
+        if not scan_observation_is_healthy(
             packet.ranges,
             min_contiguous_beams=self._min_contiguous_beams,
         ):
-            self._reject("scan has no contiguous obstacle returns", packet)
+            self._reject("scan has only isolated or short finite returns", packet)
             return
         if not packet.depth_healthy:
             self._reject("source health flag is false", packet)

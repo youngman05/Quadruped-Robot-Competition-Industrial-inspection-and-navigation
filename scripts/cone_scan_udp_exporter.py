@@ -29,7 +29,7 @@ try:
         encode_packet,
         filter_short_finite_runs,
         longest_finite_run,
-        scan_returns_are_healthy,
+        scan_observation_is_healthy,
     )
 except ImportError:
     from nodes.navigation.cone_scan_protocol import (
@@ -40,7 +40,7 @@ except ImportError:
         encode_packet,
         filter_short_finite_runs,
         longest_finite_run,
-        scan_returns_are_healthy,
+        scan_observation_is_healthy,
     )
 
 
@@ -147,8 +147,9 @@ def main(args=None) -> None:
         sequence += 1
         scan_stamp_ns = stamp_ns(msg)
         coverage = (0.0, 0.0, 0.0, 0.0)
+        raw_ranges = normalized_ranges(msg)
         ranges = filter_short_finite_runs(
-            normalized_ranges(msg),
+            raw_ranges,
             min_contiguous_beams=cli.min_contiguous_beams,
         )
         finite_run = longest_finite_run(ranges)
@@ -167,7 +168,7 @@ def main(args=None) -> None:
                     min_valid_ratio=cli.min_valid_ratio,
                     min_zone_ratio=cli.min_zone_ratio,
                 )
-                and scan_returns_are_healthy(
+                and scan_observation_is_healthy(
                     ranges,
                     min_contiguous_beams=cli.min_contiguous_beams,
                 )
