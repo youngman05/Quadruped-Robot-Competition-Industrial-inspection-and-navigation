@@ -92,6 +92,8 @@ class FormalStartupChainContractTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertLess(self.script.index(token), banner)
         self.assertIn('echo "NO-GO: $*"', self.script)
+        self.assertIn('docker stop -t 10 "$RUNTIME_CUVSLAM_CONTAINER"', self.script)
+        self.assertIn('snapshot_value "runtime_cuvslam_container"', self.script)
         self.assertNotIn("✅ 启动完成!", self.script)
 
     def test_official_parameters_and_gate_defaults_remain_frozen(self):

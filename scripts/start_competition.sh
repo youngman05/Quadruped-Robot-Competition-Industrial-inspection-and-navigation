@@ -17,6 +17,8 @@ exec > >(tee -a "$LOGFILE") 2>&1
 echo "日志: $LOGFILE"
 trap 'echo ""; echo "Ctrl+C → 清理..."; bash scripts/stop_all.sh' INT TERM
 STARTUP_RUNTIME_TOUCHED=false
+RUNTIME_STARTED_CUVSLAM=false
+RUNTIME_CUVSLAM_CONTAINER=""
 
 startup_no_go() {
     echo "NO-GO: $*"
@@ -24,6 +26,10 @@ startup_no_go() {
     if ${STARTUP_RUNTIME_TOUCHED:-false}; then
         echo " 清理已启动的正式栈..."
         bash scripts/stop_all.sh >/dev/null 2>&1 || true
+    fi
+    if ${RUNTIME_STARTED_CUVSLAM:-false} && [ -n "${RUNTIME_CUVSLAM_CONTAINER:-}" ]; then
+        echo " 停止本轮 cuVSLAM 容器: $RUNTIME_CUVSLAM_CONTAINER"
+        docker stop -t 10 "$RUNTIME_CUVSLAM_CONTAINER" >/dev/null 2>&1 || true
     fi
     exit 1
 }
@@ -225,6 +231,10 @@ if [ -z "$CN" ]; then
         echo " ❌ Docker 启动超时"
         exit 1
     fi
+    RUNTIME_STARTED_CUVSLAM=true
+    RUNTIME_CUVSLAM_CONTAINER="$(docker inspect --format '{{.Id}}' "$CN" 2>/dev/null)" \
+        || startup_no_go "cannot record the new cuVSLAM container identity"
+    snapshot_value "runtime_cuvslam_container" "$RUNTIME_CUVSLAM_CONTAINER"
     echo " Docker 容器已启动，等待 cuVSLAM 初始化..."
     # 等待视觉 SLAM 开始追踪
     for i in $(seq 1 30); do
