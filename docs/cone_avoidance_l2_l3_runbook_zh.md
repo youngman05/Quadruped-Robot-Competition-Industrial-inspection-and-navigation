@@ -1,6 +1,6 @@
 # 锥桶避障 L2/L3 无执行器验收规程
 
-> 状态：本地仅完成 L0/L1。本文中的 Jetson 结果在实际执行并保存证据前均不得标记为通过。
+> 状态：L0/L1 与 Jetson L2 已完成；L3-S、L3-D 尚未执行。L2 证据目录为 `/home/superwfx666/competition_logs/cone_l2_l3/20260812_164907_phase94_l2`。
 
 本文用于在不连接 Lite3 执行链路、不发送导航目标的条件下，依次验证 Foxy 插件加载、隔离 UDP/ROS 故障注入、D455 实际扫描、速度门、local costmap 标记/清除和资源开销。L4 机器狗运动不在本文范围内。
 
@@ -61,32 +61,47 @@ test ! -s "$EVIDENCE/forbidden_processes_before.txt" \
 
 ## 4. L2：依赖、构建与插件加载
 
+本次验收使用固定的独立插件 overlay。不得 source 现有的 `nav2_foxy_overlay_ws/install/setup.bash`，因为它可能把旧仓库 install 前缀重新注入 `AMENT_PREFIX_PATH`。
+
+```bash
+export CONE_PLUGIN_WS="$HOME/cone_l2_plugin_ws_2_2_1"
+test -f "$CONE_PLUGIN_WS/install/local_setup.bash" \
+  || { echo "STOP: pinned NonPersistentVoxelLayer overlay is missing"; exit 1; }
+```
+
 ### 4.1 记录 Foxy 与插件来源
 
 ```bash
+export CONE_PLUGIN_WS="$HOME/cone_l2_plugin_ws_2_2_1"
 source /opt/ros/foxy/setup.bash
-source "$HOME/nav2_foxy_overlay_ws/install/setup.bash" 2>/dev/null || true
+source "$CONE_PLUGIN_WS/install/local_setup.bash"
 
 ros2 pkg prefix nav2_costmap_2d | tee "$EVIDENCE/nav2_costmap_prefix.txt"
+ros2 pkg prefix nonpersistent_voxel_layer \
+  | tee "$EVIDENCE/nonpersistent_voxel_layer_prefix.txt"
 dpkg-query -W 'ros-foxy-nav2-*' 2>/dev/null \
   | sort | tee "$EVIDENCE/nav2_packages.txt"
 
-NAV2_PREFIX="$(ros2 pkg prefix nav2_costmap_2d)"
-grep -R -n 'NonPersistentVoxelLayer' "$NAV2_PREFIX/share/nav2_costmap_2d" \
+PLUGIN_PREFIX="$(ros2 pkg prefix nonpersistent_voxel_layer)"
+grep -R -n 'nav2_costmap_2d/NonPersistentVoxelLayer' \
+  "$PLUGIN_PREFIX/share/nonpersistent_voxel_layer" \
   | tee "$EVIDENCE/nonpersistent_plugin.txt"
 test -s "$EVIDENCE/nonpersistent_plugin.txt" \
   || { echo "STOP: NonPersistentVoxelLayer is not installed"; exit 1; }
 ```
 
-这里以插件 XML 中实际存在 `nav2_costmap_2d/NonPersistentVoxelLayer` 为准，不能只根据 apt 包名推断已安装。
+`nonpersistent_voxel_layer` 是独立 ROS 包，不是 `nav2_costmap_2d` share 目录中的内置类。这里以独立包的插件 XML 中实际存在 `nav2_costmap_2d/NonPersistentVoxelLayer` 为准，不能只根据 apt 包名或系统 `nav2_costmap_2d` 版本推断已安装。
 
 ### 4.2 构建并核对安装路径
 
 ```bash
 cd "$REPO"
+export CONE_PLUGIN_WS="$HOME/cone_l2_plugin_ws_2_2_1"
+source /opt/ros/foxy/setup.bash
+source "$CONE_PLUGIN_WS/install/local_setup.bash"
 colcon build --symlink-install --packages-select quadruped_robot_competition \
   2>&1 | tee "$EVIDENCE/colcon_build.log"
-source install/setup.bash
+source install/local_setup.bash
 
 ros2 pkg executables quadruped_robot_competition \
   | tee "$EVIDENCE/package_executables.txt"
@@ -111,9 +126,10 @@ PY
 
 ```bash
 cd "$REPO"
+export CONE_PLUGIN_WS="$HOME/cone_l2_plugin_ws_2_2_1"
 source /opt/ros/foxy/setup.bash
-source "$HOME/nav2_foxy_overlay_ws/install/setup.bash" 2>/dev/null || true
-source install/setup.bash
+source "$CONE_PLUGIN_WS/install/local_setup.bash"
+source install/local_setup.bash
 export ROS_DOMAIN_ID=93
 export ROS_LOCALHOST_ONLY=1
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
@@ -128,9 +144,10 @@ ros2 run nav2_controller controller_server --ros-args \
 终端 B：
 
 ```bash
+export CONE_PLUGIN_WS="$HOME/cone_l2_plugin_ws_2_2_1"
 source /opt/ros/foxy/setup.bash
-source "$HOME/nav2_foxy_overlay_ws/install/setup.bash" 2>/dev/null || true
-source "$REPO/install/setup.bash"
+source "$CONE_PLUGIN_WS/install/local_setup.bash"
+source "$REPO/install/local_setup.bash"
 export ROS_DOMAIN_ID=93
 export ROS_LOCALHOST_ONLY=1
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp

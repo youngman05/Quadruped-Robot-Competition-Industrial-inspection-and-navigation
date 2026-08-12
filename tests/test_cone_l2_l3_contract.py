@@ -207,6 +207,29 @@ class ConeL2L3ContractTests(unittest.TestCase):
         self.assertNotIn("--cmd-vel-bridge", "\n".join(command_lines))
         self.assertIn("不调用 `/navigate_to_pose`", source)
 
+    def test_runbook_discovers_nonpersistent_voxel_layer_as_its_own_package(self):
+        source = RUNBOOK_PATH.read_text(encoding="utf-8")
+        self.assertIn("ros2 pkg prefix nonpersistent_voxel_layer", source)
+        self.assertIn(
+            '"$PLUGIN_PREFIX/share/nonpersistent_voxel_layer"', source
+        )
+        self.assertIn("是独立 ROS 包", source)
+        self.assertNotIn(
+            'grep -R -n \'NonPersistentVoxelLayer\' "$NAV2_PREFIX/share/nav2_costmap_2d"',
+            source,
+        )
+
+    def test_runbook_l2_uses_the_isolated_plugin_overlay(self):
+        source = RUNBOOK_PATH.read_text(encoding="utf-8")
+        l2_section = source.split("## 4. L2", 1)[1].split("## 5. L3-S", 1)[0]
+        self.assertIn('export CONE_PLUGIN_WS="$HOME/cone_l2_plugin_ws_2_2_1"', l2_section)
+        self.assertIn('source "$CONE_PLUGIN_WS/install/local_setup.bash"', l2_section)
+        self.assertIn('source "$REPO/install/local_setup.bash"', l2_section)
+        self.assertNotIn(
+            'source "$HOME/nav2_foxy_overlay_ws/install/setup.bash"',
+            l2_section,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
