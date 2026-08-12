@@ -22,6 +22,9 @@ from launch_ros.substitutions import FindPackageShare
 # ─── 路径 ────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PARAMS_FILE = PROJECT_ROOT / "configs" / "ros" / "competition_params.yaml"
+DEFAULT_CONE_PARAMS = (
+    PROJECT_ROOT / "configs" / "navigation" / "nav2_cone_obstacles.yaml"
+)
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -36,6 +39,7 @@ def generate_launch_description() -> LaunchDescription:
     enable_depth_publisher = LaunchConfiguration("enable_depth_publisher", default="false")
     enable_depth_pipeline = LaunchConfiguration("enable_depth_pipeline", default="false")
     enable_cone_avoidance = LaunchConfiguration("enable_cone_avoidance", default="false")
+    cone_params_file = LaunchConfiguration("cone_params_file")
     depth_frames_dir = LaunchConfiguration("depth_frames_dir")
     enable_whz = LaunchConfiguration("enable_whz", default="false")
     whz_rtsp_url = LaunchConfiguration("whz_rtsp_url")
@@ -96,6 +100,11 @@ def generate_launch_description() -> LaunchDescription:
         "enable_cone_avoidance",
         default_value="false",
         description="启动 D455 LaserScan UDP、本地锥桶代价层和 fail-closed 速度门。默认关闭。",
+    )
+    declare_cone_params_file = DeclareLaunchArgument(
+        "cone_params_file",
+        default_value=str(DEFAULT_CONE_PARAMS),
+        description="锥桶模式 Nav2 参数 overlay；默认使用已验收正式配置。",
     )
     declare_enable_whz = DeclareLaunchArgument(
         "enable_whz", default_value="false",
@@ -287,6 +296,7 @@ def generate_launch_description() -> LaunchDescription:
             "enable_depth_pipeline": enable_depth_pipeline,
             "depth_frames_dir": depth_frames_dir,
             "enable_cone_avoidance": enable_cone_avoidance,
+            "cone_params_file": cone_params_file,
         }.items(),
         condition=IfCondition(enable_navigation),
     )
@@ -324,6 +334,7 @@ def generate_launch_description() -> LaunchDescription:
         declare_enable_depth_pipeline,
         declare_depth_frames_dir,
         declare_enable_cone_avoidance,
+        declare_cone_params_file,
         declare_enable_whz,
         declare_whz_rtsp_url,
         declare_whz_model_path,

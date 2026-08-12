@@ -67,6 +67,14 @@ if $ENABLE_DEPTH_PIPELINE || $ENABLE_CONE_AVOIDANCE; then
     export CUVSLAM_ENABLE_DEPTH="${CUVSLAM_ENABLE_DEPTH:-true}"
 fi
 export CONE_AVOIDANCE_ENABLE="$ENABLE_CONE_AVOIDANCE"
+CONE_NAV2_PARAMS_FILE="${CONE_NAV2_PARAMS_FILE:-$PROJECT_ROOT/configs/navigation/nav2_cone_obstacles.yaml}"
+if $ENABLE_CONE_AVOIDANCE && [ ! -f "$CONE_NAV2_PARAMS_FILE" ]; then
+    echo "ERROR: cone Nav2 parameter overlay not found: $CONE_NAV2_PARAMS_FILE"
+    exit 2
+fi
+if $ENABLE_CONE_AVOIDANCE; then
+    echo " Cone Nav2 params: $CONE_NAV2_PARAMS_FILE"
+fi
 CUVSLAM_DOCKER_DOMAIN_ID="${CUVSLAM_DOCKER_DOMAIN_ID:-0}"
 if $ENABLE_CONE_AVOIDANCE; then
     CUVSLAM_DOCKER_DOMAIN_ID="${CONE_DOCKER_ROS_DOMAIN_ID:-42}"
@@ -288,6 +296,7 @@ ros2 launch quadruped_robot_competition competition.launch.py \
   enable_depth_publisher:=false \
   enable_depth_pipeline:=$ENABLE_DEPTH_PIPELINE \
   enable_cone_avoidance:=$ENABLE_CONE_AVOIDANCE \
+  cone_params_file:="$CONE_NAV2_PARAMS_FILE" \
   enable_yolo:=$YF enable_whz:=$WF \
   auto_advance:=$AUTO_ADVANCE > /tmp/competition.log 2>&1 &
 COMP_PID=$!

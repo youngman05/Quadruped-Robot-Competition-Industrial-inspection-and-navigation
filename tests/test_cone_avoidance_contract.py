@@ -1,3 +1,6 @@
+import shutil
+import subprocess
+import os
 import unittest
 from pathlib import Path
 
@@ -8,6 +11,9 @@ COMPETITION_START = REPO_ROOT / "scripts" / "start_competition.sh"
 NAV_LAUNCH = REPO_ROOT / "launch" / "navigation.launch.py"
 COMP_LAUNCH = REPO_ROOT / "launch" / "competition.launch.py"
 CONE_PARAMS = REPO_ROOT / "configs" / "navigation" / "nav2_cone_obstacles.yaml"
+CONE_EXPERIMENT_PARAMS = (
+    REPO_ROOT / "configs" / "navigation" / "nav2_cone_obstacles_experimental.yaml"
+)
 BASE_PARAMS = REPO_ROOT / "configs" / "navigation" / "nav2_params.yaml"
 CONE_DOCKERFILE = REPO_ROOT / "docker" / "Dockerfile.cuvslam-cone"
 
@@ -27,7 +33,7 @@ class ConeAvoidanceContractTests(unittest.TestCase):
         ):
             self.assertIn(token, source)
 
-    def test_overlay_is_local_only_nonpersistent_laserscan(self):
+    def test_overlay_is_local_only_buffered_nonpersistent_laserscan(self):
         overlay = CONE_PARAMS.read_text(encoding="utf-8")
         self.assertIn("local_costmap:", overlay)
         self.assertNotIn("global_costmap:", overlay)
@@ -37,8 +43,83 @@ class ConeAvoidanceContractTests(unittest.TestCase):
         self.assertIn("origin_z: 0.0", overlay)
         self.assertIn("min_obstacle_height: 0.0", overlay)
         self.assertIn("obstacle_range: 2.50", overlay)
+        self.assertIn("observation_persistence: 1.5", overlay)
+        self.assertIn("cost_scaling_factor: 3.0", overlay)
+        self.assertIn("inflation_radius: 0.30", overlay)
         self.assertNotIn("obstacle_max_range", overlay)
         self.assertNotIn("PointCloud2", overlay)
+
+    def test_scan_min_height_is_validated_snapshotted_and_generated(self):
+        source = CUVSLAM_START.read_text(encoding="utf-8")
+        for token in (
+            'CONE_SCAN_MIN_HEIGHT="${CONE_SCAN_MIN_HEIGHT:-0.05}"',
+            "require_decimal_in_half_open_range",
+            '"CONE_SCAN_MIN_HEIGHT" "$CONE_SCAN_MIN_HEIGHT" 0.0 1.20',
+            "'min_height': ${CONE_SCAN_MIN_HEIGHT}",
+            "CONE_SCAN_MIN_HEIGHT=$CONE_SCAN_MIN_HEIGHT",
+            'validate_generated_python "$CUVSLAM_LAUNCH" "$CUVSLAM_LAUNCH_RUNNER"',
+        ):
+            self.assertIn(token, source)
+
+    def test_scan_min_height_rejects_invalid_values_before_runtime_checks(self):
+        bash = shutil.which("bash")
+        if bash is None and os.name == "nt":
+            candidate = Path(r"C:\Program Files\Git\bin\bash.exe")
+            if candidate.is_file():
+                bash = str(candidate)
+        if bash is None:
+            self.skipTest("bash is required to execute launcher validation")
+        env = dict(os.environ)
+        for value in (
+            "-0.01",
+            "1.20",
+            "1e-1",
+            "0",
+            "00.05",
+            "0.05;raise SystemExit()",
+        ):
+            env["CONE_SCAN_MIN_HEIGHT"] = value
+            result = subprocess.run(
+                [bash, str(CUVSLAM_START), "--no-rviz"],
+                cwd=REPO_ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("CONE_SCAN_MIN_HEIGHT must", result.stderr)
+
+    def test_experimental_tuning_is_cone_only_and_never_default(self):
+        official = CONE_PARAMS.read_text(encoding="utf-8")
+        experiment = CONE_EXPERIMENT_PARAMS.read_text(encoding="utf-8")
+        nav_launch = NAV_LAUNCH.read_text(encoding="utf-8")
+        competition_launch = COMP_LAUNCH.read_text(encoding="utf-8")
+        competition_start = COMPETITION_START.read_text(encoding="utf-8")
+
+        experiment_only_tokens = (
+            "inflation_radius: 0.45",
+            "cost_scaling_factor: 2.0",
+            "ObstacleFootprint.scale: 0.05",
+            "PathAlign.scale: 16.0",
+            "PathDist.scale: 16.0",
+        )
+        for token in experiment_only_tokens:
+            self.assertIn(token, experiment)
+            self.assertNotIn(token, official)
+        self.assertIn("observation_persistence: 1.5", official)
+        self.assertIn("observation_persistence: 1.5", experiment)
+        self.assertNotIn("global_costmap:", experiment)
+        self.assertIn('"nav2_cone_obstacles.yaml"', nav_launch)
+        self.assertNotIn("nav2_cone_obstacles_experimental.yaml", nav_launch)
+        self.assertIn('"cone_params_file": cone_params_file', competition_launch)
+        self.assertIn(
+            'CONE_NAV2_PARAMS_FILE="${CONE_NAV2_PARAMS_FILE:-$PROJECT_ROOT/configs/navigation/nav2_cone_obstacles.yaml}"',
+            competition_start,
+        )
+        self.assertIn('echo " Cone Nav2 params: $CONE_NAV2_PARAMS_FILE"', competition_start)
+        self.assertNotIn("nav2_cone_obstacles_experimental.yaml", competition_start)
 
     def test_stable_base_global_costmap_remains_static(self):
         base = BASE_PARAMS.read_text(encoding="utf-8")

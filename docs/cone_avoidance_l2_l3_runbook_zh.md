@@ -376,23 +376,34 @@ python3 scripts/cone_costmap_snapshot.py \
   --topic /global_costmap/costmap_raw \
   --output "$EVIDENCE/global_after.json"
 
-python3 - "$EVIDENCE/global_before.json" "$EVIDENCE/global_after.json" <<'PY'
+python3 - \
+  "$EVIDENCE/local_clear_before.json" "$EVIDENCE/local_clear_after.json" \
+  "$EVIDENCE/global_before.json" "$EVIDENCE/global_after.json" <<'PY'
 import json
 import sys
 
-before, after = (json.load(open(path, encoding="utf-8")) for path in sys.argv[1:])
-assert before["data_sha256"] == after["data_sha256"], "global costmap data changed"
-print("global_data_sha256=%s" % before["data_sha256"])
+local_before, local_after, global_before, global_after = (
+    json.load(open(path, encoding="utf-8")) for path in sys.argv[1:]
+)
+assert local_before["data_sha256"] == local_after["data_sha256"], \
+    "stationary local costmap did not return to its clear baseline"
+assert global_before["data_sha256"] == global_after["data_sha256"], \
+    "global costmap data changed"
+print("local_clear_data_sha256=%s" % local_before["data_sha256"])
+print("global_data_sha256=%s" % global_before["data_sha256"])
 PY
 ```
 
 必须从 bag/RViz 同时确认：
 
 - 锥桶进入后，local costmap 在对应方向产生致命/膨胀代价；global costmap 不新增锥桶。
-- 锥桶移出并出现健康 clear scan 后，local 动态标记在 1 秒内消失。该清除来自 `NonPersistentVoxelLayer` 每周期重置，不依赖 raytrace clearing。
+- `CONE_OUT` 只是人工操作标记，不作为清除计时起点。离线从 bag 中找出最后一帧仍含锥桶聚类的 `/cone_obstacle/scan` source timestamp，并用对应 `/cone_obstacle/health` 的 `sequence/source_timestamp_ns` 交叉确认；从该时刻计到第一帧不再含该锥桶动态连通区的已发布 local costmap。
+- 正式 `observation_persistence=1.5 s`；初始清除合同为上述实测间隔不超过 `2.5 s`，其中包含 5 Hz costmap 更新、2 Hz 发布和调度余量。至少记录实测值，积累重复数据后才能收紧阈值，不能从首个 clear scan 或 `CONE_OUT` 直接推算通过。
+- `NonPersistentVoxelLayer` 仍每周期重置；1.5 s 缓冲中的观测会在重置后重新标记，完全过期后才消失，不依赖 raytrace clearing。
 - 首次 `healthy=true` 到第三个连续健康帧之前，gate 不得 `allowed=true`。
 - 记录首次 local 标记与首次 `allowed=true` 的时间差。若存在锥桶时 gate 已放行，但 local costmap 在随后一个 5 Hz 更新周期内仍未标记，判 NO-GO。
 - `global_before.json` 与 `global_after.json` 的 `data_sha256` 一致；header 时间不参与哈希。
+- 在机器狗和相机全程静止、且 observation buffer 完全过期后，`local_clear_before.json` 与 `local_clear_after.json` 的 `data_sha256` 也必须一致。后续运动中的 rolling local costmap 不使用逐字节哈希，应改看致命格数量、连通区域和空间位置。
 
 ## 8. D455 静态 A/B 资源对比
 
@@ -474,7 +485,7 @@ docker ps --format '{{.Names}}' | grep -F "$L3D_CONTAINER" \
 | 故障关闭 | CRC、时间戳、序号、几何、深度、断流均归零，最大延迟不超过 250 ms |
 | 恢复 | 新 stream 与初始 stream 都必须重新累计 3 个健康帧 |
 | D455 图 | 单一 owner，180 束 `base_link` scan 不低于 8 Hz，source age 小于 250 ms |
-| costmap | local 正确标记并在 1 秒内清除，global data 不变 |
+| costmap | local 正确标记；从最后一帧含锥 source timestamp 起不超过 2.5 秒清除；静止 local clear hash 回归基线；global data 不变 |
 | 时序 | 3 帧前不放行；存在锥桶时 local 标记不得落后放行超过一个 5 Hz 更新周期 |
 | 资源 | 无 OOM/持续降频，cuVSLAM 频率下降不超过 10%，scan/health 稳定 |
 | 执行器 | 全程无 Lite3 驱动、无 goal、`/cmd_vel` 无执行器订阅者 |

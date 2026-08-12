@@ -40,6 +40,7 @@ CONE_SCAN_UDP_PORT="${CONE_SCAN_UDP_PORT:-19002}"
 CONE_SCAN_POINTCLOUD_TOPIC="${CONE_SCAN_POINTCLOUD_TOPIC:-/camera/depth/color/points}"
 CONE_SCAN_DEPTH_TOPIC="${CONE_SCAN_DEPTH_TOPIC:-/camera/depth/image_rect_raw}"
 CONE_SCAN_TARGET_FRAME="${CONE_SCAN_TARGET_FRAME:-base_link}"
+CONE_SCAN_MIN_HEIGHT="${CONE_SCAN_MIN_HEIGHT:-0.05}"
 CUVSLAM_PROFILE="${CUVSLAM_PROFILE:-planar_60fps}"
 CUVSLAM_IMAGE_JITTER_THRESHOLD_MS="${CUVSLAM_IMAGE_JITTER_THRESHOLD_MS:-${CUVSLAM_IMG_JITTER_THRESHOLD_MS:-22.0}}"
 CUVSLAM_IMG_JITTER_THRESHOLD_MS="$CUVSLAM_IMAGE_JITTER_THRESHOLD_MS"
@@ -119,6 +120,7 @@ Environment overrides:
   CONE_SCAN_POINTCLOUD_TOPIC   RealSense pointcloud topic. Default: /camera/depth/color/points
   CONE_SCAN_DEPTH_TOPIC        Decimated depth health topic. Default: /camera/depth/image_rect_raw
   CONE_SCAN_TARGET_FRAME       pointcloud_to_laserscan target frame. Default: base_link
+  CONE_SCAN_MIN_HEIGHT         Scan point minimum height in target frame, in [0.0, 1.20). Default: 0.05
   CUVSLAM_PUBLISH_BASE_TO_CAMERA_TF  Publish base_link->camera_link TF. Auto by mount mode.
   CUVSLAM_BASE_TO_CAMERA_X/Y/Z/ROLL/PITCH/YAW  base_link->camera_link static TF
   ENABLE_SLAM_VISUALIZATION    Publish SLAM visualization topics. Default: true
@@ -193,6 +195,16 @@ require_integer_in_range() {
     die "$name must be in [$minimum, $maximum]: $value"
 }
 
+require_decimal_in_half_open_range() {
+  local name="$1" value="$2" minimum="$3" maximum="$4"
+  [[ "$value" =~ ^(0|[1-9][0-9]*)[.][0-9]+$ ]] || \
+    die "$name must be an unsigned decimal number: $value"
+  LC_ALL=C awk -v candidate="$value" -v lower="$minimum" -v upper="$maximum" \
+    'BEGIN { exit !(candidate >= lower && candidate < upper) }' || \
+    die "$name must be in [$minimum, $maximum): $value"
+}
+
+need_cmd awk
 require_integer_in_range \
   "SLAM_DIAGNOSTICS_METRICS_PERIOD_MS" "$SLAM_DIAGNOSTICS_METRICS_PERIOD_MS" 10 1000
 require_integer_in_range \
@@ -200,6 +212,8 @@ require_integer_in_range \
 require_integer_in_range \
   "SLAM_DIAGNOSTICS_MAX_ITEMS_COUNT" "$SLAM_DIAGNOSTICS_MAX_ITEMS_COUNT" 1 65536
 require_integer_in_range "CONE_SCAN_UDP_PORT" "$CONE_SCAN_UDP_PORT" 1024 65535
+require_decimal_in_half_open_range \
+  "CONE_SCAN_MIN_HEIGHT" "$CONE_SCAN_MIN_HEIGHT" 0.0 1.20
 if (( SLAM_DIAGNOSTICS_GRAPH_PERIOD_MS < SLAM_DIAGNOSTICS_METRICS_PERIOD_MS )); then
   die "SLAM_DIAGNOSTICS_GRAPH_PERIOD_MS must be >= SLAM_DIAGNOSTICS_METRICS_PERIOD_MS"
 fi
@@ -769,7 +783,7 @@ def generate_launch_description():
                 parameters=[{
                     'target_frame': '${CONE_SCAN_TARGET_FRAME}',
                     'transform_tolerance': 0.05,
-                    'min_height': 0.05,
+                    'min_height': ${CONE_SCAN_MIN_HEIGHT},
                     'max_height': 1.20,
                     'angle_min': -0.785398163,
                     'angle_max': 0.785398163,
@@ -882,8 +896,21 @@ if __name__ == '__main__':
 PY
 }
 
+validate_generated_python() {
+  python3 - "$@" <<'PY'
+import ast
+from pathlib import Path
+import sys
+
+for raw_path in sys.argv[1:]:
+    path = Path(raw_path)
+    ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+PY
+}
+
 need_cmd docker
 need_cmd date
+need_cmd python3
 
 if [[ "$SKIP_RVIZ" -eq 0 ]]; then
   [[ -n "${DISPLAY:-}" ]] || die "DISPLAY is empty. Run this from the Jetson desktop, VNC, or NoMachine terminal, or pass --no-rviz."
@@ -978,10 +1005,12 @@ CONE_SCAN_UDP_PORT=$CONE_SCAN_UDP_PORT
 CONE_SCAN_POINTCLOUD_TOPIC=$CONE_SCAN_POINTCLOUD_TOPIC
 CONE_SCAN_DEPTH_TOPIC=$CONE_SCAN_DEPTH_TOPIC
 CONE_SCAN_TARGET_FRAME=$CONE_SCAN_TARGET_FRAME
+CONE_SCAN_MIN_HEIGHT=$CONE_SCAN_MIN_HEIGHT
 EOF
 write_rviz_config
 write_cuvslam_launch
 write_cuvslam_launch_runner
+validate_generated_python "$CUVSLAM_LAUNCH" "$CUVSLAM_LAUNCH_RUNNER"
 
 if [[ "$DEBUG_DUMP" == "1" ]]; then
   mkdir -p "$LOG_DIR/debug_dump"
@@ -1084,6 +1113,7 @@ echo "CUVSLAM_ENABLE_IMU_FUSION=$CUVSLAM_ENABLE_IMU_FUSION"
 echo "CUVSLAM_REALSENSE_PUBLISH_TF=$CUVSLAM_REALSENSE_PUBLISH_TF"
 echo "CONE_AVOIDANCE_ENABLE=$CONE_AVOIDANCE_ENABLE"
 echo "CONE_SCAN_UDP_TARGET=$CONE_SCAN_UDP_HOST:$CONE_SCAN_UDP_PORT"
+echo "CONE_SCAN_MIN_HEIGHT=$CONE_SCAN_MIN_HEIGHT"
 echo "ENABLE_SLAM_DIAGNOSTICS=$ENABLE_SLAM_DIAGNOSTICS"
 echo "SLAM_DIAGNOSTICS_PATH=/logs/cuvslam_slam_diagnostics.jsonl"
 echo "SLAM_DIAGNOSTICS_METRICS_PERIOD_MS=$SLAM_DIAGNOSTICS_METRICS_PERIOD_MS"

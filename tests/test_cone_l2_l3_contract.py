@@ -243,7 +243,10 @@ class ConeL2L3ContractTests(unittest.TestCase):
         )
         self.assertNotIn("ros2 topic echo --once", l3d_section)
         self.assertNotIn("/costmap_raw/data", l3d_section)
-        self.assertIn('before["data_sha256"] == after["data_sha256"]', l3d_section)
+        self.assertIn(
+            'global_before["data_sha256"] == global_after["data_sha256"]',
+            l3d_section,
+        )
 
     def test_runbook_records_best_effort_scan_with_explicit_rosbag_qos(self):
         source = RUNBOOK_PATH.read_text(encoding="utf-8")
@@ -258,6 +261,23 @@ class ConeL2L3ContractTests(unittest.TestCase):
         self.assertIn("durability: volatile", qos)
         self.assertIn("Foxy rosbag2", source)
         self.assertIn("PRAGMA integrity_check", source)
+
+    def test_runbook_times_persistent_clearing_from_source_observation(self):
+        source = RUNBOOK_PATH.read_text(encoding="utf-8")
+        l3d = source.split("## 7. local/global costmap 与时序", 1)[1].split(
+            "## 8. D455 静态 A/B 资源对比", 1
+        )[0]
+        for token in (
+            "最后一帧仍含锥桶聚类",
+            "source_timestamp_ns",
+            "observation_persistence=1.5 s",
+            "2.5 s",
+            'local_before["data_sha256"] == local_after["data_sha256"]',
+            'global_before["data_sha256"] == global_after["data_sha256"]',
+            "rolling local costmap 不使用逐字节哈希",
+        ):
+            self.assertIn(token, l3d)
+        self.assertNotIn("在 1 秒内消失", l3d)
 
     def test_runbook_l3d_cleanup_does_not_publish_zero_twist(self):
         source = RUNBOOK_PATH.read_text(encoding="utf-8")

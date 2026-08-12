@@ -8,6 +8,8 @@ Nav2 导航参数配置。
 |------|------|
 | `nav2_params.yaml` | 已验证的静态地图 Nav2 参数，默认使用 |
 | `nav2_depth_obstacles.yaml` | 可选 D455 点云动态障碍层 overlay，默认不加载 |
+| `nav2_cone_obstacles.yaml` | 锥桶模式正式 local costmap overlay，保留最近 1.5 s 观测 |
+| `nav2_cone_obstacles_experimental.yaml` | L4 单锥调参实验 overlay，默认不加载 |
 | `navigate_terminal_no_replanning.xml` | 终点邻域单次规划 BT；无周期重规划和运动恢复 |
 
 完整航点 probe 默认在距离目标 `0.35m` 时取消周期重规划目标，确认
@@ -35,6 +37,31 @@ ros2 run nav2_map_server map_server \
 ros2 launch nav2_bringup navigation_launch.py \
   params_file:=configs/navigation/nav2_params.yaml
 ```
+
+锥桶实验 overlay 只能在正式配置出现抵近急停或振荡、且现场已满足 L4 安全门后显式选择：
+
+```bash
+CONE_NAV2_PARAMS_FILE="$PWD/configs/navigation/nav2_cone_obstacles_experimental.yaml" \
+  bash scripts/start_competition.sh --cone-avoidance
+```
+
+该实验文件把 cone inflation 设为 `0.45/2.0`，并覆盖 DWB 的
+`PathAlign=16.0`、`PathDist=16.0`、`ObstacleFootprint=0.05`。未设置
+`CONE_NAV2_PARAMS_FILE` 时始终加载正式 `nav2_cone_obstacles.yaml`；静态和 depth
+模式不读取这两个 cone overlay。
+
+`CONE_SCAN_MIN_HEIGHT` 默认保持已验收的 `0.05 m`。`0.12 m` 只作为 L4
+动态清场候选：先遥控原地踏步和低速直行 30 秒，记录 `/cone_obstacle/scan` 与
+local costmap；清场致命格不得超过静止基线 `+10%`，且前方不得出现连续横向标记带。
+同时确认约 `0.75 m` 的 `67 x 32 x 32 cm` 赛题锥桶仍有连续有效 beams，scan
+不低于 8 Hz、health 合同不退化。满足现场安全门后才可这样启动：
+
+```bash
+CONE_SCAN_MIN_HEIGHT=0.12 bash scripts/start_competition.sh --cone-avoidance
+```
+
+地面误检可能仍被视为健康有限回波，因此不能只用
+`/cone_obstacle/safety_gate_status` 的 `allowed` 翻转频次判断是否通过。
 # Real-field waypoint calibration
 
 `waypoints_real.yaml` is a JSON-compatible YAML document so it can be read with
