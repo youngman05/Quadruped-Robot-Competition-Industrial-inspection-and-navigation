@@ -8,7 +8,7 @@ Nav2 导航参数配置。
 |------|------|
 | `nav2_params.yaml` | 已验证的静态地图 Nav2 参数，默认使用 |
 | `nav2_depth_obstacles.yaml` | 可选 D455 点云动态障碍层 overlay，默认不加载 |
-| `nav2_cone_obstacles.yaml` | 锥桶模式正式 local costmap overlay，保留最近 1.5 s 观测 |
+| `nav2_cone_obstacles.yaml` | 锥桶模式正式 controller + 双 costmap overlay，保留最近 1.5 s 观测 |
 | `nav2_cone_obstacles_experimental.yaml` | L4 单锥调参实验 overlay，默认不加载 |
 | `navigate_terminal_no_replanning.xml` | 终点邻域单次规划 BT；无周期重规划和运动恢复 |
 
@@ -19,7 +19,7 @@ Nav2 导航参数配置。
 
 ## 关键参数
 
-- `global_costmap`：静态层加载 PGM 地图，分辨率 0.025m
+- `global_costmap`：基础模式由静态层加载 PGM 地图，分辨率 0.025m；锥桶模式同时加载锥桶层，使 NavFn 直接规划绕行
 - `local_costmap`：默认仅静态层和膨胀层；启用深度 overlay 后增加 VoxelLayer
 - `planner`：NavFn 全局路径规划
 - `controller`：RegulatedPurePursuit 路径跟踪（适合四足）
@@ -45,10 +45,12 @@ CONE_NAV2_PARAMS_FILE="$PWD/configs/navigation/nav2_cone_obstacles_experimental.
   bash scripts/start_competition.sh --cone-avoidance
 ```
 
-该实验文件把 cone inflation 设为 `0.45/2.0`，并覆盖 DWB 的
-`PathAlign=16.0`、`PathDist=16.0`、`ObstacleFootprint=0.05`。未设置
-`CONE_NAV2_PARAMS_FILE` 时始终加载正式 `nav2_cone_obstacles.yaml`；静态和 depth
-模式不读取这两个 cone overlay。
+正式锥桶 overlay 在 local/global costmap 中加载同一锥桶层，并把 DWB 覆盖为
+`ObstacleFootprint=1.0`、`vtheta_samples=21`；仍保持 `min_vel_x=0`、
+`max_vel_y=0`，不在未经真机验证时引入倒退或横移。实验文件保留相同的双
+costmap 和 DWB 安全基线，只额外把 cone inflation 设为 `0.45/2.0`，并覆盖
+`PathAlign=16.0`、`PathDist=16.0`。未设置 `CONE_NAV2_PARAMS_FILE` 时始终加载
+正式 `nav2_cone_obstacles.yaml`；静态和 depth 模式不读取这两个 cone overlay。
 
 `CONE_SCAN_MIN_HEIGHT` 默认保持已验收的 `0.05 m`。`0.12 m` 只作为 L4
 动态清场候选：先遥控原地踏步和低速直行 30 秒，记录 `/cone_obstacle/scan` 与
@@ -149,7 +151,9 @@ tasks.
 
 ## Staged D455 depth pipeline
 
-The competition launch keeps the validated static-only Nav2 path by default.
+The competition launch keeps the validated static-only Nav2 path when neither
+depth nor cone mode is enabled. Cone mode adds the buffered obstacle layer to
+both costmaps so the global planner can route around cones.
 `enable_depth_pipeline:=true` is an explicit opt-in that changes the velocity
 chain to:
 

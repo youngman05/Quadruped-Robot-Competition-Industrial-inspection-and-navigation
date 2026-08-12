@@ -143,7 +143,7 @@ map -> odom -> base_link -> camera_link -> camera_infra*
 
 ### Nav2 导航
 
-导航主线是 **Nav2 + PGM 静态地图 + D455 深度扫描局部避障**。锥桶避障为显式 opt-in：Humble 容器内完成 decimation、点云投影、TF 和高度过滤，只把约 180 束 `LaserScan` 通过 latest-only UDP 送到 Foxy；Host 仅在 local costmap 加载 `NonPersistentVoxelLayer`，global costmap 始终保持静态地图。
+导航主线是 **Nav2 + PGM 静态地图 + D455 深度扫描避障**。锥桶避障为显式 opt-in：Humble 容器内完成 decimation、点云投影、TF 和高度过滤，只把约 180 束 `LaserScan` 通过 latest-only UDP 送到 Foxy；Host 在 local/global costmap 中加载同一个 `NonPersistentVoxelLayer`，使 NavFn 先规划绕开锥桶，再由 DWB 跟踪可行路径。
 
 仓库内相关文件：
 

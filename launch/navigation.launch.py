@@ -6,7 +6,7 @@ from pathlib import Path
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, LogInfo, TimerAction
-from launch.conditions import IfCondition, UnlessCondition
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
@@ -82,14 +82,14 @@ def generate_launch_description() -> LaunchDescription:
         "enable_cone_avoidance",
         default_value="false",
         description=(
-            "Enable latest-only D455 LaserScan UDP, local NonPersistentVoxelLayer, "
+            "Enable latest-only D455 LaserScan UDP, local/global NonPersistentVoxelLayer, "
             "and the fail-closed cone scan velocity gate."
         ),
     )
     declare_cone_params = DeclareLaunchArgument(
         "cone_params_file",
         default_value=DEFAULT_CONE_PARAMS,
-        description="Local-only NonPersistentVoxelLayer parameter overlay.",
+        description="Cone controller and dual-costmap parameter overlay.",
     )
 
     map_server = Node(
@@ -111,7 +111,7 @@ def generate_launch_description() -> LaunchDescription:
         name="planner_server",
         output="screen",
         parameters=[params_file],
-        condition=UnlessCondition(enable_depth_pipeline),
+        condition=IfCondition(static_mode),
     )
     planner_depth = Node(
         package="nav2_planner",
@@ -119,7 +119,15 @@ def generate_launch_description() -> LaunchDescription:
         name="planner_server",
         output="screen",
         parameters=[params_file, depth_params_file],
-        condition=IfCondition(enable_depth_pipeline),
+        condition=IfCondition(depth_mode),
+    )
+    planner_cone = Node(
+        package="nav2_planner",
+        executable="planner_server",
+        name="planner_server",
+        output="screen",
+        parameters=[params_file, cone_params_file],
+        condition=IfCondition(cone_mode),
     )
 
     controller_static = Node(
@@ -275,6 +283,7 @@ def generate_launch_description() -> LaunchDescription:
         cone_scan_safety_gate,
         planner_static,
         planner_depth,
+        planner_cone,
         controller_static,
         controller_depth,
         controller_cone,

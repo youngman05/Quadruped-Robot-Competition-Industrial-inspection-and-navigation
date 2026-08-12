@@ -33,19 +33,25 @@ class ConeAvoidanceContractTests(unittest.TestCase):
         ):
             self.assertIn(token, source)
 
-    def test_overlay_is_local_only_buffered_nonpersistent_laserscan(self):
+    def test_overlay_buffers_cones_in_both_costmaps(self):
         overlay = CONE_PARAMS.read_text(encoding="utf-8")
         self.assertIn("local_costmap:", overlay)
-        self.assertNotIn("global_costmap:", overlay)
-        self.assertIn("nav2_costmap_2d/NonPersistentVoxelLayer", overlay)
-        self.assertIn('topic: "/cone_obstacle/scan"', overlay)
-        self.assertIn('data_type: "LaserScan"', overlay)
-        self.assertIn("origin_z: 0.0", overlay)
-        self.assertIn("min_obstacle_height: 0.0", overlay)
-        self.assertIn("obstacle_range: 2.50", overlay)
-        self.assertIn("observation_persistence: 1.5", overlay)
-        self.assertIn("cost_scaling_factor: 3.0", overlay)
-        self.assertIn("inflation_radius: 0.30", overlay)
+        self.assertIn("global_costmap:", overlay)
+        for token in (
+            'plugins: ["static_layer", "cone_obstacle_layer", "inflation_layer"]',
+            "nav2_costmap_2d/NonPersistentVoxelLayer",
+            'topic: "/cone_obstacle/scan"',
+            'data_type: "LaserScan"',
+            "origin_z: 0.0",
+            "min_obstacle_height: 0.0",
+            "obstacle_range: 2.50",
+            "observation_persistence: 1.5",
+            "cost_scaling_factor: 3.0",
+            "inflation_radius: 0.30",
+        ):
+            self.assertEqual(overlay.count(token), 2, token)
+        self.assertIn("ObstacleFootprint.scale: 1.0", overlay)
+        self.assertIn("vtheta_samples: 21", overlay)
         self.assertNotIn("obstacle_max_range", overlay)
         self.assertNotIn("PointCloud2", overlay)
 
@@ -101,7 +107,6 @@ class ConeAvoidanceContractTests(unittest.TestCase):
         experiment_only_tokens = (
             "inflation_radius: 0.45",
             "cost_scaling_factor: 2.0",
-            "ObstacleFootprint.scale: 0.05",
             "PathAlign.scale: 16.0",
             "PathDist.scale: 16.0",
         )
@@ -110,18 +115,22 @@ class ConeAvoidanceContractTests(unittest.TestCase):
             self.assertNotIn(token, official)
         self.assertIn("observation_persistence: 1.5", official)
         self.assertIn("observation_persistence: 1.5", experiment)
-        self.assertNotIn("global_costmap:", experiment)
+        self.assertIn("global_costmap:", experiment)
+        self.assertIn("ObstacleFootprint.scale: 1.0", experiment)
+        self.assertIn("vtheta_samples: 21", experiment)
         self.assertIn('"nav2_cone_obstacles.yaml"', nav_launch)
         self.assertNotIn("nav2_cone_obstacles_experimental.yaml", nav_launch)
         self.assertIn('"cone_params_file": cone_params_file', competition_launch)
         self.assertIn(
-            'CONE_NAV2_PARAMS_FILE="${CONE_NAV2_PARAMS_FILE:-$PROJECT_ROOT/configs/navigation/nav2_cone_obstacles.yaml}"',
+            'CONE_NAV2_PARAMS_FILE="${CONE_NAV2_PARAMS_FILE:-$OFFICIAL_CONE_NAV2_PARAMS_FILE}"',
             competition_start,
         )
         self.assertIn('echo " Cone Nav2 params: $CONE_NAV2_PARAMS_FILE"', competition_start)
-        self.assertNotIn("nav2_cone_obstacles_experimental.yaml", competition_start)
+        self.assertIn('CONE_NAV2_PROFILE="formal"', competition_start)
+        self.assertIn('CONE_NAV2_PROFILE="experimental"', competition_start)
+        self.assertIn('CONE_EXPECTED_INFLATION_RADIUS="0.45"', competition_start)
 
-    def test_stable_base_global_costmap_remains_static(self):
+    def test_non_cone_base_global_costmap_remains_static(self):
         base = BASE_PARAMS.read_text(encoding="utf-8")
         global_section = base.split("global_costmap:", 1)[1]
         self.assertIn('plugins: ["static_layer", "inflation_layer"]', global_section)
@@ -138,6 +147,11 @@ class ConeAvoidanceContractTests(unittest.TestCase):
             "condition=IfCondition(cone_mode)",
         ):
             self.assertIn(token, nav)
+        planner_cone = nav.split("    planner_cone = Node(", 1)[1].split(
+            "    controller_static = Node(", 1
+        )[0]
+        self.assertIn("parameters=[params_file, cone_params_file]", planner_cone)
+        self.assertIn("condition=IfCondition(cone_mode)", planner_cone)
 
     def test_competition_cone_mode_does_not_publish_host_camera_tf(self):
         source = COMP_LAUNCH.read_text(encoding="utf-8")

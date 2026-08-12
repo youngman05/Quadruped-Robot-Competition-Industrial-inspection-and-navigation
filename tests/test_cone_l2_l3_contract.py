@@ -187,7 +187,7 @@ class ConeL2L3ContractTests(unittest.TestCase):
             "cone_costmap_snapshot.py",
             "/local_costmap/costmap_raw",
             "/global_costmap/costmap_raw",
-            "首次 local 标记",
+            "首次 local/global 标记",
             "tegrastats",
             "250 ms",
             "Go/No-Go",
@@ -244,7 +244,7 @@ class ConeL2L3ContractTests(unittest.TestCase):
         self.assertNotIn("ros2 topic echo --once", l3d_section)
         self.assertNotIn("/costmap_raw/data", l3d_section)
         self.assertIn(
-            'global_before["data_sha256"] == global_after["data_sha256"]',
+            'global_before["data_sha256"] != global_cone["data_sha256"]',
             l3d_section,
         )
 
@@ -272,6 +272,9 @@ class ConeL2L3ContractTests(unittest.TestCase):
             "source_timestamp_ns",
             "observation_persistence=1.5 s",
             "2.5 s",
+            "3.5 s",
+            'local_before["data_sha256"] != local_cone["data_sha256"]',
+            'global_before["data_sha256"] != global_cone["data_sha256"]',
             'local_before["data_sha256"] == local_after["data_sha256"]',
             'global_before["data_sha256"] == global_after["data_sha256"]',
             "rolling local costmap 不使用逐字节哈希",

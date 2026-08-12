@@ -83,6 +83,9 @@ class FormalStartupChainContractTests(unittest.TestCase):
         self.assertIn(
             '[ "$PLUGIN_MAP_REAL" = "$PLUGIN_LIBRARY_REAL" ]', self.script
         )
+        self.assertIn(
+            '[ "$PLANNER_PLUGIN_MAP_REAL" = "$PLUGIN_LIBRARY_REAL" ]', self.script
+        )
         self.assertNotIn(
             "export PYTHONPATH=/opt/ros/foxy/lib/python3.8/site-packages",
             self.script,
@@ -98,6 +101,7 @@ class FormalStartupChainContractTests(unittest.TestCase):
             "RMW_QOS_POLICY_RELIABILITY_)?RELIABLE",
             "cone_startup_health_probe.py",
             "controller_server did not map the pinned",
+            "planner_server did not map the pinned",
         ):
             with self.subTest(token=token):
                 self.assertLess(self.script.index(token), banner)
@@ -106,7 +110,7 @@ class FormalStartupChainContractTests(unittest.TestCase):
         self.assertIn('snapshot_value "runtime_cuvslam_container"', self.script)
         self.assertNotIn("✅ 启动完成!", self.script)
 
-    def test_official_parameters_and_gate_defaults_remain_frozen(self):
+    def test_official_cone_parameters_and_gate_defaults_are_enforced(self):
         base = BASE_PARAMS.read_text(encoding="utf-8")
         cone = CONE_PARAMS.read_text(encoding="utf-8")
         experimental = EXPERIMENTAL_PARAMS.read_text(encoding="utf-8")
@@ -123,9 +127,28 @@ class FormalStartupChainContractTests(unittest.TestCase):
             "ObstacleFootprint.scale: 0.02",
         ):
             self.assertIn(token, base)
+        for token in (
+            "ObstacleFootprint.scale: 1.0",
+            "vtheta_samples: 21",
+            "global_costmap:",
+        ):
+            self.assertIn(token, cone)
+        for token in (
+            "FollowPath.ObstacleFootprint.scale 1.0",
+            "FollowPath.vtheta_samples 21",
+            "FollowPath.min_vel_x 0.0",
+            "FollowPath.max_vel_y 0.0",
+            "/global_costmap/global_costmap cone_obstacle_layer.cone_scan.observation_persistence 1.5",
+        ):
+            self.assertIn(token, self.script)
         self.assertIn('declare_parameter("required_consecutive_frames", 3)', gate)
         self.assertIn('declare_parameter("health_timeout_sec", 0.20)', gate)
-        self.assertNotIn("nav2_cone_obstacles_experimental.yaml", self.script)
+        self.assertIn('CONE_NAV2_PROFILE="formal"', self.script)
+        self.assertIn('CONE_NAV2_PROFILE="experimental"', self.script)
+        self.assertIn(
+            'inflation_layer.inflation_radius "$CONE_EXPECTED_INFLATION_RADIUS"',
+            self.script,
+        )
         self.assertIn("inflation_radius: 0.45", experimental)
 
 

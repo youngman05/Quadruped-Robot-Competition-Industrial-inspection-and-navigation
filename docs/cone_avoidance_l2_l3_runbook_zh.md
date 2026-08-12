@@ -1,8 +1,8 @@
 # 锥桶避障 L2/L3 无执行器验收规程
 
-> 状态：L0/L1、Jetson L2、L3-S 与 L3-D 均已完成，结论为 L3-D GO。L2 证据目录为 `/home/superwfx666/competition_logs/cone_l2_l3/20260812_164907_phase94_l2`，L3-S 证据目录为 `/home/superwfx666/competition_logs/cone_l2_l3/20260812_183742_phase95_l3s`，L3-D 证据目录为 `/home/superwfx666/competition_logs/cone_l2_l3/20260812_185325_phase96_l3d/B3_reconnect_20260812_222610`。
+> 状态：旧 local-only 配置的 L0/L1、Jetson L2、L3-S 与 L3-D 已完成；历史证据目录分别为 `/home/superwfx666/competition_logs/cone_l2_l3/20260812_164907_phase94_l2`、`/home/superwfx666/competition_logs/cone_l2_l3/20260812_183742_phase95_l3s`、`/home/superwfx666/competition_logs/cone_l2_l3/20260812_185325_phase96_l3d/B3_reconnect_20260812_222610`。Phase 103 改为 local/global 双 costmap 后，这些证据不能证明新配置已通过；必须按本文重新完成 L2/L3-D。
 
-本文用于在不连接 Lite3 执行链路、不发送导航目标的条件下，依次验证 Foxy 插件加载、隔离 UDP/ROS 故障注入、D455 实际扫描、速度门、local costmap 标记/清除和资源开销。L4 机器狗运动不在本文范围内。
+本文用于在不连接 Lite3 执行链路、不发送导航目标的条件下，依次验证 Foxy 插件加载、隔离 UDP/ROS 故障注入、D455 实际扫描、速度门、local/global costmap 标记/清除和资源开销。L4 机器狗运动不在本文范围内。
 
 ## 1. 验收分层
 
@@ -10,7 +10,7 @@
 |---|---|---|---|
 | L2 | provenance、依赖、插件发现、controller configure-only | 无速度话题测试命令 | 隔离 L3 |
 | L3-S | 测试域 93、loopback UDP 19012、`/cone_l3/*` 合成扫描 | 仅 `/cone_l3/cmd_out`，且唯一订阅者是探针 | D455 静态 L3-D |
-| L3-D | 真实 D455、Nav2、local costmap，Lite3 驱动保持关闭 | `/cmd_vel` 可以存在，但订阅者必须为 0，不发送 goal | 单独审批 L4 |
+| L3-D | 真实 D455、Nav2、local/global costmap，Lite3 驱动保持关闭 | `/cmd_vel` 可以存在，但订阅者必须为 0，不发送 goal | 单独审批 L4 |
 
 任何一级失败都停止，不得用后一级结果覆盖前一级失败。
 
@@ -143,7 +143,7 @@ PY
 
 ### 4.3 configure-only 加载
 
-此步骤只配置 controller/local costmap，不得执行 `activate`。使用独立 domain 93，避免和生产 domain 0 混图。
+此步骤分别配置 controller/local costmap 与 planner/global costmap，不得执行 `activate`。使用独立 domain 93，避免和生产 domain 0 混图。
 
 终端 A：
 
@@ -161,7 +161,16 @@ ros2 run nav2_controller controller_server --ros-args \
   --params-file "$REPO/configs/navigation/nav2_params.yaml" \
   --params-file "$REPO/configs/navigation/nav2_cone_obstacles.yaml" \
   -r /cmd_vel:=/cone_l2/cmd_vel \
-  2>&1 | tee "$EVIDENCE/l2_controller_configure.log"
+  > "$EVIDENCE/l2_controller_configure.log" 2>&1 &
+CONTROLLER_L2_PID=$!
+
+ros2 run nav2_planner planner_server --ros-args \
+  --params-file "$REPO/configs/navigation/nav2_params.yaml" \
+  --params-file "$REPO/configs/navigation/nav2_cone_obstacles.yaml" \
+  > "$EVIDENCE/l2_planner_configure.log" 2>&1 &
+PLANNER_L2_PID=$!
+
+wait "$CONTROLLER_L2_PID" "$PLANNER_L2_PID"
 ```
 
 终端 B：
@@ -180,16 +189,21 @@ ros2 lifecycle set /controller_server configure
 ros2 lifecycle get /controller_server | tee "$EVIDENCE/l2_lifecycle_state.txt"
 ros2 param get /local_costmap/local_costmap plugins \
   | tee "$EVIDENCE/l2_local_plugins.txt"
+ros2 lifecycle get /planner_server
+ros2 lifecycle set /planner_server configure
+ros2 lifecycle get /planner_server | tee "$EVIDENCE/l2_planner_lifecycle_state.txt"
+ros2 param get /global_costmap/global_costmap plugins \
+  | tee "$EVIDENCE/l2_global_plugins.txt"
 ```
 
 通过条件：
 
-- lifecycle 状态是 `inactive`；严禁执行 `activate`。
-- `plugins` 顺序为 `static_layer`、`cone_obstacle_layer`、`inflation_layer`。
-- 终端 A 没有 pluginlib 类不存在、参数类型错误或进程崩溃。
+- controller_server 与 planner_server 的 lifecycle 状态都是 `inactive`；严禁执行 `activate`。
+- local/global 的 `plugins` 顺序都是 `static_layer`、`cone_obstacle_layer`、`inflation_layer`。
+- 两个进程都没有 pluginlib 类不存在、参数类型错误或进程崩溃。
 - `ros2 topic info /cone_l2/cmd_vel --verbose` 不得出现执行器订阅者。
 
-记录后在终端 B 执行 `ros2 lifecycle set /controller_server shutdown`，再在终端 A 按 `Ctrl+C`。确认 domain 93 中无节点后进入 L3-S。
+记录后在终端 B 对 controller_server 与 planner_server 分别执行 `shutdown`，再在终端 A 按 `Ctrl+C`。确认 domain 93 中无节点后进入 L3-S。
 
 ## 5. L3-S：隔离合成扫描验收
 
@@ -362,7 +376,14 @@ ros2 bag record -o "$EVIDENCE/cone_costmap_timing" \
 ros2 topic pub --once /cone_acceptance/marker std_msgs/msg/String "{data: CLEAR_BEFORE}"
 # 现场人员把单个锥桶放到 D455 正前方约 0.75 m，禁止移动机器人。
 ros2 topic pub --once /cone_acceptance/marker std_msgs/msg/String "{data: CONE_IN}"
-# 保持 5 秒后，把锥桶完全移出视野。
+# 保持 5 秒；锥桶仍在原位时分别保存 local/global cone-in 快照。
+python3 scripts/cone_costmap_snapshot.py \
+  --topic /local_costmap/costmap_raw \
+  --output "$EVIDENCE/local_cone_in.json"
+python3 scripts/cone_costmap_snapshot.py \
+  --topic /global_costmap/costmap_raw \
+  --output "$EVIDENCE/global_cone_in.json"
+# 快照完成后，把锥桶完全移出视野。
 ros2 topic pub --once /cone_acceptance/marker std_msgs/msg/String "{data: CONE_OUT}"
 ```
 
@@ -377,33 +398,37 @@ python3 scripts/cone_costmap_snapshot.py \
   --output "$EVIDENCE/global_after.json"
 
 python3 - \
-  "$EVIDENCE/local_clear_before.json" "$EVIDENCE/local_clear_after.json" \
-  "$EVIDENCE/global_before.json" "$EVIDENCE/global_after.json" <<'PY'
+  "$EVIDENCE/local_clear_before.json" "$EVIDENCE/local_cone_in.json" \
+  "$EVIDENCE/local_clear_after.json" "$EVIDENCE/global_before.json" \
+  "$EVIDENCE/global_cone_in.json" "$EVIDENCE/global_after.json" <<'PY'
 import json
 import sys
 
-local_before, local_after, global_before, global_after = (
+local_before, local_cone, local_after, global_before, global_cone, global_after = (
     json.load(open(path, encoding="utf-8")) for path in sys.argv[1:]
 )
+assert local_before["data_sha256"] != local_cone["data_sha256"], \
+    "local costmap did not add the cone"
+assert global_before["data_sha256"] != global_cone["data_sha256"], \
+    "global costmap did not add the cone"
 assert local_before["data_sha256"] == local_after["data_sha256"], \
     "stationary local costmap did not return to its clear baseline"
 assert global_before["data_sha256"] == global_after["data_sha256"], \
-    "global costmap data changed"
+    "stationary global costmap did not return to its clear baseline"
 print("local_clear_data_sha256=%s" % local_before["data_sha256"])
-print("global_data_sha256=%s" % global_before["data_sha256"])
+print("global_clear_data_sha256=%s" % global_before["data_sha256"])
 PY
 ```
 
 必须从 bag/RViz 同时确认：
 
-- 锥桶进入后，local costmap 在对应方向产生致命/膨胀代价；global costmap 不新增锥桶。
-- `CONE_OUT` 只是人工操作标记，不作为清除计时起点。离线从 bag 中找出最后一帧仍含锥桶聚类的 `/cone_obstacle/scan` source timestamp，并用对应 `/cone_obstacle/health` 的 `sequence/source_timestamp_ns` 交叉确认；从该时刻计到第一帧不再含该锥桶动态连通区的已发布 local costmap。
-- 正式 `observation_persistence=1.5 s`；初始清除合同为上述实测间隔不超过 `2.5 s`，其中包含 5 Hz costmap 更新、2 Hz 发布和调度余量。至少记录实测值，积累重复数据后才能收紧阈值，不能从首个 clear scan 或 `CONE_OUT` 直接推算通过。
+- 锥桶进入后，local/global costmap 都必须在对应方向产生致命/膨胀代价；`global_cone_in.json` 相对 clear baseline 必须变化。这证明 NavFn 能看见锥桶，不等同于已证明物理绕行。
+- `CONE_OUT` 只是人工操作标记，不作为清除计时起点。离线从 bag 中找出最后一帧仍含锥桶聚类的 `/cone_obstacle/scan` source timestamp，并用对应 `/cone_obstacle/health` 的 `sequence/source_timestamp_ns` 交叉确认；分别计到第一帧不再含该锥桶动态连通区的已发布 local/global costmap。
+- 正式 `observation_persistence=1.5 s`。初始清除合同分别为 local 不超过 `2.5 s`（5 Hz 更新、2 Hz 发布）和 global 不超过 `3.5 s`（1 Hz 更新、1 Hz 发布），均包含调度余量。至少记录实测值，积累重复数据后才能收紧阈值，不能从首个 clear scan 或 `CONE_OUT` 直接推算通过。
 - `NonPersistentVoxelLayer` 仍每周期重置；1.5 s 缓冲中的观测会在重置后重新标记，完全过期后才消失，不依赖 raytrace clearing。
 - 首次 `healthy=true` 到第三个连续健康帧之前，gate 不得 `allowed=true`。
-- 记录首次 local 标记与首次 `allowed=true` 的时间差。若存在锥桶时 gate 已放行，但 local costmap 在随后一个 5 Hz 更新周期内仍未标记，判 NO-GO。
-- `global_before.json` 与 `global_after.json` 的 `data_sha256` 一致；header 时间不参与哈希。
-- 在机器狗和相机全程静止、且 observation buffer 完全过期后，`local_clear_before.json` 与 `local_clear_after.json` 的 `data_sha256` 也必须一致。后续运动中的 rolling local costmap 不使用逐字节哈希，应改看致命格数量、连通区域和空间位置。
+- 记录首次 local/global 标记与首次 `allowed=true` 的时间差。若存在锥桶时 gate 已放行，但任一 costmap 在随后一个自身更新周期内仍未标记，判 NO-GO。
+- 在机器狗和相机全程静止、且 observation buffer 完全过期后，local/global clear-before 与 clear-after 的 `data_sha256` 都必须一致；header 时间不参与哈希。后续运动中的 rolling local costmap 不使用逐字节哈希，应改看致命格数量、连通区域和空间位置。
 
 ## 8. D455 静态 A/B 资源对比
 
@@ -485,8 +510,8 @@ docker ps --format '{{.Names}}' | grep -F "$L3D_CONTAINER" \
 | 故障关闭 | CRC、时间戳、序号、几何、深度、断流均归零，最大延迟不超过 250 ms |
 | 恢复 | 新 stream 与初始 stream 都必须重新累计 3 个健康帧 |
 | D455 图 | 单一 owner，180 束 `base_link` scan 不低于 8 Hz，source age 小于 250 ms |
-| costmap | local 正确标记；从最后一帧含锥 source timestamp 起不超过 2.5 秒清除；静止 local clear hash 回归基线；global data 不变 |
-| 时序 | 3 帧前不放行；存在锥桶时 local 标记不得落后放行超过一个 5 Hz 更新周期 |
+| costmap | local/global 均正确标记；从最后一帧含锥 source timestamp 起分别不超过 2.5/3.5 秒清除；静止 clear hash 均回归各自基线 |
+| 时序 | 3 帧前不放行；存在锥桶时任一 costmap 标记不得落后放行超过该 costmap 的一个更新周期 |
 | 资源 | 无 OOM/持续降频，cuVSLAM 频率下降不超过 10%，scan/health 稳定 |
 | 执行器 | 全程无 Lite3 驱动、无 goal、`/cmd_vel` 无执行器订阅者 |
 | 清理 | ROS 进程与 cuVSLAM 容器无残留 |

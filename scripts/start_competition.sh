@@ -90,13 +90,32 @@ if $ENABLE_DEPTH_PIPELINE || $ENABLE_CONE_AVOIDANCE; then
     export CUVSLAM_ENABLE_DEPTH="${CUVSLAM_ENABLE_DEPTH:-true}"
 fi
 export CONE_AVOIDANCE_ENABLE="$ENABLE_CONE_AVOIDANCE"
-CONE_NAV2_PARAMS_FILE="${CONE_NAV2_PARAMS_FILE:-$PROJECT_ROOT/configs/navigation/nav2_cone_obstacles.yaml}"
+OFFICIAL_CONE_NAV2_PARAMS_FILE="$PROJECT_ROOT/configs/navigation/nav2_cone_obstacles.yaml"
+EXPERIMENTAL_CONE_NAV2_PARAMS_FILE="$PROJECT_ROOT/configs/navigation/nav2_cone_obstacles_experimental.yaml"
+CONE_NAV2_PARAMS_FILE="${CONE_NAV2_PARAMS_FILE:-$OFFICIAL_CONE_NAV2_PARAMS_FILE}"
+CONE_NAV2_PROFILE="formal"
+CONE_EXPECTED_INFLATION_RADIUS="0.30"
+CONE_EXPECTED_COST_SCALING_FACTOR="3.0"
+CONE_EXPECTED_PATH_ALIGN_SCALE="32"
+CONE_EXPECTED_PATH_DIST_SCALE="32"
 if $ENABLE_CONE_AVOIDANCE && [ ! -f "$CONE_NAV2_PARAMS_FILE" ]; then
     echo "ERROR: cone Nav2 parameter overlay not found: $CONE_NAV2_PARAMS_FILE"
     exit 2
 fi
 if $ENABLE_CONE_AVOIDANCE; then
+    CONE_NAV2_PARAMS_REAL="$(readlink -f "$CONE_NAV2_PARAMS_FILE")" \
+        || startup_no_go "cannot resolve cone Nav2 parameter overlay: $CONE_NAV2_PARAMS_FILE"
+    EXPERIMENTAL_CONE_NAV2_PARAMS_REAL="$(readlink -f "$EXPERIMENTAL_CONE_NAV2_PARAMS_FILE")" \
+        || startup_no_go "cannot resolve experimental cone overlay"
+    if [ "$CONE_NAV2_PARAMS_REAL" = "$EXPERIMENTAL_CONE_NAV2_PARAMS_REAL" ]; then
+        CONE_NAV2_PROFILE="experimental"
+        CONE_EXPECTED_INFLATION_RADIUS="0.45"
+        CONE_EXPECTED_COST_SCALING_FACTOR="2.0"
+        CONE_EXPECTED_PATH_ALIGN_SCALE="16"
+        CONE_EXPECTED_PATH_DIST_SCALE="16"
+    fi
     echo " Cone Nav2 params: $CONE_NAV2_PARAMS_FILE"
+    echo " Cone Nav2 profile: $CONE_NAV2_PROFILE"
 fi
 CUVSLAM_DOCKER_DOMAIN_ID="${CUVSLAM_DOCKER_DOMAIN_ID:-0}"
 if $ENABLE_CONE_AVOIDANCE; then
@@ -122,6 +141,7 @@ snapshot_value "NAV2_BT_OVERLAY_SETUP" "$NAV2_BT_OVERLAY_SETUP"
 snapshot_value "FORMAL_DEPLOY_SETUP" "$FORMAL_DEPLOY_SETUP"
 snapshot_value "BASE_NAV2_PARAMS_FILE" "$BASE_NAV2_PARAMS_FILE"
 snapshot_value "CONE_NAV2_PARAMS_FILE" "$CONE_NAV2_PARAMS_FILE"
+snapshot_value "CONE_NAV2_PROFILE" "$CONE_NAV2_PROFILE"
 
 [ -f "$FOXY_SETUP" ] || startup_no_go "Foxy setup is missing: $FOXY_SETUP"
 [ -f "$BASE_NAV2_PARAMS_FILE" ] || startup_no_go "base Nav2 params are missing: $BASE_NAV2_PARAMS_FILE"
@@ -585,11 +605,17 @@ if $ENABLE_CONE_AVOIDANCE; then
         || startup_no_go "cone health publisher/subscriber QoS is incomplete or incompatible"
 
     require_numeric_parameter /local_costmap/local_costmap cone_obstacle_layer.cone_scan.observation_persistence 1.5
-    require_numeric_parameter /local_costmap/local_costmap inflation_layer.inflation_radius 0.30
-    require_numeric_parameter /local_costmap/local_costmap inflation_layer.cost_scaling_factor 3.0
-    require_numeric_parameter /controller_server FollowPath.PathAlign.scale 32
-    require_numeric_parameter /controller_server FollowPath.PathDist.scale 32
-    require_numeric_parameter /controller_server FollowPath.ObstacleFootprint.scale 0.02
+    require_numeric_parameter /local_costmap/local_costmap inflation_layer.inflation_radius "$CONE_EXPECTED_INFLATION_RADIUS"
+    require_numeric_parameter /local_costmap/local_costmap inflation_layer.cost_scaling_factor "$CONE_EXPECTED_COST_SCALING_FACTOR"
+    require_numeric_parameter /global_costmap/global_costmap cone_obstacle_layer.cone_scan.observation_persistence 1.5
+    require_numeric_parameter /global_costmap/global_costmap inflation_layer.inflation_radius "$CONE_EXPECTED_INFLATION_RADIUS"
+    require_numeric_parameter /global_costmap/global_costmap inflation_layer.cost_scaling_factor "$CONE_EXPECTED_COST_SCALING_FACTOR"
+    require_numeric_parameter /controller_server FollowPath.PathAlign.scale "$CONE_EXPECTED_PATH_ALIGN_SCALE"
+    require_numeric_parameter /controller_server FollowPath.PathDist.scale "$CONE_EXPECTED_PATH_DIST_SCALE"
+    require_numeric_parameter /controller_server FollowPath.ObstacleFootprint.scale 1.0
+    require_numeric_parameter /controller_server FollowPath.vtheta_samples 21
+    require_numeric_parameter /controller_server FollowPath.min_vel_x 0.0
+    require_numeric_parameter /controller_server FollowPath.max_vel_y 0.0
     require_numeric_parameter /cone_scan_safety_gate required_consecutive_frames 3
     require_numeric_parameter /cone_scan_safety_gate health_timeout_sec 0.20
 
@@ -615,6 +641,29 @@ if $ENABLE_CONE_AVOIDANCE; then
     snapshot_value "controller_server_pid" "$CONTROLLER_PID"
     snapshot_value "controller_plugin_map" "$PLUGIN_MAP"
     snapshot_value "controller_plugin_map_real" "$PLUGIN_MAP_REAL"
+
+    PLANNER_PID=""
+    for proc_cmdline in /proc/[0-9]*/cmdline; do
+        [ -r "$proc_cmdline" ] || continue
+        proc_command="$(tr '\0' ' ' < "$proc_cmdline" 2>/dev/null || true)"
+        case "$proc_command" in
+            *'/nav2_planner/planner_server'*)
+                PLANNER_PID="${proc_cmdline#/proc/}"
+                PLANNER_PID="${PLANNER_PID%/cmdline}"
+                break
+                ;;
+        esac
+    done
+    [ -n "$PLANNER_PID" ] && [ -r "/proc/$PLANNER_PID/maps" ] \
+        || startup_no_go "cannot identify the live planner_server process"
+    PLANNER_PLUGIN_MAP="$(grep -F 'libnonpersistent_voxel_layer_core.so' "/proc/$PLANNER_PID/maps" 2>/dev/null | head -1)"
+    PLANNER_PLUGIN_MAP_PATH="$(printf '%s\n' "$PLANNER_PLUGIN_MAP" | awk '{print $NF}')"
+    PLANNER_PLUGIN_MAP_REAL="$(readlink -f "$PLANNER_PLUGIN_MAP_PATH" 2>/dev/null || true)"
+    [ -n "$PLANNER_PLUGIN_MAP_REAL" ] && [ "$PLANNER_PLUGIN_MAP_REAL" = "$PLUGIN_LIBRARY_REAL" ] \
+        || startup_no_go "planner_server did not map the pinned NonPersistentVoxelLayer library"
+    snapshot_value "planner_server_pid" "$PLANNER_PID"
+    snapshot_value "planner_plugin_map" "$PLANNER_PLUGIN_MAP"
+    snapshot_value "planner_plugin_map_real" "$PLANNER_PLUGIN_MAP_REAL"
 
     HEALTH_PROBE_JSON="$(python3 scripts/cone_startup_health_probe.py \
         --duration-sec "$STARTUP_HEALTH_WINDOW_SEC" \
