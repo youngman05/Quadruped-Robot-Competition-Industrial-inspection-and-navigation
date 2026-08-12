@@ -564,10 +564,10 @@ if $ENABLE_CONE_AVOIDANCE; then
     printf '\n[cone_health_topic_info]\n%s\n' "$HEALTH_INFO" >> "$STARTUP_SNAPSHOT"
     SCAN_PUBLISHERS="$(printf '%s\n' "$SCAN_INFO" | sed -n 's/^Publisher count: //p' | head -1)"
     SCAN_SUBSCRIBERS="$(printf '%s\n' "$SCAN_INFO" | sed -n 's/^Subscription count: //p' | head -1)"
-    SCAN_BEST_EFFORT_ENDPOINTS="$(printf '%s\n' "$SCAN_INFO" | grep -c 'Reliability: BEST_EFFORT' || true)"
+    SCAN_BEST_EFFORT_ENDPOINTS="$(printf '%s\n' "$SCAN_INFO" | grep -Ec 'Reliability: (RMW_QOS_POLICY_RELIABILITY_)?BEST_EFFORT' || true)"
     HEALTH_PUBLISHERS="$(printf '%s\n' "$HEALTH_INFO" | sed -n 's/^Publisher count: //p' | head -1)"
     HEALTH_SUBSCRIBERS="$(printf '%s\n' "$HEALTH_INFO" | sed -n 's/^Subscription count: //p' | head -1)"
-    HEALTH_RELIABLE_ENDPOINTS="$(printf '%s\n' "$HEALTH_INFO" | grep -c 'Reliability: RELIABLE' || true)"
+    HEALTH_RELIABLE_ENDPOINTS="$(printf '%s\n' "$HEALTH_INFO" | grep -Ec 'Reliability: (RMW_QOS_POLICY_RELIABILITY_)?RELIABLE' || true)"
     SCAN_ENDPOINTS=$(( ${SCAN_PUBLISHERS:-0} + ${SCAN_SUBSCRIBERS:-0} ))
     HEALTH_ENDPOINTS=$(( ${HEALTH_PUBLISHERS:-0} + ${HEALTH_SUBSCRIBERS:-0} ))
     [ "${SCAN_PUBLISHERS:-0}" -ge 1 ] && [ "${SCAN_SUBSCRIBERS:-0}" -ge 1 ] \

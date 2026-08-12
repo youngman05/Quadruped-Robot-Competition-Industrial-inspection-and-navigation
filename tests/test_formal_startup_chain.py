@@ -90,8 +90,8 @@ class FormalStartupChainContractTests(unittest.TestCase):
             "LIFECYCLE_NODES=(map_server planner_server controller_server recoveries_server bt_navigator)",
             "ros2 lifecycle get",
             "EXPECTED_CMD_VEL_SUBSCRIBERS",
-            "Reliability: BEST_EFFORT",
-            "Reliability: RELIABLE",
+            "RMW_QOS_POLICY_RELIABILITY_)?BEST_EFFORT",
+            "RMW_QOS_POLICY_RELIABILITY_)?RELIABLE",
             "cone_startup_health_probe.py",
             "controller_server did not map the pinned",
         ):
