@@ -1,6 +1,6 @@
 # 锥桶避障 L2/L3 无执行器验收规程
 
-> 状态：L0/L1 与 Jetson L2 已完成；L3-S、L3-D 尚未执行。L2 证据目录为 `/home/superwfx666/competition_logs/cone_l2_l3/20260812_164907_phase94_l2`。
+> 状态：L0/L1、Jetson L2 与 L3-S 已完成；L3-D 尚未执行。L2 证据目录为 `/home/superwfx666/competition_logs/cone_l2_l3/20260812_164907_phase94_l2`，L3-S 证据目录为 `/home/superwfx666/competition_logs/cone_l2_l3/20260812_183742_phase95_l3s`。
 
 本文用于在不连接 Lite3 执行链路、不发送导航目标的条件下，依次验证 Foxy 插件加载、隔离 UDP/ROS 故障注入、D455 实际扫描、速度门、local costmap 标记/清除和资源开销。L4 机器狗运动不在本文范围内。
 
