@@ -189,6 +189,13 @@ fi
 snapshot_value "nonpersistent_voxel_layer_prefix" "$PLUGIN_PREFIX"
 snapshot_value "plugin_xml" "$PLUGIN_XML"
 snapshot_value "plugin_library" "$PLUGIN_LIBRARY"
+if $ENABLE_CONE_AVOIDANCE; then
+    PLUGIN_LIBRARY_REAL="$(readlink -f "$PLUGIN_LIBRARY")" \
+        || startup_no_go "cannot resolve the pinned plugin library identity"
+    [ -n "$PLUGIN_LIBRARY_REAL" ] && [ -f "$PLUGIN_LIBRARY_REAL" ] \
+        || startup_no_go "pinned plugin library target is missing: $PLUGIN_LIBRARY_REAL"
+    snapshot_value "plugin_library_real" "$PLUGIN_LIBRARY_REAL"
+fi
 snapshot_value "PYTHONPATH" "${PYTHONPATH:-}"
 
 if $ENABLE_CONE_AVOIDANCE; then
@@ -601,10 +608,13 @@ if $ENABLE_CONE_AVOIDANCE; then
     [ -n "$CONTROLLER_PID" ] && [ -r "/proc/$CONTROLLER_PID/maps" ] \
         || startup_no_go "cannot identify the live controller_server process"
     PLUGIN_MAP="$(grep -F 'libnonpersistent_voxel_layer_core.so' "/proc/$CONTROLLER_PID/maps" 2>/dev/null | head -1)"
-    [ -n "$PLUGIN_MAP" ] && printf '%s\n' "$PLUGIN_MAP" | grep -Fq "$PLUGIN_PREFIX" \
+    PLUGIN_MAP_PATH="$(printf '%s\n' "$PLUGIN_MAP" | awk '{print $NF}')"
+    PLUGIN_MAP_REAL="$(readlink -f "$PLUGIN_MAP_PATH" 2>/dev/null || true)"
+    [ -n "$PLUGIN_MAP_REAL" ] && [ "$PLUGIN_MAP_REAL" = "$PLUGIN_LIBRARY_REAL" ] \
         || startup_no_go "controller_server did not map the pinned NonPersistentVoxelLayer library"
     snapshot_value "controller_server_pid" "$CONTROLLER_PID"
     snapshot_value "controller_plugin_map" "$PLUGIN_MAP"
+    snapshot_value "controller_plugin_map_real" "$PLUGIN_MAP_REAL"
 
     HEALTH_PROBE_JSON="$(python3 scripts/cone_startup_health_probe.py \
         --duration-sec "$STARTUP_HEALTH_WINDOW_SEC" \

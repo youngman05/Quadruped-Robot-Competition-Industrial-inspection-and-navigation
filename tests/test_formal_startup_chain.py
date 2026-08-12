@@ -74,11 +74,15 @@ class FormalStartupChainContractTests(unittest.TestCase):
             "nav2_costmap_2d/NonPersistentVoxelLayer",
             "libnonpersistent_voxel_layer_core.so",
             'snapshot_value "plugin_library"',
+            'snapshot_value "plugin_library_real"',
             'pkg_resources.load_entry_point(',
             '"cmd_vel_arbiter", "cone_scan_udp_bridge", "cone_scan_safety_gate"',
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.script)
+        self.assertIn(
+            '[ "$PLUGIN_MAP_REAL" = "$PLUGIN_LIBRARY_REAL" ]', self.script
+        )
         self.assertNotIn(
             "export PYTHONPATH=/opt/ros/foxy/lib/python3.8/site-packages",
             self.script,
