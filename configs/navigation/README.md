@@ -71,8 +71,14 @@ CONE_SCAN_MIN_HEIGHT=0.12 bash scripts/start_competition.sh --cone-avoidance
 # Real-field waypoint calibration
 
 `waypoints_real.yaml` is a JSON-compatible YAML document so it can be read with
-the Python standard library on the Foxy Jetson. The recorder also accepts normal
-block-style YAML when PyYAML is installed.
+the Python standard library on the Foxy Jetson. It now contains the Phase 71
+field-run route against `competition_field_phase1`: segments 1-12 succeeded,
+segment 13 (`placement_C_approach`) aborted, and segment 14 was not sent. The
+map YAML and PGM SHA-256 values are recorded in the calibration metadata.
+
+Use the recorder below only when the physical course, phase-1 map, official
+start convention, or accepted waypoint poses change. The recorder also accepts
+normal block-style YAML when PyYAML is installed.
 
 Start the localization/TF stack without a Nav2 motion output, drive the robot by
 remote control, then run:
@@ -165,10 +171,15 @@ itself. Before any runtime cleanup, Docker start, or ROS launch, it requires:
 - TaskManager navigation and WHZ retries fixed at zero;
 - completion after the four WHZ observations, without entering manipulation.
 
+The repository file currently satisfies the waypoint gate with
+`TASK_EXPECTED_MAP_ID=competition_field_phase1`. This does not claim that the
+complete 14-goal route has passed: Phase 113 consumes only the 9-goal inspection
+route and still requires one supervised moving acceptance run.
+
 No-actuation startup gate:
 
 ```bash
-TASK_EXPECTED_MAP_ID=<current-map-id> \
+TASK_EXPECTED_MAP_ID=competition_field_phase1 \
   bash scripts/start_competition.sh --cone-to-whz-l6
 ```
 

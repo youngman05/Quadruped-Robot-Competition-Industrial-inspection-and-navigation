@@ -1,39 +1,44 @@
 {
   "version": 1,
   "frame_id": "map",
-  "map_id": "",
+  "map_id": "competition_field_phase1",
   "calibration": {
-    "status": "not_calibrated",
-    "updated_at": null
+    "status": "complete",
+    "updated_at": "2026-08-14T04:17:10+08:00",
+    "coordinate_source": "phase71_l6_legacy_pgm_route_presets",
+    "evidence": "Phase 71 supervised field run: route segments 1-12 succeeded; segment 13 aborted and segment 14 was not sent.",
+    "map_yaml": "navi/map/competition_field_phase1.yaml",
+    "map_yaml_sha256": "6993e41e4d057f204fa7d229e25906cf1ccfd4f2cc7c9bee9881851d69ff8ec0",
+    "map_image": "navi/map/competition_field_phase1.pgm",
+    "map_image_sha256": "3540f2abaac8903dd61da70c8ff43ee5c0abf3b33036df1c3576466739692fff"
   },
-  "waypoints": {},
+  "waypoints": {
+    "obstacle_cross_target": {"x": 1.05, "y": 0.75, "yaw": 3.141592653589793, "yaw_deg": 180.0, "action": "transit"},
+    "pos1_left_clear": {"x": 0.6, "y": 2.9, "yaw": 1.5707963267948966, "yaw_deg": 90.0, "action": "transit"},
+    "pos1_middle": {"x": 1.5, "y": 3.25, "yaw": 1.5707963267948966, "yaw_deg": 90.0, "action": "observe_upper_gauge"},
+    "pos2a_upper_right": {"x": 2.6, "y": 4.5, "yaw": 3.141592653589793, "yaw_deg": 180.0, "action": "observe_upper_side"},
+    "upper_corner_clear": {"x": 2.6, "y": 3.25, "yaw": 3.141592653589793, "yaw_deg": 180.0, "action": "transit"},
+    "pos1_middle_turned": {"x": 1.5, "y": 3.25, "yaw": -1.5707963267948966, "yaw_deg": -90.0, "action": "observe_lower_gauge"},
+    "lower_corner_clear": {"x": 2.6, "y": 3.25, "yaw": 3.141592653589793, "yaw_deg": 180.0, "action": "transit"},
+    "pos2b_lower_right": {"x": 2.6, "y": 2.0, "yaw": 3.141592653589793, "yaw_deg": 180.0, "action": "observe_lower_side"},
+    "grab_area_approach": {"x": 3.1, "y": 2.0, "yaw": 0.0, "yaw_deg": 0.0, "action": "grab"},
+    "placement_A_approach": {"x": 3.25, "y": 4.95, "yaw": 1.5707963267948966, "yaw_deg": 90.0, "action": "place_A"},
+    "placement_B_approach": {"x": 3.75, "y": 4.95, "yaw": 1.5707963267948966, "yaw_deg": 90.0, "action": "place_B"},
+    "placement_C_approach": {"x": 4.25, "y": 4.95, "yaw": 1.5707963267948966, "yaw_deg": 90.0, "action": "place_C"},
+    "placement_D_approach": {"x": 4.65, "y": 4.95, "yaw": 1.5707963267948966, "yaw_deg": 90.0, "action": "place_D"}
+  },
   "routes": {
     "inspection_interleaved": [
-      "obstacle_cross_target",
-      "pos1_left_clear",
-      "pos1_middle",
-      "upper_corner_clear",
-      "pos2a_upper_right",
-      "upper_corner_clear",
-      "pos1_middle_turned",
-      "lower_corner_clear",
-      "pos2b_lower_right"
+      "obstacle_cross_target", "pos1_left_clear", "pos1_middle",
+      "upper_corner_clear", "pos2a_upper_right", "upper_corner_clear",
+      "pos1_middle_turned", "lower_corner_clear", "pos2b_lower_right"
     ],
     "full_interleaved": [
-      "obstacle_cross_target",
-      "pos1_left_clear",
-      "pos1_middle",
-      "upper_corner_clear",
-      "pos2a_upper_right",
-      "upper_corner_clear",
-      "pos1_middle_turned",
-      "lower_corner_clear",
-      "pos2b_lower_right",
-      "grab_area_approach",
-      "placement_A_approach",
-      "placement_B_approach",
-      "placement_C_approach",
-      "placement_D_approach"
+      "obstacle_cross_target", "pos1_left_clear", "pos1_middle",
+      "upper_corner_clear", "pos2a_upper_right", "upper_corner_clear",
+      "pos1_middle_turned", "lower_corner_clear", "pos2b_lower_right",
+      "grab_area_approach", "placement_A_approach", "placement_B_approach",
+      "placement_C_approach", "placement_D_approach"
     ]
   }
 }

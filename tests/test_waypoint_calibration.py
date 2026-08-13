@@ -1,4 +1,5 @@
 import json
+import hashlib
 import math
 import sys
 import tempfile
@@ -88,18 +89,48 @@ class WaypointCalibrationTests(unittest.TestCase):
         ):
             resolve_waypoint_route(document, "inspection_interleaved")
 
-    def test_repository_template_is_json_compatible_yaml_and_not_calibrated(self):
+    def test_repository_real_waypoints_are_completed_phase1_route(self):
         path = REPO_ROOT / "configs" / "navigation" / "waypoints_real.yaml"
         document = json.loads(path.read_text(encoding="utf-8"))
 
         self.assertEqual(document["version"], 1)
         self.assertEqual(document["frame_id"], "map")
-        self.assertEqual(document["waypoints"], {})
+        self.assertEqual(document["map_id"], "competition_field_phase1")
+        self.assertEqual(document["calibration"]["status"], "complete")
+        self.assertEqual(
+            document["calibration"]["map_yaml_sha256"],
+            "6993e41e4d057f204fa7d229e25906cf1ccfd4f2cc7c9bee9881851d69ff8ec0",
+        )
+        self.assertEqual(
+            document["calibration"]["map_image_sha256"],
+            "3540f2abaac8903dd61da70c8ff43ee5c0abf3b33036df1c3576466739692fff",
+        )
+        map_dir = REPO_ROOT / "navi" / "map"
+        for metadata_key, filename in (
+            ("map_yaml_sha256", "competition_field_phase1.yaml"),
+            ("map_image_sha256", "competition_field_phase1.pgm"),
+        ):
+            actual_hash = hashlib.sha256((map_dir / filename).read_bytes()).hexdigest()
+            self.assertEqual(document["calibration"][metadata_key], actual_hash)
         self.assertEqual(
             document["routes"]["full_interleaved"],
             list(DEFAULT_FULL_ROUTE),
         )
         self.assertEqual(len(document["routes"]["full_interleaved"]), 14)
+        self.assertEqual(set(document["waypoints"]), set(DEFAULT_FULL_ROUTE))
+
+        goals = resolve_waypoint_route(document, "full_interleaved")
+        self.assertEqual([goal["label"] for goal in goals], list(DEFAULT_FULL_ROUTE))
+
+        preview_path = (
+            REPO_ROOT
+            / "configs"
+            / "navigation"
+            / "waypoints_reordered_preview.yaml"
+        )
+        preview = load_waypoint_document(preview_path)
+        self.assertEqual(document["waypoints"], preview["waypoints"])
+        self.assertEqual(document["routes"], preview["routes"])
 
     def test_reordered_preview_separates_the_same_xy_opposite_yaw_poses(self):
         path = (
