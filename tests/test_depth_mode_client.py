@@ -32,6 +32,9 @@ except ModuleNotFoundError:
             self.__dict__.update(kwargs)
 
     qos_module.QoSProfile = QoSProfile
+    DurabilityPolicy = qos_module.DurabilityPolicy
+    HistoryPolicy = qos_module.HistoryPolicy
+    ReliabilityPolicy = qos_module.ReliabilityPolicy
     rclpy_module = types.ModuleType("rclpy")
     rclpy_module.qos = qos_module
     sys.modules["rclpy"] = rclpy_module
@@ -109,9 +112,9 @@ class DepthModeClientTests(unittest.TestCase):
         node = FakeNode()
         DepthModeClient(node)
         self.assertEqual(node.publisher_qos.depth, 1)
-        self.assertEqual(node.publisher_qos.history.name, "keep_last")
-        self.assertEqual(node.publisher_qos.reliability.name, "reliable")
-        self.assertEqual(node.publisher_qos.durability.name, "transient_local")
+        self.assertEqual(node.publisher_qos.history, HistoryPolicy.KEEP_LAST)
+        self.assertEqual(node.publisher_qos.reliability, ReliabilityPolicy.RELIABLE)
+        self.assertEqual(node.publisher_qos.durability, DurabilityPolicy.TRANSIENT_LOCAL)
 
     def test_request_is_republished_identically_until_end_to_end_ack(self):
         node = FakeNode()
