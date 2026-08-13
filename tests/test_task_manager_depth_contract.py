@@ -5,6 +5,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TASK_MANAGER = REPO_ROOT / "src" / "nodes" / "decision" / "task_manager.py"
 COMPETITION_LAUNCH = REPO_ROOT / "launch" / "competition.launch.py"
+COMPETITION_PARAMS = REPO_ROOT / "configs" / "ros" / "competition_params.yaml"
 
 
 class TaskManagerDepthContractTests(unittest.TestCase):
@@ -34,6 +35,20 @@ class TaskManagerDepthContractTests(unittest.TestCase):
         self.assertIn('declare_parameter("enable_phase2_map_switch", False)', self.source)
         launch_source = COMPETITION_LAUNCH.read_text(encoding="utf-8")
         self.assertIn('"enable_phase2_map_switch": False', launch_source)
+
+    def test_launch_owned_task_parameters_are_not_shadowed_by_node_yaml(self):
+        launch_source = COMPETITION_LAUNCH.read_text(encoding="utf-8")
+        params = COMPETITION_PARAMS.read_text(encoding="utf-8")
+        for parameter in (
+            "auto_advance",
+            "enable_phase2_map_switch",
+            "enable_depth_milestones",
+            "depth_safety_status_topic",
+            "verify_host_odom_after_depth_disable",
+        ):
+            with self.subTest(parameter=parameter):
+                self.assertIn('"' + parameter + '"', launch_source)
+                self.assertNotIn("    " + parameter + ":", params)
 
     def test_task_manager_uses_safe_route_transits_and_approach_names(self):
         for token in (
