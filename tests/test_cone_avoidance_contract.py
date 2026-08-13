@@ -232,9 +232,25 @@ class ConeAvoidanceContractTests(unittest.TestCase):
         source = COMPETITION_START.read_text(encoding="utf-8")
         self.assertIn("CONE_PIPELINE_READY=false", source)
         self.assertIn("for _ in $(seq 1 20); do", source)
-        self.assertIn("timeout 5 ros2 topic list", source)
+        self.assertIn("cone_scan_udp_startup_probe.py", source)
+        self.assertIn('snapshot_value "cone_udp_startup_probe"', source)
         self.assertIn("[c]one_scan_udp_exporter.py", source)
         self.assertIn("CONE_PIPELINE_READY=true", source)
+        self.assertNotIn("timeout 5 ros2 topic list", source)
+
+    def test_runtime_failures_use_identity_scoped_startup_cleanup(self):
+        source = COMPETITION_START.read_text(encoding="utf-8")
+        self.assertIn('RUNTIME_CUVSLAM_WRAPPER_PID=""', source)
+        self.assertIn("RUNTIME_CUVSLAM_WRAPPER_PID=$!", source)
+        self.assertIn('kill -TERM "$RUNTIME_CUVSLAM_WRAPPER_PID"', source)
+        for message in (
+            "Docker startup timed out",
+            "cone avoidance requires the Humble container DDS domain",
+            "cuVSLAM cone UDP pipeline",
+            "Lite3 motion mode preparation failed",
+        ):
+            with self.subTest(message=message):
+                self.assertIn('startup_no_go "' + message, source)
 
     def test_package_installs_bridge_gate_and_nonpersistent_dependency(self):
         setup = (REPO_ROOT / "setup.py").read_text(encoding="utf-8")

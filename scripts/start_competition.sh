@@ -19,6 +19,7 @@ trap 'echo ""; echo "Ctrl+C → 清理..."; bash scripts/stop_all.sh' INT TERM
 STARTUP_RUNTIME_TOUCHED=false
 RUNTIME_STARTED_CUVSLAM=false
 RUNTIME_CUVSLAM_CONTAINER=""
+RUNTIME_CUVSLAM_WRAPPER_PID=""
 
 startup_no_go() {
     echo "NO-GO: $*"
@@ -30,6 +31,12 @@ startup_no_go() {
     if ${RUNTIME_STARTED_CUVSLAM:-false} && [ -n "${RUNTIME_CUVSLAM_CONTAINER:-}" ]; then
         echo " 停止本轮 cuVSLAM 容器: $RUNTIME_CUVSLAM_CONTAINER"
         docker stop -t 10 "$RUNTIME_CUVSLAM_CONTAINER" >/dev/null 2>&1 || true
+    fi
+    if [ -n "${RUNTIME_CUVSLAM_WRAPPER_PID:-}" ]; then
+        kill -TERM "$RUNTIME_CUVSLAM_WRAPPER_PID" >/dev/null 2>&1 || true
+        sleep 1
+        kill -KILL "$RUNTIME_CUVSLAM_WRAPPER_PID" >/dev/null 2>&1 || true
+        wait "$RUNTIME_CUVSLAM_WRAPPER_PID" >/dev/null 2>&1 || true
     fi
     exit 1
 }
@@ -272,6 +279,7 @@ if [ -z "$CN" ]; then
     CUVSLAM_MOUNT_MODE="$CUVSLAM_MOUNT_MODE" CUVSLAM_PROFILE="$CUVSLAM_PROFILE" \
       CUVSLAM_PUBLISH_ODOM_TO_BASE_TF=false CUVSLAM_PUBLISH_MAP_TO_ODOM_TF=false \
       bash scripts/start_cuvslam_rviz_gui.sh --no-rviz > /tmp/cuvslam_start.log 2>&1 &
+    RUNTIME_CUVSLAM_WRAPPER_PID=$!
     # 轮询等待 Docker 容器出现 + cuVSLAM 节点起来
     for i in $(seq 1 60); do
         sleep 3
@@ -280,8 +288,7 @@ if [ -z "$CN" ]; then
         echo -n "."
     done
     if [ -z "$CN" ]; then
-        echo " ❌ Docker 启动超时"
-        exit 1
+        startup_no_go "Docker startup timed out"
     fi
     RUNTIME_STARTED_CUVSLAM=true
     RUNTIME_CUVSLAM_CONTAINER="$(docker inspect --format '{{.Id}}' "$CN" 2>/dev/null)" \
@@ -303,22 +310,21 @@ fi
 if $ENABLE_CONE_AVOIDANCE; then
     CONTAINER_ROS_DOMAIN_ID=$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$CN" 2>/dev/null | sed -n 's/^ROS_DOMAIN_ID=//p' | tail -1)
     if [ -z "$CONTAINER_ROS_DOMAIN_ID" ] || [ "$CONTAINER_ROS_DOMAIN_ID" = "0" ]; then
-        echo "ERROR: cone avoidance requires the Humble container DDS domain to differ from Host Foxy domain 0"
-        exit 1
+        startup_no_go "cone avoidance requires the Humble container DDS domain to differ from Host Foxy domain 0"
     fi
     CONE_PIPELINE_READY=false
     for _ in $(seq 1 20); do
-        if docker exec "$CN" bash -lc \
-          "source /opt/ros/humble/setup.bash && source /workspaces/isaac_ros-dev/install/setup.bash && timeout 5 ros2 topic list 2>/dev/null | grep -Fx '/cone_obstacle/scan_humble' >/dev/null" \
+        if CONE_UDP_PROBE_JSON="$(python3 scripts/cone_scan_udp_startup_probe.py \
+          --host 127.0.0.1 --port 19002 --timeout-sec 2 2>&1)" \
           && docker exec "$CN" pgrep -f '[c]one_scan_udp_exporter.py' >/dev/null; then
             CONE_PIPELINE_READY=true
+            snapshot_value "cone_udp_startup_probe" "$CONE_UDP_PROBE_JSON"
             break
         fi
         sleep 1
     done
     if ! $CONE_PIPELINE_READY; then
-        echo "ERROR: existing cuVSLAM container has no cone scan pipeline; stop it and restart with --cone-avoidance"
-        exit 1
+        startup_no_go "cuVSLAM cone UDP pipeline is not producing a fresh healthy packet: ${CONE_UDP_PROBE_JSON:-no probe result}"
     fi
     echo "  Cone scan: Humble DDS domain $CONTAINER_ROS_DOMAIN_ID -> UDP 127.0.0.1:19002 -> Foxy DDS domain 0"
 fi
@@ -427,9 +433,8 @@ if $ENABLE_DOG; then
                 python3 scripts/prepare_lite3_motion_mode.py > /tmp/prepare_lite3_motion_mode.log 2>&1
                 PREPARE_RC=$?
                 if [ $PREPARE_RC -ne 0 ]; then
-                    echo "  ERROR: Lite3 motion mode 准备失败 (rc=$PREPARE_RC)，log: /tmp/prepare_lite3_motion_mode.log"
                     tail -40 /tmp/prepare_lite3_motion_mode.log 2>/dev/null || true
-                    exit 1
+                    startup_no_go "Lite3 motion mode preparation failed (rc=$PREPARE_RC), log: /tmp/prepare_lite3_motion_mode.log"
                 fi
                 tail -8 /tmp/prepare_lite3_motion_mode.log 2>/dev/null || true
             fi
