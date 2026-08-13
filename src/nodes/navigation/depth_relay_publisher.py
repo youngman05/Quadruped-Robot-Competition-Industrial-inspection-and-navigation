@@ -8,7 +8,13 @@ from pathlib import Path
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import (
+    DurabilityPolicy,
+    HistoryPolicy,
+    QoSProfile,
+    ReliabilityPolicy,
+    qos_profile_sensor_data,
+)
 from sensor_msgs.msg import CameraInfo, Image, PointCloud2, PointField, RegionOfInterest
 from std_msgs.msg import String
 
@@ -96,11 +102,17 @@ class DepthRelayPublisher(Node):
         self._pipeline_status_pub = self.create_publisher(
             String, str(self.get_parameter("pipeline_status_topic").value), 10
         )
+        mode_request_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
         self.create_subscription(
             String,
             str(self.get_parameter("mode_request_topic").value),
             self._on_mode_request,
-            10,
+            mode_request_qos,
         )
         self._active_request = None
         self._controller_status = None

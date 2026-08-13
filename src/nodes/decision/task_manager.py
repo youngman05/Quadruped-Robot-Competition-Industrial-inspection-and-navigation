@@ -1046,6 +1046,8 @@ class TaskManagerNode(Node):
                 "depth transition failed at %s: %s"
                 % (self._depth_pending_milestone, readiness.reason)
             )
+            return False
+        self._depth_mode_client.republish_active_request(mode)
         return False
 
     def _host_odom_ready_after_depth_transition(self, mode) -> bool:

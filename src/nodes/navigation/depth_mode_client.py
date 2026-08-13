@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import time
+from typing import Optional
 
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
 
 from nodes.navigation.depth_contract import DepthMode
@@ -12,6 +14,8 @@ from nodes.navigation.depth_mode import DepthModeCoordinator
 
 
 class DepthModeClient:
+    REQUEST_REPUBLISH_INTERVAL_SEC = 0.5
+
     def __init__(
         self,
         node,
@@ -23,7 +27,13 @@ class DepthModeClient:
     ) -> None:
         self._node = node
         self._coordinator = DepthModeCoordinator(transition_timeout_sec)
-        self._publisher = node.create_publisher(String, request_topic, 10)
+        request_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self._publisher = node.create_publisher(String, request_topic, request_qos)
         self._subscription = node.create_subscription(
             String,
             status_topic,
@@ -44,6 +54,9 @@ class DepthModeClient:
         self.safety_request_id = ""
         self.safety_reason = "waiting for depth safety gate status"
         self.safety_status_time = float("-inf")
+        self._active_request = None
+        self._active_request_payload = ""
+        self._next_republish_at = float("-inf")
 
     @property
     def current_mode(self) -> DepthMode:
@@ -58,9 +71,35 @@ class DepthModeClient:
         self.safety_ready = False
         self.safety_status_time = float("-inf")
         msg = String()
-        msg.data = json.dumps(request, sort_keys=True)
+        self._active_request = dict(request)
+        self._active_request_payload = json.dumps(request, sort_keys=True)
+        msg.data = self._active_request_payload
         self._publisher.publish(msg)
+        self._next_republish_at = (
+            time.monotonic() + self.REQUEST_REPUBLISH_INTERVAL_SEC
+        )
         return request
+
+    def republish_active_request(
+        self,
+        mode: Optional[DepthMode] = None,
+        now: Optional[float] = None,
+    ) -> bool:
+        """Republish the unchanged request while its end-to-end ACK is pending."""
+        if self._active_request is None or not self._active_request_payload:
+            return False
+        if mode is None:
+            mode = DepthMode(self._active_request["requested_mode"])
+        if self.end_to_end_ready(mode):
+            return False
+        now = time.monotonic() if now is None else float(now)
+        if now < self._next_republish_at:
+            return False
+        msg = String()
+        msg.data = self._active_request_payload
+        self._publisher.publish(msg)
+        self._next_republish_at = now + self.REQUEST_REPUBLISH_INTERVAL_SEC
+        return True
 
     def readiness(self):
         return self._coordinator.readiness()

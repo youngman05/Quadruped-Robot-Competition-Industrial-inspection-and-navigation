@@ -22,6 +22,7 @@ class TaskManagerDepthContractTests(unittest.TestCase):
             '"before:grab_area_approach"',
             "self._depth_mode_client.readiness()",
             "self._depth_mode_client.end_to_end_ready(mode)",
+            "self._depth_mode_client.republish_active_request(mode)",
             "self._host_odom_ready_after_depth_transition(mode)",
             'declare_parameter("verify_host_odom_after_depth_disable", True)',
             'declare_parameter("depth_transition_settle_duration_sec", 1.0)',
@@ -30,6 +31,7 @@ class TaskManagerDepthContractTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.source)
         self.assertNotIn("spin_until_future_complete", self.source)
+        self.assertNotIn("time.sleep", self.source)
 
     def test_phase2_map_switch_is_default_off(self):
         self.assertIn('declare_parameter("enable_phase2_map_switch", False)', self.source)
