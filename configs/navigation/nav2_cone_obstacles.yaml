@@ -1,12 +1,20 @@
 # Opt-in Foxy obstacle overlay for the Humble D455 LaserScan UDP bridge.
 # Both costmaps consume the same buffered cone observations so NavFn can plan
 # around cones before DWB reaches a forward-only local minimum.
+#
+# Phase 106 early-avoidance tuning: cones are marked out to the 3.0 m scan
+# ceiling, inflation covers the 0.43 m footprint corner radius so NavFn bends
+# away early, DWB looks 2.5 s ahead, and path attraction is halved so the
+# controller may leave the straight line before it is blocked.
 
 controller_server:
   ros__parameters:
     FollowPath:
       vtheta_samples: 21
       ObstacleFootprint.scale: 1.0
+      sim_time: 2.5
+      PathAlign.scale: 16.0
+      PathDist.scale: 16.0
 
 local_costmap:
   local_costmap:
@@ -34,13 +42,13 @@ local_costmap:
           clearing: false
           min_obstacle_height: 0.0
           max_obstacle_height: 1.20
-          obstacle_range: 2.50
+          obstacle_range: 3.00
           raytrace_range: 3.00
           observation_persistence: 1.5
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.30
+        cost_scaling_factor: 2.0
+        inflation_radius: 0.60
 
 global_costmap:
   global_costmap:
@@ -68,10 +76,10 @@ global_costmap:
           clearing: false
           min_obstacle_height: 0.0
           max_obstacle_height: 1.20
-          obstacle_range: 2.50
+          obstacle_range: 3.00
           raytrace_range: 3.00
           observation_persistence: 1.5
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.30
+        cost_scaling_factor: 2.0
+        inflation_radius: 0.60

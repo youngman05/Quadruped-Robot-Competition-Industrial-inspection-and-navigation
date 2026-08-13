@@ -94,10 +94,11 @@ OFFICIAL_CONE_NAV2_PARAMS_FILE="$PROJECT_ROOT/configs/navigation/nav2_cone_obsta
 EXPERIMENTAL_CONE_NAV2_PARAMS_FILE="$PROJECT_ROOT/configs/navigation/nav2_cone_obstacles_experimental.yaml"
 CONE_NAV2_PARAMS_FILE="${CONE_NAV2_PARAMS_FILE:-$OFFICIAL_CONE_NAV2_PARAMS_FILE}"
 CONE_NAV2_PROFILE="formal"
-CONE_EXPECTED_INFLATION_RADIUS="0.30"
-CONE_EXPECTED_COST_SCALING_FACTOR="3.0"
-CONE_EXPECTED_PATH_ALIGN_SCALE="32"
-CONE_EXPECTED_PATH_DIST_SCALE="32"
+CONE_EXPECTED_INFLATION_RADIUS="0.60"
+CONE_EXPECTED_COST_SCALING_FACTOR="2.0"
+CONE_EXPECTED_PATH_ALIGN_SCALE="16"
+CONE_EXPECTED_PATH_DIST_SCALE="16"
+CONE_EXPECTED_SIM_TIME="2.5"
 if $ENABLE_CONE_AVOIDANCE && [ ! -f "$CONE_NAV2_PARAMS_FILE" ]; then
     echo "ERROR: cone Nav2 parameter overlay not found: $CONE_NAV2_PARAMS_FILE"
     exit 2
@@ -109,10 +110,11 @@ if $ENABLE_CONE_AVOIDANCE; then
         || startup_no_go "cannot resolve experimental cone overlay"
     if [ "$CONE_NAV2_PARAMS_REAL" = "$EXPERIMENTAL_CONE_NAV2_PARAMS_REAL" ]; then
         CONE_NAV2_PROFILE="experimental"
-        CONE_EXPECTED_INFLATION_RADIUS="0.45"
-        CONE_EXPECTED_COST_SCALING_FACTOR="2.0"
-        CONE_EXPECTED_PATH_ALIGN_SCALE="16"
-        CONE_EXPECTED_PATH_DIST_SCALE="16"
+        CONE_EXPECTED_INFLATION_RADIUS="0.75"
+        CONE_EXPECTED_COST_SCALING_FACTOR="1.5"
+        CONE_EXPECTED_PATH_ALIGN_SCALE="12"
+        CONE_EXPECTED_PATH_DIST_SCALE="12"
+        CONE_EXPECTED_SIM_TIME="3.0"
     fi
     echo " Cone Nav2 params: $CONE_NAV2_PARAMS_FILE"
     echo " Cone Nav2 profile: $CONE_NAV2_PROFILE"
@@ -612,6 +614,7 @@ if $ENABLE_CONE_AVOIDANCE; then
     require_numeric_parameter /global_costmap/global_costmap inflation_layer.cost_scaling_factor "$CONE_EXPECTED_COST_SCALING_FACTOR"
     require_numeric_parameter /controller_server FollowPath.PathAlign.scale "$CONE_EXPECTED_PATH_ALIGN_SCALE"
     require_numeric_parameter /controller_server FollowPath.PathDist.scale "$CONE_EXPECTED_PATH_DIST_SCALE"
+    require_numeric_parameter /controller_server FollowPath.sim_time "$CONE_EXPECTED_SIM_TIME"
     require_numeric_parameter /controller_server FollowPath.ObstacleFootprint.scale 1.0
     require_numeric_parameter /controller_server FollowPath.vtheta_samples 21
     require_numeric_parameter /controller_server FollowPath.min_vel_x 0.0

@@ -44,14 +44,17 @@ class ConeAvoidanceContractTests(unittest.TestCase):
             'data_type: "LaserScan"',
             "origin_z: 0.0",
             "min_obstacle_height: 0.0",
-            "obstacle_range: 2.50",
+            "obstacle_range: 3.00",
             "observation_persistence: 1.5",
-            "cost_scaling_factor: 3.0",
-            "inflation_radius: 0.30",
+            "cost_scaling_factor: 2.0",
+            "inflation_radius: 0.60",
         ):
             self.assertEqual(overlay.count(token), 2, token)
         self.assertIn("ObstacleFootprint.scale: 1.0", overlay)
         self.assertIn("vtheta_samples: 21", overlay)
+        self.assertIn("sim_time: 2.5", overlay)
+        self.assertIn("PathAlign.scale: 16.0", overlay)
+        self.assertIn("PathDist.scale: 16.0", overlay)
         self.assertNotIn("obstacle_max_range", overlay)
         self.assertNotIn("PointCloud2", overlay)
 
@@ -105,10 +108,11 @@ class ConeAvoidanceContractTests(unittest.TestCase):
         competition_start = COMPETITION_START.read_text(encoding="utf-8")
 
         experiment_only_tokens = (
-            "inflation_radius: 0.45",
-            "cost_scaling_factor: 2.0",
-            "PathAlign.scale: 16.0",
-            "PathDist.scale: 16.0",
+            "inflation_radius: 0.75",
+            "cost_scaling_factor: 1.5",
+            "PathAlign.scale: 12.0",
+            "PathDist.scale: 12.0",
+            "sim_time: 3.0",
         )
         for token in experiment_only_tokens:
             self.assertIn(token, experiment)
@@ -128,7 +132,7 @@ class ConeAvoidanceContractTests(unittest.TestCase):
         self.assertIn('echo " Cone Nav2 params: $CONE_NAV2_PARAMS_FILE"', competition_start)
         self.assertIn('CONE_NAV2_PROFILE="formal"', competition_start)
         self.assertIn('CONE_NAV2_PROFILE="experimental"', competition_start)
-        self.assertIn('CONE_EXPECTED_INFLATION_RADIUS="0.45"', competition_start)
+        self.assertIn('CONE_EXPECTED_INFLATION_RADIUS="0.75"', competition_start)
 
     def test_non_cone_base_global_costmap_remains_static(self):
         base = BASE_PARAMS.read_text(encoding="utf-8")

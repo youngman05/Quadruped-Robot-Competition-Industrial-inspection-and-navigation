@@ -47,10 +47,14 @@ CONE_NAV2_PARAMS_FILE="$PWD/configs/navigation/nav2_cone_obstacles_experimental.
 
 正式锥桶 overlay 在 local/global costmap 中加载同一锥桶层，并把 DWB 覆盖为
 `ObstacleFootprint=1.0`、`vtheta_samples=21`；仍保持 `min_vel_x=0`、
-`max_vel_y=0`，不在未经真机验证时引入倒退或横移。实验文件保留相同的双
-costmap 和 DWB 安全基线，只额外把 cone inflation 设为 `0.45/2.0`，并覆盖
-`PathAlign=16.0`、`PathDist=16.0`。未设置 `CONE_NAV2_PARAMS_FILE` 时始终加载
-正式 `nav2_cone_obstacles.yaml`；静态和 depth 模式不读取这两个 cone overlay。
+`max_vel_y=0`，不在未经真机验证时引入倒退或横移。Phase 106 起正式 overlay
+面向"提前绕行"：`obstacle_range=3.00`（顶到 scan 链路上限）、inflation
+`0.60/2.0`、`sim_time=2.5`，并覆盖 `PathAlign=16.0`、`PathDist=16.0`，使
+NavFn 提前弯出、DWB 允许提前偏离直线，消除锥桶前原地踏步。实验文件保留相同的双
+costmap 和 DWB 安全基线，是更激进的独立档位：inflation `0.75/1.5`、
+`PathAlign=12.0`、`PathDist=12.0`、`sim_time=3.0`。未设置
+`CONE_NAV2_PARAMS_FILE` 时始终加载正式 `nav2_cone_obstacles.yaml`；静态和
+depth 模式不读取这两个 cone overlay。
 
 `CONE_SCAN_MIN_HEIGHT` 默认保持已验收的 `0.05 m`。`0.12 m` 只作为 L4
 动态清场候选：先遥控原地踏步和低速直行 30 秒，记录 `/cone_obstacle/scan` 与

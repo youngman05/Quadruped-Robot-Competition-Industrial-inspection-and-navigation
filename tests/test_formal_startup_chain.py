@@ -117,8 +117,8 @@ class FormalStartupChainContractTests(unittest.TestCase):
         gate = SAFETY_GATE.read_text(encoding="utf-8")
         for token in (
             "observation_persistence: 1.5",
-            "inflation_radius: 0.30",
-            "cost_scaling_factor: 3.0",
+            "inflation_radius: 0.60",
+            "cost_scaling_factor: 2.0",
         ):
             self.assertIn(token, cone)
         for token in (
@@ -149,7 +149,11 @@ class FormalStartupChainContractTests(unittest.TestCase):
             'inflation_layer.inflation_radius "$CONE_EXPECTED_INFLATION_RADIUS"',
             self.script,
         )
-        self.assertIn("inflation_radius: 0.45", experimental)
+        self.assertIn(
+            'FollowPath.sim_time "$CONE_EXPECTED_SIM_TIME"',
+            self.script,
+        )
+        self.assertIn("inflation_radius: 0.75", experimental)
 
 
 class ConeStartupHealthProbeTests(unittest.TestCase):
