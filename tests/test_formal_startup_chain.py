@@ -141,6 +141,26 @@ class FormalStartupChainContractTests(unittest.TestCase):
             self.script.index("Phase 113 waypoint calibration gate failed"),
             self.script.index("echo '[0/6] 清理旧进程...'"),
         )
+        self.assertIn('"route_goal_count": len(route_goals)', self.script)
+        self.assertIn('"unique_waypoint_count": len(waypoints)', self.script)
+
+    def test_mode_control_clears_only_stale_request_and_status_after_cleanup(self):
+        cleanup = self.script.index("bash scripts/stop_all.sh 2>&1 | tail -3")
+        reset_guard = self.script.index("if $ENABLE_CONE_MODE_CONTROL; then", cleanup)
+        docker = self.script.index("echo '[1/6] Docker cuVSLAM...'")
+        self.assertLess(cleanup, reset_guard)
+        self.assertLess(reset_guard, docker)
+        reset_block = self.script[reset_guard:docker]
+        for token in (
+            "depth_control_request.json",
+            "depth_controller_status.json",
+            'rm -f -- "$DEPTH_CONTROL_REQUEST_FILE" "$DEPTH_CONTROLLER_STATUS_FILE"',
+            'snapshot_value "depth_mode_state_reset_dir"',
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, reset_block)
+        self.assertNotIn("latest_depth.raw", reset_block)
+        self.assertNotIn("latest_depth.json", reset_block)
 
     def test_official_cone_parameters_and_gate_defaults_are_enforced(self):
         base = BASE_PARAMS.read_text(encoding="utf-8")

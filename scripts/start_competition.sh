@@ -286,9 +286,14 @@ import sys
 
 from nodes.navigation.mission_route import MISSION_NAV_WAYPOINTS
 from nodes.navigation.navigation_client import load_calibrated_waypoints
+from nodes.navigation.waypoint_calibration import (
+    load_waypoint_document,
+    resolve_waypoint_route,
+)
 
 path, route, expected_map_id = sys.argv[1:4]
 waypoints = load_calibrated_waypoints(path, route, expected_map_id)
+route_goals = resolve_waypoint_route(load_waypoint_document(path), route)
 missing = sorted(set(MISSION_NAV_WAYPOINTS) - set(waypoints))
 if missing:
     raise SystemExit("route missing required waypoints: %s" % ", ".join(missing))
@@ -296,7 +301,8 @@ print(json.dumps({
     "path": path,
     "route": route,
     "map_id": next(iter(waypoints.values()))["map_id"],
-    "waypoint_count": len(waypoints),
+    "route_goal_count": len(route_goals),
+    "unique_waypoint_count": len(waypoints),
 }, sort_keys=True))
 PY
     )" || startup_no_go "Phase 113 waypoint calibration gate failed"
@@ -331,6 +337,15 @@ echo ''
 echo '[0/6] 清理旧进程...'
 bash scripts/stop_all.sh 2>&1 | tail -3
 sleep 1
+if $ENABLE_CONE_MODE_CONTROL; then
+    DEPTH_SHARED_DIR="${DEPTH_SHARED_DIR:-$HOME/workspaces/isaac_ros-dev/camera_frames}"
+    DEPTH_CONTROL_REQUEST_FILE="$DEPTH_SHARED_DIR/depth_control_request.json"
+    DEPTH_CONTROLLER_STATUS_FILE="$DEPTH_SHARED_DIR/depth_controller_status.json"
+    rm -f -- "$DEPTH_CONTROL_REQUEST_FILE" "$DEPTH_CONTROLLER_STATUS_FILE" \
+        || startup_no_go "cannot clear stale depth mode state under $DEPTH_SHARED_DIR"
+    snapshot_value "depth_mode_state_reset_dir" "$DEPTH_SHARED_DIR"
+    echo "  Cleared stale depth mode request/status state"
+fi
 
 # ═══════════════════════════════════════════
 # [1] Docker cuVSLAM
