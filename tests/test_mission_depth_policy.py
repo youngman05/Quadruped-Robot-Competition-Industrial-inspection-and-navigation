@@ -1,7 +1,7 @@
 import unittest
 
 from nodes.navigation.depth_contract import DepthContractError, DepthMode
-from nodes.navigation.mission_depth_policy import MissionDepthPolicy
+from nodes.navigation.mission_depth_policy import MissionDepthPolicy, StationaryWindow
 
 
 class MissionDepthPolicyTests(unittest.TestCase):
@@ -26,6 +26,18 @@ class MissionDepthPolicyTests(unittest.TestCase):
         policy.waypoint_succeeded("obstacle_cross_target")
         with self.assertRaises(DepthContractError):
             policy.before_waypoint("grab_area_approach")
+
+    def test_depth_transition_requires_continuous_stationary_window(self):
+        window = StationaryWindow(1.0)
+
+        self.assertFalse(window.update(10.0, True))
+        self.assertFalse(window.update(10.8, False))
+        self.assertFalse(window.update(11.0, True))
+        self.assertFalse(window.update(11.9, True))
+        self.assertTrue(window.update(12.0, True))
+
+        window.reset()
+        self.assertFalse(window.update(20.0, True))
 
 
 if __name__ == "__main__":

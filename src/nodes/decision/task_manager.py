@@ -45,7 +45,7 @@ from nodes.navigation.navigation_client import (
 )
 from nodes.navigation.depth_contract import DepthMode
 from nodes.navigation.depth_mode_client import DepthModeClient
-from nodes.navigation.mission_depth_policy import MissionDepthPolicy
+from nodes.navigation.mission_depth_policy import MissionDepthPolicy, StationaryWindow
 from nodes.navigation.mission_route import (
     OBSTACLE_ROUTE,
     inspection_route_steps,
@@ -166,6 +166,9 @@ class TaskManagerNode(Node):
         self.declare_parameter("depth_mode_status_topic", "/depth/mode_status")
         self.declare_parameter("depth_safety_status_topic", "/depth/safety_gate_status")
         self.declare_parameter("depth_transition_timeout_sec", 8.0)
+        self.declare_parameter("depth_transition_settle_duration_sec", 1.0)
+        self.declare_parameter("verify_host_odom_after_depth_disable", True)
+        self.declare_parameter("host_odom_disable_timeout_sec", 2.0)
 
         # ── 读取参数 ──────────────────────────────
         self._timeout_per_phase = float(self.get_parameter("timeout_per_phase").value)
@@ -234,6 +237,25 @@ class TaskManagerNode(Node):
             0.1,
             float(self.get_parameter("depth_transition_timeout_sec").value),
         )
+        self._depth_transition_stationary = StationaryWindow(
+            max(
+                0.0,
+                float(
+                    self.get_parameter(
+                        "depth_transition_settle_duration_sec"
+                    ).value
+                ),
+            )
+        )
+        self._verify_host_odom_after_depth_disable = bool(
+            self.get_parameter("verify_host_odom_after_depth_disable").value
+        )
+        self._host_odom_disable_timeout_sec = max(
+            0.1,
+            float(
+                self.get_parameter("host_odom_disable_timeout_sec").value
+            ),
+        )
 
         # ── 发布者 ────────────────────────────────
         self._phase_pub = self.create_publisher(String, phase_topic, 10)
@@ -278,6 +300,7 @@ class TaskManagerNode(Node):
         self._depth_pending_milestone = ""
         self._depth_pending_request_id = ""
         self._depth_pending_started = 0.0
+        self._depth_pending_odom_baseline = 0.0
         self._obstacle_depth_mode = None
         self._obstacle_depth_transition_complete = False
         self._grab_depth_mode = None
@@ -881,11 +904,15 @@ class TaskManagerNode(Node):
 
     def _robot_stopped_for_depth_transition(self) -> bool:
         odom_fresh = (time.time() - self._last_odom_time) <= self._odom_timeout_sec
-        return bool(
+        stationary = bool(
             odom_fresh
             and self._last_odom_linear_speed <= self._settle_linear_speed_mps
             and self._last_odom_angular_speed <= self._settle_angular_speed_rps
             and not self._nav.goal_sent
+        )
+        return self._depth_transition_stationary.update(
+            time.monotonic(),
+            stationary,
         )
 
     def _ensure_depth_mode(self, mode, milestone: str) -> bool:
@@ -893,10 +920,14 @@ class TaskManagerNode(Node):
             return True
         readiness = self._depth_mode_client.readiness()
         if self._depth_mode_client.end_to_end_ready(mode):
+            if not self._host_odom_ready_after_depth_transition(mode):
+                return False
             self._depth_pending_mode = None
             self._depth_pending_milestone = ""
             self._depth_pending_request_id = ""
             self._depth_pending_started = 0.0
+            self._depth_pending_odom_baseline = 0.0
+            self._depth_transition_stationary.reset()
             return True
         if self._depth_pending_mode is None:
             if not self._robot_stopped_for_depth_transition():
@@ -911,6 +942,8 @@ class TaskManagerNode(Node):
                 "" if request is None else request["request_id"]
             )
             self._depth_pending_started = time.monotonic()
+            self._depth_pending_odom_baseline = self._last_odom_time
+            self._depth_transition_stationary.reset()
             self.get_logger().info(
                 "深度模式切换请求: %s milestone=%s request=%s"
                 % (mode.value, milestone, self._depth_pending_request_id or "already_ready")
@@ -924,6 +957,8 @@ class TaskManagerNode(Node):
             return False
         readiness = self._depth_mode_client.readiness()
         if self._depth_mode_client.end_to_end_ready(mode):
+            if not self._host_odom_ready_after_depth_transition(mode):
+                return False
             self.get_logger().info(
                 "深度模式已确认: %s milestone=%s"
                 % (mode.value, self._depth_pending_milestone)
@@ -932,6 +967,8 @@ class TaskManagerNode(Node):
             self._depth_pending_milestone = ""
             self._depth_pending_request_id = ""
             self._depth_pending_started = 0.0
+            self._depth_pending_odom_baseline = 0.0
+            self._depth_transition_stationary.reset()
             return True
         if (
             self._depth_pending_started > 0.0
@@ -954,6 +991,26 @@ class TaskManagerNode(Node):
                 % (self._depth_pending_milestone, readiness.reason)
             )
         return False
+
+    def _host_odom_ready_after_depth_transition(self, mode) -> bool:
+        if (
+            mode != DepthMode.DISABLED
+            or not self._verify_host_odom_after_depth_disable
+        ):
+            return True
+        odom_is_new = self._last_odom_time > self._depth_pending_odom_baseline
+        odom_is_fresh = (
+            time.time() - self._last_odom_time
+            <= min(self._odom_timeout_sec, self._host_odom_disable_timeout_sec)
+        )
+        if (
+            not (odom_is_new and odom_is_fresh)
+            and self._depth_pending_started > 0.0
+            and time.monotonic() - self._depth_pending_started
+            > self._host_odom_disable_timeout_sec
+        ):
+            self._abort("host /odom did not recover after disabling D455 depth")
+        return bool(odom_is_new and odom_is_fresh)
 
     def _enter_phase(self, phase: Phase) -> None:
         """进入新阶段，执行入口动作并发布状态。"""
@@ -1169,6 +1226,14 @@ class TaskManagerNode(Node):
                 "safety_reason": (
                     self._depth_mode_client.safety_reason
                     if self._depth_mode_client is not None
+                    else None
+                ),
+                "verify_host_odom_after_disable": (
+                    self._verify_host_odom_after_depth_disable
+                ),
+                "host_odom_ready_after_transition": (
+                    self._last_odom_time > self._depth_pending_odom_baseline
+                    if self._depth_pending_mode == DepthMode.DISABLED
                     else None
                 ),
             },

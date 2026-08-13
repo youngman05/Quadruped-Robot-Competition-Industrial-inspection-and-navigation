@@ -9,6 +9,7 @@ from launch.actions import DeclareLaunchArgument, LogInfo, TimerAction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +34,7 @@ def generate_launch_description() -> LaunchDescription:
     enable_depth_pipeline = LaunchConfiguration("enable_depth_pipeline")
     depth_params_file = LaunchConfiguration("depth_params_file")
     depth_frames_dir = LaunchConfiguration("depth_frames_dir")
+    enable_cone_mode_control = LaunchConfiguration("enable_cone_mode_control")
     enable_cone_avoidance = LaunchConfiguration("enable_cone_avoidance")
     cone_params_file = LaunchConfiguration("cone_params_file")
     static_mode = PythonExpression([
@@ -84,6 +86,13 @@ def generate_launch_description() -> LaunchDescription:
         description=(
             "Enable latest-only D455 LaserScan UDP, local/global NonPersistentVoxelLayer, "
             "and the fail-closed cone scan velocity gate."
+        ),
+    )
+    declare_enable_cone_mode_control = DeclareLaunchArgument(
+        "enable_cone_mode_control",
+        default_value="false",
+        description=(
+            "Enable acknowledged AVOIDANCE/DISABLED switching for the formal cone gate."
         ),
     )
     declare_cone_params = DeclareLaunchArgument(
@@ -226,11 +235,32 @@ def generate_launch_description() -> LaunchDescription:
         output="screen",
         condition=IfCondition(cone_mode),
     )
+    cone_mode_relay = Node(
+        package="quadruped_robot_competition",
+        executable="depth_relay_publisher",
+        name="cone_mode_relay",
+        output="screen",
+        parameters=[{
+            "frames_dir": depth_frames_dir,
+            "publish_depth_data": False,
+        }],
+        condition=IfCondition(PythonExpression([
+            "'", enable_cone_avoidance, "' == 'true' and '",
+            enable_cone_mode_control, "' == 'true'",
+        ])),
+    )
     cone_scan_safety_gate = Node(
         package="quadruped_robot_competition",
         executable="cone_scan_safety_gate",
         name="cone_scan_safety_gate",
         output="screen",
+        parameters=[{
+            "enable_mode_control": ParameterValue(
+                enable_cone_mode_control,
+                value_type=bool,
+            ),
+            "mode_status_topic": "/depth/mode_status",
+        }],
         condition=IfCondition(cone_mode),
     )
 
@@ -270,6 +300,7 @@ def generate_launch_description() -> LaunchDescription:
         declare_depth_params,
         declare_depth_frames_dir,
         declare_enable_cone_avoidance,
+        declare_enable_cone_mode_control,
         declare_cone_params,
         startup_info,
         map_server,
@@ -280,6 +311,7 @@ def generate_launch_description() -> LaunchDescription:
         depth_optical_tf,
         depth_safety_gate,
         cone_scan_udp_bridge,
+        cone_mode_relay,
         cone_scan_safety_gate,
         planner_static,
         planner_depth,

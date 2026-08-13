@@ -102,6 +102,7 @@ class ConeScanHealthTracker:
         command_time: Optional[float],
         now: float,
         command_timeout_sec: float,
+        require_scan_health: bool = True,
     ) -> ConeGateDecision:
         if not all(math.isfinite(float(value)) for value in command):
             return ConeGateDecision(ZERO_COMMAND, False, "non-finite velocity command")
@@ -114,11 +115,12 @@ class ConeScanHealthTracker:
             or command_age > float(command_timeout_sec)
         ):
             return ConeGateDecision(ZERO_COMMAND, False, "velocity command is stale")
-        ready, reason = self.readiness(now)
-        if not ready:
-            return ConeGateDecision(ZERO_COMMAND, False, reason)
+        if require_scan_health:
+            ready, reason = self.readiness(now)
+            if not ready:
+                return ConeGateDecision(ZERO_COMMAND, False, reason)
         return ConeGateDecision(
             tuple(float(value) for value in command),
             True,
-            "ready",
+            "ready" if require_scan_health else "cone avoidance bypassed",
         )

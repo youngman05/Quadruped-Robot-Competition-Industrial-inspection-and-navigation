@@ -189,7 +189,7 @@ def validate_controller_status(data: Dict[str, Any]) -> Dict[str, Any]:
     strategy = data.get("strategy", "")
     if not isinstance(strategy, str) or not strategy:
         raise DepthContractError("strategy must be a non-empty string")
-    return {
+    result = {
         "version": PROTOCOL_VERSION,
         "stream_id": _required_string(data, "stream_id"),
         "mode": mode.value,
@@ -203,6 +203,16 @@ def validate_controller_status(data: Dict[str, Any]) -> Dict[str, Any]:
         ),
         "message": str(data.get("message", "")),
     }
+    for key in (
+        "localization_check_enabled",
+        "localization_ready",
+        "localization_reason",
+        "localization_samples",
+        "localization_ages_sec",
+    ):
+        if key in data:
+            result[key] = data[key]
+    return result
 
 
 def validate_camera_info(data: Dict[str, Any]) -> Dict[str, Any]:

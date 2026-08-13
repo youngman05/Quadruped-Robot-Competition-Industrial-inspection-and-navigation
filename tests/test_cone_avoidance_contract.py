@@ -180,6 +180,38 @@ class ConeAvoidanceContractTests(unittest.TestCase):
         )
         self.assertNotIn("ENABLE_DEPTH_RELAY", case_line)
 
+    def test_integrated_cone_mission_uses_parameter_mode_and_optional_health_wait(self):
+        start = COMPETITION_START.read_text(encoding="utf-8")
+        launch = COMP_LAUNCH.read_text(encoding="utf-8")
+        nav = NAV_LAUNCH.read_text(encoding="utf-8")
+        relay = (REPO_ROOT / "scripts" / "depth_relay_docker.py").read_text(
+            encoding="utf-8"
+        )
+        gate = (
+            REPO_ROOT / "src" / "nodes" / "navigation" / "cone_scan_safety_gate.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("if $ENABLE_CONE_AVOIDANCE && $ENABLE_TASK_MANAGER; then", start)
+        self.assertIn('DEPTH_CONTROL_STRATEGY_VALUE="parameter"', start)
+        self.assertIn("--no-write-frames --manage-cone-pipeline-parameters", start)
+        self.assertIn("--skip-depth-disable-health-check", start)
+        self.assertIn("enable_cone_mode_control:=$ENABLE_CONE_MODE_CONTROL", start)
+        self.assertIn('default="/camera/camera"', relay)
+        self.assertIn("GetParameters", relay)
+        self.assertIn('parameter_prefix + "/set_parameters"', relay)
+        self.assertIn('parameter_prefix + "/get_parameters"', relay)
+        self.assertIn("--verify-localization-after-disable", relay)
+        self.assertIn('"enable_depth_milestones": ParameterValue(', launch)
+        self.assertIn('"enable_cone_mode_control": enable_cone_mode_control', launch)
+        self.assertIn('name="cone_mode_relay"', nav)
+        self.assertIn('"publish_depth_data": False', nav)
+        self.assertIn('"enable_mode_control": ParameterValue(', nav)
+        self.assertIn('"cone_obstacle_layer.enabled"', gate)
+        self.assertIn('node + "/set_parameters"', gate)
+        self.assertIn('node + "/get_parameters"', gate)
+        self.assertIn("ClearEntireCostmap", gate)
+        self.assertIn("require_scan_health=require_scan_health", gate)
+
     def test_cone_image_dependency_is_pinned_and_checked_without_devices(self):
         dockerfile = CONE_DOCKERFILE.read_text(encoding="utf-8")
         launcher = CUVSLAM_START.read_text(encoding="utf-8")
@@ -210,6 +242,7 @@ class ConeAvoidanceContractTests(unittest.TestCase):
         self.assertIn("cone_scan_udp_bridge =", setup)
         self.assertIn("cone_scan_safety_gate =", setup)
         self.assertIn("<exec_depend>nonpersistent_voxel_layer</exec_depend>", package)
+        self.assertIn("<exec_depend>rcl_interfaces</exec_depend>", package)
 
 
 if __name__ == "__main__":

@@ -43,6 +43,29 @@ class ConeScanSafetyTests(unittest.TestCase):
         self.assertFalse(decision.allowed)
         self.assertEqual(decision.command, ZERO_COMMAND)
 
+    def test_disabled_mode_bypass_keeps_command_watchdog(self):
+        tracker = ConeScanHealthTracker(required_consecutive=3, max_age_sec=0.25)
+        decision = tracker.evaluate(
+            (0.1, 0.0, -0.1),
+            command_time=2.0,
+            now=2.1,
+            command_timeout_sec=0.35,
+            require_scan_health=False,
+        )
+        self.assertTrue(decision.allowed)
+        self.assertEqual(decision.command, (0.1, 0.0, -0.1))
+        self.assertEqual(decision.reason, "cone avoidance bypassed")
+
+        stale = tracker.evaluate(
+            (0.1, 0.0, -0.1),
+            command_time=1.0,
+            now=2.0,
+            command_timeout_sec=0.35,
+            require_scan_health=False,
+        )
+        self.assertFalse(stale.allowed)
+        self.assertEqual(stale.command, ZERO_COMMAND)
+
 
 if __name__ == "__main__":
     unittest.main()

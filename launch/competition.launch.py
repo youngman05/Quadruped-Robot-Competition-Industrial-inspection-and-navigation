@@ -39,6 +39,11 @@ def generate_launch_description() -> LaunchDescription:
     enable_depth_publisher = LaunchConfiguration("enable_depth_publisher", default="false")
     enable_depth_pipeline = LaunchConfiguration("enable_depth_pipeline", default="false")
     enable_cone_avoidance = LaunchConfiguration("enable_cone_avoidance", default="false")
+    enable_cone_mode_control = LaunchConfiguration("enable_cone_mode_control", default="false")
+    verify_depth_disable_localization = LaunchConfiguration(
+        "verify_depth_disable_localization",
+        default="true",
+    )
     cone_params_file = LaunchConfiguration("cone_params_file")
     depth_frames_dir = LaunchConfiguration("depth_frames_dir")
     enable_whz = LaunchConfiguration("enable_whz", default="false")
@@ -100,6 +105,16 @@ def generate_launch_description() -> LaunchDescription:
         "enable_cone_avoidance",
         default_value="false",
         description="启动 D455 LaserScan UDP、本地锥桶代价层和 fail-closed 速度门。默认关闭。",
+    )
+    declare_enable_cone_mode_control = DeclareLaunchArgument(
+        "enable_cone_mode_control",
+        default_value="false",
+        description="越障后动态关闭 D455 depth、锥桶 costmap 与扫描安全门。",
+    )
+    declare_verify_depth_disable_localization = DeclareLaunchArgument(
+        "verify_depth_disable_localization",
+        default_value="true",
+        description="测试时等待 IR/IMU/cuVSLAM/Host odom；比赛可关闭额外等待。",
     )
     declare_cone_params_file = DeclareLaunchArgument(
         "cone_params_file",
@@ -199,7 +214,22 @@ def generate_launch_description() -> LaunchDescription:
                 "auto_advance": auto_advance,
                 "phase2_map_yaml": str(PROJECT_ROOT / "navi" / "map" / "competition_field_phase2.yaml"),
                 "enable_phase2_map_switch": False,
-                "enable_depth_milestones": enable_depth_pipeline,
+                "enable_depth_milestones": ParameterValue(
+                    PythonExpression([
+                        "'", enable_depth_pipeline, "' == 'true' or '",
+                        enable_cone_mode_control, "' == 'true'",
+                    ]),
+                    value_type=bool,
+                ),
+                "depth_safety_status_topic": PythonExpression([
+                    "'/cone_obstacle/safety_gate_status' if '",
+                    enable_cone_mode_control,
+                    "' == 'true' else '/depth/safety_gate_status'",
+                ]),
+                "verify_host_odom_after_depth_disable": ParameterValue(
+                    verify_depth_disable_localization,
+                    value_type=bool,
+                ),
             },
         ],
         output="screen",
@@ -296,6 +326,7 @@ def generate_launch_description() -> LaunchDescription:
             "enable_depth_pipeline": enable_depth_pipeline,
             "depth_frames_dir": depth_frames_dir,
             "enable_cone_avoidance": enable_cone_avoidance,
+            "enable_cone_mode_control": enable_cone_mode_control,
             "cone_params_file": cone_params_file,
         }.items(),
         condition=IfCondition(enable_navigation),
@@ -334,6 +365,8 @@ def generate_launch_description() -> LaunchDescription:
         declare_enable_depth_pipeline,
         declare_depth_frames_dir,
         declare_enable_cone_avoidance,
+        declare_enable_cone_mode_control,
+        declare_verify_depth_disable_localization,
         declare_cone_params_file,
         declare_enable_whz,
         declare_whz_rtsp_url,

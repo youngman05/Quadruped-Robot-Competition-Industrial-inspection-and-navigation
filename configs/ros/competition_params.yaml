@@ -62,6 +62,9 @@ task_manager_node:
     depth_mode_status_topic: "/depth/mode_status"
     depth_safety_status_topic: "/depth/safety_gate_status"
     depth_transition_timeout_sec: 8.0
+    depth_transition_settle_duration_sec: 1.0
+    verify_host_odom_after_depth_disable: true
+    host_odom_disable_timeout_sec: 2.0
     gauge_topic: "/gauge/status"
     yolo_topic: "/yolo/detections"
     slam_status_topic: "/visual_slam/status"

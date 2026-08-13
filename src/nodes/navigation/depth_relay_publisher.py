@@ -50,6 +50,7 @@ class DepthRelayPublisher(Node):
         self.declare_parameter("crop_right", 1.0)
         self.declare_parameter("crop_top", 0.0)
         self.declare_parameter("crop_bottom", 1.0)
+        self.declare_parameter("publish_depth_data", True)
 
         self._frames_dir = Path(str(self.get_parameter("frames_dir").value)).expanduser()
         rate = max(1.0, float(self.get_parameter("poll_rate_hz").value))
@@ -70,6 +71,9 @@ class DepthRelayPublisher(Node):
             crop_top=float(self.get_parameter("crop_top").value),
             crop_bottom=float(self.get_parameter("crop_bottom").value),
         ).validate()
+        self._publish_depth_data = bool(
+            self.get_parameter("publish_depth_data").value
+        )
 
         self._image_pub = self.create_publisher(
             Image,
@@ -108,7 +112,10 @@ class DepthRelayPublisher(Node):
         self._last_source_stamp_ns = None
         self._last_error = ""
         self.create_timer(1.0 / rate, self._poll)
-        self.get_logger().info("depth relay publisher ready | %s" % self._frames_dir)
+        self.get_logger().info(
+            "depth relay publisher ready | %s | publish_depth_data=%s"
+            % (self._frames_dir, self._publish_depth_data)
+        )
 
     def _on_mode_request(self, msg: String) -> None:
         try:
@@ -139,7 +146,11 @@ class DepthRelayPublisher(Node):
         self._read_controller_status()
         if self._controller_status is not None:
             mode = parse_depth_mode(self._controller_status["mode"])
-            if mode.requires_depth and self._controller_status["healthy"]:
+            if (
+                self._publish_depth_data
+                and mode.requires_depth
+                and self._controller_status["healthy"]
+            ):
                 self._publish_frame(now)
         self._publish_status(now)
 

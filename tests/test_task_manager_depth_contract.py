@@ -21,6 +21,10 @@ class TaskManagerDepthContractTests(unittest.TestCase):
             '"before:grab_area_approach"',
             "self._depth_mode_client.readiness()",
             "self._depth_mode_client.end_to_end_ready(mode)",
+            "self._host_odom_ready_after_depth_transition(mode)",
+            'declare_parameter("verify_host_odom_after_depth_disable", True)',
+            'declare_parameter("depth_transition_settle_duration_sec", 1.0)',
+            "self._depth_transition_stationary.update(",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.source)

@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================
 #  四足机器人竞赛 — 鲁棒一键启动
-#  用法: bash scripts/start_competition.sh [--dog] [--cmd-vel-bridge] [--prepare-lite3-motion] [--yolo] [--whz] [--task-manager] [--auto-advance] [--camera-relay] [--depth-relay] [--depth-pipeline] [--cone-avoidance]
+#  用法: bash scripts/start_competition.sh [--dog] [--cmd-vel-bridge] [--prepare-lite3-motion] [--yolo] [--whz] [--task-manager] [--auto-advance] [--camera-relay] [--depth-relay] [--depth-pipeline] [--cone-avoidance] [--skip-depth-disable-health-check]
 # ==============================================
 # 注意: 不用 set -e，每个步骤自行容错
 
@@ -43,6 +43,8 @@ ENABLE_YOLO=false; ENABLE_WHZ=false; ENABLE_DOG=false; ENABLE_CMD_VEL_BRIDGE=fal
 ENABLE_CAMERA_RELAY=false; ENABLE_DEPTH_RELAY=false
 ENABLE_DEPTH_PIPELINE=false
 ENABLE_CONE_AVOIDANCE=false
+ENABLE_CONE_MODE_CONTROL=false
+VERIFY_DEPTH_DISABLE_LOCALIZATION=true
 ENABLE_TASK_MANAGER=false; AUTO_ADVANCE=false; DO_STAND=false
 for arg in "$@"; do
     case $arg in
@@ -58,10 +60,16 @@ for arg in "$@"; do
         --depth-relay) ENABLE_DEPTH_RELAY=true ;;
         --depth-pipeline) ENABLE_DEPTH_RELAY=true; ENABLE_DEPTH_PIPELINE=true ;;
         --cone-avoidance) ENABLE_CONE_AVOIDANCE=true ;;
+        --skip-depth-disable-health-check) VERIFY_DEPTH_DISABLE_LOCALIZATION=false ;;
         --relays) ENABLE_CAMERA_RELAY=true; ENABLE_DEPTH_RELAY=true ;;
         --stand) DO_STAND=true ;;   # force stand toggle (dog lying down)
     esac
 done
+
+if $ENABLE_CONE_AVOIDANCE && $ENABLE_TASK_MANAGER; then
+    ENABLE_CONE_MODE_CONTROL=true
+    ENABLE_DEPTH_RELAY=true
+fi
 
 if $ENABLE_DEPTH_PIPELINE && $ENABLE_CONE_AVOIDANCE; then
     echo "ERROR: --depth-pipeline and --cone-avoidance are mutually exclusive"
@@ -72,7 +80,7 @@ echo ''
 echo '==================================='
 echo ' 四足机器人竞赛系统 v2 — 鲁棒启动'
 echo '==================================='
-echo " DOG=$ENABLE_DOG  CMD_VEL_BRIDGE=$ENABLE_CMD_VEL_BRIDGE  BRIDGE_INIT_DOG=$ENABLE_CMD_VEL_BRIDGE_INIT  PREPARE_LITE3_MOTION=$PREPARE_LITE3_MOTION  YOLO=$ENABLE_YOLO  WHZ=$ENABLE_WHZ  CAMERA_RELAY=$ENABLE_CAMERA_RELAY  DEPTH_RELAY=$ENABLE_DEPTH_RELAY  DEPTH_PIPELINE=$ENABLE_DEPTH_PIPELINE  CONE_AVOIDANCE=$ENABLE_CONE_AVOIDANCE  TASK_MANAGER=$ENABLE_TASK_MANAGER  AUTO_ADVANCE=$AUTO_ADVANCE"
+echo " DOG=$ENABLE_DOG  CMD_VEL_BRIDGE=$ENABLE_CMD_VEL_BRIDGE  BRIDGE_INIT_DOG=$ENABLE_CMD_VEL_BRIDGE_INIT  PREPARE_LITE3_MOTION=$PREPARE_LITE3_MOTION  YOLO=$ENABLE_YOLO  WHZ=$ENABLE_WHZ  CAMERA_RELAY=$ENABLE_CAMERA_RELAY  DEPTH_RELAY=$ENABLE_DEPTH_RELAY  DEPTH_PIPELINE=$ENABLE_DEPTH_PIPELINE  CONE_AVOIDANCE=$ENABLE_CONE_AVOIDANCE  CONE_MODE_CONTROL=$ENABLE_CONE_MODE_CONTROL  VERIFY_DEPTH_DISABLE_LOCALIZATION=$VERIFY_DEPTH_DISABLE_LOCALIZATION  TASK_MANAGER=$ENABLE_TASK_MANAGER  AUTO_ADVANCE=$AUTO_ADVANCE"
 
 export CUVSLAM_MOUNT_MODE="${CUVSLAM_MOUNT_MODE:-robot}"
 export CUVSLAM_PROFILE="${CUVSLAM_PROFILE:-custom}"
@@ -137,6 +145,8 @@ BASE_NAV2_PARAMS_FILE="$PROJECT_ROOT/configs/navigation/nav2_params.yaml"
 : > "$STARTUP_SNAPSHOT" || startup_no_go "cannot create startup snapshot: $STARTUP_SNAPSHOT"
 snapshot_value "STARTUP_TIMESTAMP" "$STARTUP_TIMESTAMP"
 snapshot_value "CONE_AVOIDANCE" "$ENABLE_CONE_AVOIDANCE"
+snapshot_value "CONE_MODE_CONTROL" "$ENABLE_CONE_MODE_CONTROL"
+snapshot_value "VERIFY_DEPTH_DISABLE_LOCALIZATION" "$VERIFY_DEPTH_DISABLE_LOCALIZATION"
 snapshot_value "FOXY_SETUP" "$FOXY_SETUP"
 snapshot_value "CONE_PLUGIN_OVERLAY_SETUP" "$CONE_PLUGIN_OVERLAY_SETUP"
 snapshot_value "NAV2_BT_OVERLAY_SETUP" "$NAV2_BT_OVERLAY_SETUP"
@@ -344,11 +354,21 @@ fi
 if $ENABLE_DEPTH_RELAY; then
     docker cp scripts/depth_relay_docker.py $CN:/tmp/ 2>/dev/null || true
     docker cp src/nodes/navigation/depth_contract.py $CN:/tmp/depth_contract.py 2>/dev/null || true
+    DEPTH_RELAY_EXTRA_ARGS=""
+    DEPTH_CONTROL_STRATEGY_VALUE="${DEPTH_CONTROL_STRATEGY:-consumer_only}"
+    if $ENABLE_CONE_MODE_CONTROL; then
+        DEPTH_CONTROL_STRATEGY_VALUE="parameter"
+        DEPTH_RELAY_EXTRA_ARGS="--no-write-frames --manage-cone-pipeline-parameters"
+        if $VERIFY_DEPTH_DISABLE_LOCALIZATION; then
+            DEPTH_RELAY_EXTRA_ARGS="$DEPTH_RELAY_EXTRA_ARGS --verify-localization-after-disable"
+        fi
+    fi
     docker exec -d $CN bash -c \
       "source /opt/ros/humble/setup.bash && \
        source /workspaces/isaac_ros-dev/install/setup.bash && \
        python3 /tmp/depth_relay_docker.py \
-         --control-strategy '${DEPTH_CONTROL_STRATEGY:-consumer_only}' \
+         --control-strategy '$DEPTH_CONTROL_STRATEGY_VALUE' \
+         $DEPTH_RELAY_EXTRA_ARGS \
          > /tmp/dep.log 2>&1"
     for i in $(seq 1 10); do
         sleep 1
@@ -452,6 +472,8 @@ ros2 launch quadruped_robot_competition competition.launch.py \
   enable_depth_publisher:=false \
   enable_depth_pipeline:=$ENABLE_DEPTH_PIPELINE \
   enable_cone_avoidance:=$ENABLE_CONE_AVOIDANCE \
+  enable_cone_mode_control:=$ENABLE_CONE_MODE_CONTROL \
+  verify_depth_disable_localization:=$VERIFY_DEPTH_DISABLE_LOCALIZATION \
   cone_params_file:="$CONE_NAV2_PARAMS_FILE" \
   enable_yolo:=$YF enable_whz:=$WF \
   auto_advance:=$AUTO_ADVANCE > /tmp/competition.log 2>&1 &

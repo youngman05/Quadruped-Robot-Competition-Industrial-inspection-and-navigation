@@ -16,9 +16,11 @@ import uuid
 from pathlib import Path
 
 import rclpy
+from nav_msgs.msg import Odometry
+from rcl_interfaces.srv import GetParameters, SetParameters
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import CameraInfo, Image
+from sensor_msgs.msg import CameraInfo, Image, Imu
 
 try:
     from depth_contract import (
@@ -94,34 +96,94 @@ class DepthRelayController(Node):
         self.last_request_id = ""
         self.camera_info = None
         self.pending_parameter_future = None
+        self.pending_parameter_get_future = None
         self.pending_parameter_request = None
         self.pending_parameter_started_ns = 0
-        self.parameter_client = None
+        self.pending_parameter_names = []
+        self.pending_parameter_enabled = False
+        self.parameter_set_client = None
+        self.parameter_get_client = None
+        self.depth_enabled = False
+        self.localization_counts = {
+            "infra1": 0,
+            "infra2": 0,
+            "imu": 0,
+            "cuvslam_odom": 0,
+        }
+        self.localization_last_time = {
+            name: float("-inf") for name in self.localization_counts
+        }
+        self.localization_ready = not args.verify_localization_after_disable
+        self.localization_reason = "localization verification disabled"
+        self.pending_localization_request = None
+        self.pending_localization_started_ns = 0
+        self.pending_localization_baseline = {}
 
         if args.control_strategy == "parameter":
-            from rclpy.parameter_client import AsyncParameterClient
+            parameter_prefix = args.realsense_node.rstrip("/")
+            self.parameter_set_client = self.create_client(
+                SetParameters,
+                parameter_prefix + "/set_parameters",
+            )
+            self.parameter_get_client = self.create_client(
+                GetParameters,
+                parameter_prefix + "/get_parameters",
+            )
 
-            self.parameter_client = AsyncParameterClient(self, args.realsense_node)
-
-        self.create_subscription(
-            CameraInfo,
-            args.camera_info_topic,
-            self._on_info,
-            qos_profile_sensor_data,
-        )
-        self.create_subscription(
-            Image,
-            args.depth_topic,
-            self._on_depth,
-            qos_profile_sensor_data,
-        )
+        if args.write_frames:
+            self.create_subscription(
+                CameraInfo,
+                args.camera_info_topic,
+                self._on_info,
+                qos_profile_sensor_data,
+            )
+            self.create_subscription(
+                Image,
+                args.depth_topic,
+                self._on_depth,
+                qos_profile_sensor_data,
+            )
+        if args.verify_localization_after_disable:
+            self.create_subscription(
+                Image,
+                args.infra1_topic,
+                lambda msg: self._on_localization_sample("infra1", msg),
+                qos_profile_sensor_data,
+            )
+            self.create_subscription(
+                Image,
+                args.infra2_topic,
+                lambda msg: self._on_localization_sample("infra2", msg),
+                qos_profile_sensor_data,
+            )
+            self.create_subscription(
+                Imu,
+                args.imu_topic,
+                lambda msg: self._on_localization_sample("imu", msg),
+                qos_profile_sensor_data,
+            )
+            self.create_subscription(
+                Odometry,
+                args.cuvslam_odom_topic,
+                lambda msg: self._on_localization_sample("cuvslam_odom", msg),
+                qos_profile_sensor_data,
+            )
         self.create_timer(0.10, self._poll_control)
         self.create_timer(0.50, self._write_status)
         self._write_status()
         self.get_logger().info(
-            "depth relay ready | strategy=%s output=%s"
-            % (args.control_strategy, self.output_dir)
+            "depth relay ready | strategy=%s output=%s write_frames=%s verify_localization=%s"
+            % (
+                args.control_strategy,
+                self.output_dir,
+                args.write_frames,
+                args.verify_localization_after_disable,
+            )
         )
+
+    def _on_localization_sample(self, name: str, _msg) -> None:
+        self.localization_counts[name] += 1
+        self.localization_last_time[name] = time.monotonic()
 
     def _on_info(self, msg: CameraInfo) -> None:
         try:
@@ -166,7 +228,13 @@ class DepthRelayController(Node):
 
     def _poll_control(self) -> None:
         self._poll_parameter_result()
-        if self.pending_parameter_future is not None:
+        self._poll_localization_verification()
+        if (
+            self.pending_parameter_future is not None
+            or self.pending_parameter_get_future is not None
+        ):
+            return
+        if self.pending_localization_request is not None:
             return
         request_path = self.output_dir / CONTROL_REQUEST_FILE
         if not request_path.exists():
@@ -200,53 +268,167 @@ class DepthRelayController(Node):
     def _start_parameter_transition(self, desired: DepthMode, request: dict) -> None:
         from rclpy.parameter import Parameter
 
-        if not self.parameter_client.wait_for_service(timeout_sec=0.0):
+        if not (
+            self.parameter_set_client.wait_for_service(timeout_sec=0.0)
+            and self.parameter_get_client.wait_for_service(timeout_sec=0.0)
+        ):
             self._fault("RealSense parameter service unavailable")
             return
         enabled = desired.requires_depth
-        parameter = Parameter(
-            self.args.enable_depth_parameter,
-            Parameter.Type.BOOL,
-            enabled,
-        )
+        names = [self.args.enable_depth_parameter]
+        if self.args.manage_cone_pipeline_parameters:
+            names.extend(
+                [
+                    self.args.pointcloud_enable_parameter,
+                    self.args.decimation_enable_parameter,
+                ]
+            )
+        parameters = [
+            Parameter(name, Parameter.Type.BOOL, enabled) for name in names
+        ]
         self.pending_parameter_request = (desired, request["request_id"])
-        self.pending_parameter_future = self.parameter_client.set_parameters([parameter])
+        self.pending_parameter_names = names
+        self.pending_parameter_enabled = enabled
+        set_request = SetParameters.Request()
+        set_request.parameters = [
+            parameter.to_parameter_msg() for parameter in parameters
+        ]
+        self.pending_parameter_future = self.parameter_set_client.call_async(
+            set_request
+        )
         self.pending_parameter_started_ns = time.monotonic_ns()
-        self.message = "waiting for RealSense enable_depth acknowledgement"
+        self.message = "waiting for RealSense resource parameter acknowledgement"
 
     def _poll_parameter_result(self) -> None:
-        future = self.pending_parameter_future
-        if future is None:
+        set_future = self.pending_parameter_future
+        get_future = self.pending_parameter_get_future
+        if set_future is None and get_future is None:
             return
-        if not future.done():
+        active_future = set_future if set_future is not None else get_future
+        if not active_future.done():
             if monotonic_age_sec(
                 self.pending_parameter_started_ns,
                 label="parameter transition start",
             ) > self.args.parameter_timeout_sec:
                 self.pending_parameter_future = None
+                self.pending_parameter_get_future = None
                 self.pending_parameter_request = None
                 self.pending_parameter_started_ns = 0
-                self._fault("RealSense enable_depth transition timed out")
+                self.pending_parameter_names = []
+                self._fault("RealSense resource parameter transition timed out")
             return
+        if set_future is not None:
+            self.pending_parameter_future = None
+            try:
+                response = set_future.result()
+                results = list(getattr(response, "results", []))
+                if not results or not all(result.successful for result in results):
+                    reasons = "; ".join(
+                        result.reason for result in results if not result.successful
+                    )
+                    raise RuntimeError(reasons or "parameter change was rejected")
+                get_request = GetParameters.Request()
+                get_request.names = list(self.pending_parameter_names)
+                self.pending_parameter_get_future = self.parameter_get_client.call_async(
+                    get_request
+                )
+                self.message = "verifying live RealSense resource parameters"
+                return
+            except Exception as exc:  # noqa: BLE001
+                self.pending_parameter_request = None
+                self.pending_parameter_started_ns = 0
+                self.pending_parameter_names = []
+                self._fault("resource parameter transition failed: %s" % exc)
+                return
         desired, request_id = self.pending_parameter_request
-        self.pending_parameter_future = None
+        self.pending_parameter_get_future = None
+        try:
+            response = get_future.result()
+            values = list(getattr(response, "values", []))
+            if len(values) != len(self.pending_parameter_names):
+                raise RuntimeError("parameter readback count mismatch")
+            mismatched = [
+                name
+                for name, value in zip(self.pending_parameter_names, values)
+                if bool(value.bool_value) != self.pending_parameter_enabled
+            ]
+            if mismatched:
+                raise RuntimeError(
+                    "parameter readback mismatch: %s" % ", ".join(mismatched)
+                )
+        except Exception as exc:  # noqa: BLE001
+            self.pending_parameter_request = None
+            self.pending_parameter_started_ns = 0
+            self.pending_parameter_names = []
+            self._fault("resource parameter verification failed: %s" % exc)
+            return
         self.pending_parameter_request = None
         self.pending_parameter_started_ns = 0
-        try:
-            response = future.result()
-            results = list(getattr(response, "results", []))
-            if not results or not all(result.successful for result in results):
-                reasons = "; ".join(
-                    result.reason for result in results if not result.successful
-                )
-                raise RuntimeError(reasons or "parameter change was rejected")
-        except Exception as exc:  # noqa: BLE001
-            self._fault("enable_depth transition failed: %s" % exc)
+        self.pending_parameter_names = []
+        self.depth_enabled = desired.requires_depth
+        if (
+            desired == DepthMode.DISABLED
+            and self.args.verify_localization_after_disable
+        ):
+            self.mode = DepthMode.BOOTING
+            self.healthy = False
+            self.localization_ready = False
+            self.localization_reason = "waiting for Infra1/Infra2/IMU/cuVSLAM odometry"
+            self.pending_localization_request = (desired, request_id)
+            self.pending_localization_started_ns = time.monotonic_ns()
+            self.pending_localization_baseline = dict(self.localization_counts)
+            self.message = self.localization_reason
+            self._write_status()
             return
         self._apply_mode(desired, request_id)
 
+    def _poll_localization_verification(self) -> None:
+        pending = self.pending_localization_request
+        if pending is None:
+            return
+        now = time.monotonic()
+        elapsed = monotonic_age_sec(
+            self.pending_localization_started_ns,
+            label="localization verification start",
+        )
+        missing = []
+        for name in self.localization_counts:
+            samples = (
+                self.localization_counts[name]
+                - self.pending_localization_baseline.get(name, 0)
+            )
+            age = now - self.localization_last_time[name]
+            if (
+                samples < self.args.localization_min_samples
+                or age < 0.0
+                or age > self.args.localization_max_age_sec
+            ):
+                missing.append(name)
+        if not missing:
+            desired, request_id = pending
+            self.pending_localization_request = None
+            self.pending_localization_started_ns = 0
+            self.pending_localization_baseline = {}
+            self.localization_ready = True
+            self.localization_reason = "Infra1/Infra2/IMU/cuVSLAM odometry healthy"
+            self._apply_mode(desired, request_id)
+            return
+        self.localization_reason = "waiting for localization topics: %s" % ", ".join(missing)
+        self.message = self.localization_reason
+        if elapsed > self.args.localization_timeout_sec:
+            self.pending_localization_request = None
+            self.pending_localization_started_ns = 0
+            self.pending_localization_baseline = {}
+            self._fault(
+                "post-depth-disable localization verification timed out: %s"
+                % ", ".join(missing)
+            )
+            return
+        self._write_status()
+
     def _apply_mode(self, mode: DepthMode, request_id: str) -> None:
         self.mode = mode
+        self.depth_enabled = mode.requires_depth
         self.healthy = True
         self.ack_request_id = request_id
         self.message = "mode acknowledged"
@@ -265,10 +447,28 @@ class DepthRelayController(Node):
             stream_id=self.stream_id,
             ack_request_id=self.ack_request_id,
             healthy=self.healthy,
-            depth_enabled=self.mode.requires_depth,
+            depth_enabled=self.depth_enabled,
             strategy=self.args.control_strategy,
             sequence=self.frame_sequence,
             message=self.message,
+        )
+        status.update(
+            {
+                "localization_check_enabled": bool(
+                    self.args.verify_localization_after_disable
+                ),
+                "localization_ready": bool(self.localization_ready),
+                "localization_reason": self.localization_reason,
+                "localization_samples": dict(self.localization_counts),
+                "localization_ages_sec": {
+                    name: (
+                        None
+                        if stamp == float("-inf")
+                        else max(0.0, time.monotonic() - stamp)
+                    )
+                    for name, stamp in self.localization_last_time.items()
+                },
+            }
         )
         try:
             write_atomic_json(self.output_dir / CONTROLLER_STATUS_FILE, status)
@@ -291,9 +491,38 @@ def parse_args(argv=None) -> argparse.Namespace:
         choices=("consumer_only", "parameter"),
         default="consumer_only",
     )
-    parser.add_argument("--realsense-node", default="/camera/realsense2_camera")
+    parser.add_argument("--realsense-node", default="/camera/camera")
     parser.add_argument("--enable-depth-parameter", default="enable_depth")
+    parser.add_argument(
+        "--manage-cone-pipeline-parameters",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--pointcloud-enable-parameter",
+        default="pointcloud.enable",
+    )
+    parser.add_argument(
+        "--decimation-enable-parameter",
+        default="decimation_filter.enable",
+    )
     parser.add_argument("--parameter-timeout-sec", type=float, default=5.0)
+    parser.add_argument("--write-frames", dest="write_frames", action="store_true")
+    parser.add_argument("--no-write-frames", dest="write_frames", action="store_false")
+    parser.set_defaults(write_frames=True)
+    parser.add_argument(
+        "--verify-localization-after-disable",
+        action="store_true",
+    )
+    parser.add_argument("--infra1-topic", default="/camera/infra1/image_rect_raw")
+    parser.add_argument("--infra2-topic", default="/camera/infra2/image_rect_raw")
+    parser.add_argument("--imu-topic", default="/camera/imu")
+    parser.add_argument(
+        "--cuvslam-odom-topic",
+        default="/visual_slam/tracking/odometry",
+    )
+    parser.add_argument("--localization-min-samples", type=int, default=3)
+    parser.add_argument("--localization-max-age-sec", type=float, default=0.50)
+    parser.add_argument("--localization-timeout-sec", type=float, default=5.0)
     return parser.parse_args(argv)
 
 

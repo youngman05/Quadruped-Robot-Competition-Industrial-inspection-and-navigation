@@ -23,6 +23,28 @@ class DepthMilestone:
     requires_completed: Tuple[str, ...] = ()
 
 
+class StationaryWindow:
+    """Require a continuously stationary interval before a resource transition."""
+
+    def __init__(self, duration_sec: float) -> None:
+        if duration_sec < 0.0:
+            raise ValueError("duration_sec must be non-negative")
+        self.duration_sec = float(duration_sec)
+        self.stable_since: Optional[float] = None
+
+    def update(self, now: float, stationary: bool) -> bool:
+        now = float(now)
+        if not stationary:
+            self.reset()
+            return False
+        if self.stable_since is None or now < self.stable_since:
+            self.stable_since = now
+        return now - self.stable_since >= self.duration_sec
+
+    def reset(self) -> None:
+        self.stable_since = None
+
+
 DEFAULT_DEPTH_MILESTONES = (
     DepthMilestone(MilestoneTrigger.MISSION_START, DepthMode.AVOIDANCE),
     DepthMilestone(
