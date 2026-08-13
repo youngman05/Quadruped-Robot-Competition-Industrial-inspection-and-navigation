@@ -421,6 +421,7 @@ echo '[2/6] 中继...'
 docker exec $CN pkill -f camera_relay 2>/dev/null || true
 docker exec $CN pkill -f depth_relay  2>/dev/null || true
 sleep 1
+docker exec "$CN" rm -f /tmp/cam.log /tmp/dep.log 2>/dev/null || true
 
 if $ENABLE_CAMERA_RELAY; then
     docker cp scripts/camera_relay_docker.py $CN:/tmp/ 2>/dev/null || true

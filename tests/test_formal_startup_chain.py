@@ -162,6 +162,15 @@ class FormalStartupChainContractTests(unittest.TestCase):
         self.assertNotIn("latest_depth.raw", reset_block)
         self.assertNotIn("latest_depth.json", reset_block)
 
+    def test_relay_readiness_logs_are_cleared_before_new_processes_start(self):
+        reset = self.script.index(
+            'docker exec "$CN" rm -f /tmp/cam.log /tmp/dep.log'
+        )
+        camera_start = self.script.index("python3 /tmp/camera_relay_docker.py")
+        depth_start = self.script.index("python3 /tmp/depth_relay_docker.py")
+        self.assertLess(reset, camera_start)
+        self.assertLess(reset, depth_start)
+
     def test_official_cone_parameters_and_gate_defaults_are_enforced(self):
         base = BASE_PARAMS.read_text(encoding="utf-8")
         cone = CONE_PARAMS.read_text(encoding="utf-8")
