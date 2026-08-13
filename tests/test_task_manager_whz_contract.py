@@ -51,6 +51,17 @@ class TaskManagerWhzContractTests(unittest.TestCase):
         for text in required:
             self.assertIn(text, self.source)
 
+    def test_phase113_can_disable_retries_and_finish_after_inspection(self):
+        for token in (
+            'declare_parameter("max_nav_retries", 3)',
+            'declare_parameter("max_inspection_retries", 3)',
+            'declare_parameter("finish_after_inspection", False)',
+            "if self._inspection_only or self._finish_after_inspection:",
+            "self._enter_phase(Phase.FINISH)",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.source)
+
     def test_legacy_duplicate_service_entrypoint_is_retired(self):
         self.assertFalse(LEGACY_SERVER.exists())
         self.assertNotIn(

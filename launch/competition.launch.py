@@ -53,6 +53,23 @@ def generate_launch_description() -> LaunchDescription:
     whz_required_frames = LaunchConfiguration("whz_required_frames")
     whz_min_agree_frames = LaunchConfiguration("whz_min_agree_frames")
     auto_advance = LaunchConfiguration("auto_advance", default="false")
+    max_nav_retries = LaunchConfiguration("max_nav_retries", default="3")
+    max_inspection_retries = LaunchConfiguration("max_inspection_retries", default="3")
+    finish_after_inspection = LaunchConfiguration("finish_after_inspection", default="false")
+    allow_placeholder_manipulation = LaunchConfiguration(
+        "allow_placeholder_manipulation", default="false"
+    )
+    pass_obstacle_timeout_sec = LaunchConfiguration(
+        "pass_obstacle_timeout_sec", default="120.0"
+    )
+    inspection_timeout_sec = LaunchConfiguration(
+        "inspection_timeout_sec", default="300.0"
+    )
+    waypoint_file = LaunchConfiguration("waypoint_file", default="")
+    waypoint_route = LaunchConfiguration(
+        "waypoint_route", default="inspection_interleaved"
+    )
+    expected_map_id = LaunchConfiguration("expected_map_id", default="")
     enable_global_pose_manager = LaunchConfiguration("enable_global_pose_manager", default="false")
     global_pose_mode = LaunchConfiguration("global_pose_mode", default="legacy_static")
 
@@ -153,6 +170,42 @@ def generate_launch_description() -> LaunchDescription:
         "auto_advance", default_value="false",
         description="调试模式：跳过部分任务等待条件"
     )
+    declare_max_nav_retries = DeclareLaunchArgument(
+        "max_nav_retries", default_value="3",
+        description="TaskManager 对失败 Nav2 goal 的重新提交次数",
+    )
+    declare_max_inspection_retries = DeclareLaunchArgument(
+        "max_inspection_retries", default_value="3",
+        description="TaskManager 对失败 WHZ 请求的重新提交次数",
+    )
+    declare_finish_after_inspection = DeclareLaunchArgument(
+        "finish_after_inspection", default_value="false",
+        description="完成 WHZ 巡检后进入 FINISH，不进入抓放流程",
+    )
+    declare_allow_placeholder_manipulation = DeclareLaunchArgument(
+        "allow_placeholder_manipulation", default_value="false",
+        description="仅台架调试允许 1 秒抓放占位器自动推进",
+    )
+    declare_pass_obstacle_timeout_sec = DeclareLaunchArgument(
+        "pass_obstacle_timeout_sec", default_value="120.0",
+        description="越障阶段独立超时",
+    )
+    declare_inspection_timeout_sec = DeclareLaunchArgument(
+        "inspection_timeout_sec", default_value="300.0",
+        description="完整 WHZ 巡检阶段独立超时",
+    )
+    declare_waypoint_file = DeclareLaunchArgument(
+        "waypoint_file", default_value="",
+        description="已完成标定的正式路点文件；空值使用兼容内置坐标",
+    )
+    declare_waypoint_route = DeclareLaunchArgument(
+        "waypoint_route", default_value="inspection_interleaved",
+        description="waypoint_file 中选择的命名路线",
+    )
+    declare_expected_map_id = DeclareLaunchArgument(
+        "expected_map_id", default_value="",
+        description="非空时要求路点文件 map_id 精确匹配",
+    )
     declare_enable_global_pose_manager = DeclareLaunchArgument(
         "enable_global_pose_manager", default_value="false",
         description="启动唯一 global_pose_manager。默认关闭，保持 legacy_static。",
@@ -212,6 +265,25 @@ def generate_launch_description() -> LaunchDescription:
             str(PARAMS_FILE),
             {
                 "auto_advance": auto_advance,
+                "max_nav_retries": ParameterValue(max_nav_retries, value_type=int),
+                "max_inspection_retries": ParameterValue(
+                    max_inspection_retries, value_type=int
+                ),
+                "finish_after_inspection": ParameterValue(
+                    finish_after_inspection, value_type=bool
+                ),
+                "allow_placeholder_manipulation": ParameterValue(
+                    allow_placeholder_manipulation, value_type=bool
+                ),
+                "pass_obstacle_timeout_sec": ParameterValue(
+                    pass_obstacle_timeout_sec, value_type=float
+                ),
+                "inspection_timeout_sec": ParameterValue(
+                    inspection_timeout_sec, value_type=float
+                ),
+                "waypoint_file": waypoint_file,
+                "waypoint_route": waypoint_route,
+                "expected_map_id": expected_map_id,
                 "phase2_map_yaml": str(PROJECT_ROOT / "navi" / "map" / "competition_field_phase2.yaml"),
                 "enable_phase2_map_switch": False,
                 "enable_depth_milestones": ParameterValue(
@@ -375,6 +447,15 @@ def generate_launch_description() -> LaunchDescription:
         declare_whz_required_frames,
         declare_whz_min_agree_frames,
         declare_auto_advance,
+        declare_max_nav_retries,
+        declare_max_inspection_retries,
+        declare_finish_after_inspection,
+        declare_allow_placeholder_manipulation,
+        declare_pass_obstacle_timeout_sec,
+        declare_inspection_timeout_sec,
+        declare_waypoint_file,
+        declare_waypoint_route,
+        declare_expected_map_id,
         declare_enable_global_pose_manager,
         declare_global_pose_mode,
         startup_info,

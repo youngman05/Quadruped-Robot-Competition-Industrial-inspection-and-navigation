@@ -110,6 +110,38 @@ class FormalStartupChainContractTests(unittest.TestCase):
         self.assertIn('snapshot_value "runtime_cuvslam_container"', self.script)
         self.assertNotIn("✅ 启动完成!", self.script)
 
+    def test_phase113_preset_is_no_retry_and_calibration_gated(self):
+        for token in (
+            "--cone-to-whz-l6",
+            "CONE_TO_WHZ_L6=true",
+            "TASK_MAX_NAV_RETRIES=0",
+            "TASK_MAX_INSPECTION_RETRIES=0",
+            "TASK_FINISH_AFTER_INSPECTION=true",
+            "TASK_ALLOW_PLACEHOLDER_MANIPULATION=false",
+            "load_calibrated_waypoints",
+            "MISSION_NAV_WAYPOINTS",
+            'startup_no_go "Phase 113 requires TASK_EXPECTED_MAP_ID"',
+            'startup_no_go "Phase 113 waypoint calibration gate failed"',
+            "max_nav_retries:=$TASK_MAX_NAV_RETRIES",
+            "finish_after_inspection:=$TASK_FINISH_AFTER_INSPECTION",
+            "require_exact_parameter /task_manager_node max_nav_retries 0",
+            "require_exact_parameter /task_manager_node finish_after_inspection true",
+            "require_exact_parameter /task_manager_node expected_map_id",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.script)
+
+        preset = self.script.split("if $CONE_TO_WHZ_L6; then", 1)[1].split(
+            "fi", 1
+        )[0]
+        self.assertNotIn("ENABLE_DOG=true", preset)
+        self.assertNotIn("ENABLE_CMD_VEL_BRIDGE=true", preset)
+        self.assertNotIn("PREPARE_LITE3_MOTION=true", preset)
+        self.assertLess(
+            self.script.index("Phase 113 waypoint calibration gate failed"),
+            self.script.index("echo '[0/6] 清理旧进程...'"),
+        )
+
     def test_official_cone_parameters_and_gate_defaults_are_enforced(self):
         base = BASE_PARAMS.read_text(encoding="utf-8")
         cone = CONE_PARAMS.read_text(encoding="utf-8")

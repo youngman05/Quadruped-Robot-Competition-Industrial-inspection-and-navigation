@@ -18,6 +18,13 @@ ROS map-frame meters automatically.
 from __future__ import annotations
 
 import math
+from pathlib import Path
+
+from nodes.navigation.waypoint_calibration import (
+    WaypointCalibrationError,
+    load_waypoint_document,
+    resolve_waypoint_route,
+)
 
 
 FIELD_HEIGHT_MM = 6000.0
@@ -48,6 +55,11 @@ def _deg_to_quat(yaw_deg: float) -> tuple[float, float, float, float]:
     """Field yaw in degrees (0=right, 90=down) -> ROS quaternion."""
     ros_yaw_deg = -yaw_deg
     half = math.radians(ros_yaw_deg) / 2.0
+    return (0.0, 0.0, math.sin(half), math.cos(half))
+
+
+def _yaw_to_quat(yaw: float) -> tuple[float, float, float, float]:
+    half = float(yaw) / 2.0
     return (0.0, 0.0, math.sin(half), math.cos(half))
 
 
@@ -98,6 +110,48 @@ for name, wp in _RAW_WAYPOINTS.items():
     }
 
 
+def load_calibrated_waypoints(
+    path,
+    route_name: str,
+    expected_map_id: str = "",
+) -> dict[str, dict]:
+    """Load one completed field route as NavigationClient waypoint records."""
+    document = load_waypoint_document(Path(path))
+    calibration = document.get("calibration", {})
+    if calibration.get("status") != "complete":
+        raise WaypointCalibrationError(
+            "waypoint calibration must be complete, got %r"
+            % calibration.get("status")
+        )
+    map_id = str(document.get("map_id", "")).strip()
+    if not map_id:
+        raise WaypointCalibrationError("waypoint map_id is empty")
+    expected_map_id = str(expected_map_id).strip()
+    if expected_map_id and map_id != expected_map_id:
+        raise WaypointCalibrationError(
+            "waypoint map_id %s does not match expected map_id %s"
+            % (map_id, expected_map_id)
+        )
+
+    waypoints = {}
+    for goal in resolve_waypoint_route(document, route_name):
+        qx, qy, qz, qw = _yaw_to_quat(goal["yaw"])
+        waypoints[goal["label"]] = {
+            "x": goal["x"],
+            "y": goal["y"],
+            "qx": qx,
+            "qy": qy,
+            "qz": qz,
+            "qw": qw,
+            "yaw_set": True,
+            "label": goal["label"],
+            "source": "waypoint_file",
+            "route": route_name,
+            "map_id": map_id,
+        }
+    return waypoints
+
+
 class NavigationClient:
     """
     High-level navigation client wrapping a Nav2 NavigateToPose action.
@@ -109,7 +163,12 @@ class NavigationClient:
             advance_to_next_phase()
     """
 
-    def __init__(self, node, action_name: str = "navigate_to_pose"):
+    def __init__(
+        self,
+        node,
+        action_name: str = "navigate_to_pose",
+        waypoints=None,
+    ):
         """
         Args:
             node: A rclpy Node instance (e.g., the TaskManagerNode).
@@ -117,6 +176,7 @@ class NavigationClient:
         """
         self._node = node
         self._logger = node.get_logger()
+        self._waypoints = dict(WAYPOINTS if waypoints is None else waypoints)
 
         # Lazy import so the module is importable without rclpy in non-ROS contexts
         from rclpy.action import ActionClient
@@ -137,13 +197,16 @@ class NavigationClient:
 
     def navigate_to_waypoint(self, waypoint_name: str) -> bool:
         """Submit a goal for a named waypoint; acceptance arrives asynchronously."""
-        if waypoint_name not in WAYPOINTS:
-            reason = f"Unknown waypoint '{waypoint_name}'. Available: {list(WAYPOINTS)}"
+        if waypoint_name not in self._waypoints:
+            reason = (
+                f"Unknown waypoint '{waypoint_name}'. "
+                f"Available: {list(self._waypoints)}"
+            )
             self._logger.error(reason)
             self._mark_terminal("unknown_waypoint", reason)
             return False
 
-        wp = WAYPOINTS[waypoint_name]
+        wp = self._waypoints[waypoint_name]
         return self.navigate_to_pose(
             x=wp["x"], y=wp["y"],
             qx=wp["qx"], qy=wp["qy"], qz=wp["qz"], qw=wp["qw"],

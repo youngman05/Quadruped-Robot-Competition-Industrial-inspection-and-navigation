@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================
 #  四足机器人竞赛 — 鲁棒一键启动
-#  用法: bash scripts/start_competition.sh [--dog] [--cmd-vel-bridge] [--prepare-lite3-motion] [--yolo] [--whz] [--task-manager] [--auto-advance] [--camera-relay] [--depth-relay] [--depth-pipeline] [--cone-avoidance] [--skip-depth-disable-health-check]
+#  用法: bash scripts/start_competition.sh [--dog] [--cmd-vel-bridge] [--prepare-lite3-motion] [--yolo] [--whz] [--task-manager] [--cone-to-whz-l6] [--auto-advance] [--camera-relay] [--depth-relay] [--depth-pipeline] [--cone-avoidance] [--skip-depth-disable-health-check]
 # ==============================================
 # 注意: 不用 set -e，每个步骤自行容错
 
@@ -53,6 +53,7 @@ ENABLE_CONE_AVOIDANCE=false
 ENABLE_CONE_MODE_CONTROL=false
 VERIFY_DEPTH_DISABLE_LOCALIZATION=true
 ENABLE_TASK_MANAGER=false; AUTO_ADVANCE=false; DO_STAND=false
+CONE_TO_WHZ_L6=false
 for arg in "$@"; do
     case $arg in
         --yolo)  ENABLE_YOLO=true ;;
@@ -62,6 +63,7 @@ for arg in "$@"; do
         --bridge-init-dog|--init-dog) ENABLE_CMD_VEL_BRIDGE_INIT=true ;;
         --prepare-lite3-motion) PREPARE_LITE3_MOTION=true ;;
         --task-manager|--mission) ENABLE_TASK_MANAGER=true ;;
+        --cone-to-whz-l6) CONE_TO_WHZ_L6=true ;;
         --auto-advance) ENABLE_TASK_MANAGER=true; AUTO_ADVANCE=true ;;
         --camera-relay) ENABLE_CAMERA_RELAY=true ;;
         --depth-relay) ENABLE_DEPTH_RELAY=true ;;
@@ -72,6 +74,27 @@ for arg in "$@"; do
         --stand) DO_STAND=true ;;   # force stand toggle (dog lying down)
     esac
 done
+
+TASK_MAX_NAV_RETRIES="${TASK_MAX_NAV_RETRIES:-3}"
+TASK_MAX_INSPECTION_RETRIES="${TASK_MAX_INSPECTION_RETRIES:-3}"
+TASK_FINISH_AFTER_INSPECTION="${TASK_FINISH_AFTER_INSPECTION:-false}"
+TASK_ALLOW_PLACEHOLDER_MANIPULATION="${TASK_ALLOW_PLACEHOLDER_MANIPULATION:-false}"
+TASK_PASS_OBSTACLE_TIMEOUT_SEC="${TASK_PASS_OBSTACLE_TIMEOUT_SEC:-120.0}"
+TASK_INSPECTION_TIMEOUT_SEC="${TASK_INSPECTION_TIMEOUT_SEC:-300.0}"
+TASK_WAYPOINT_FILE="${TASK_WAYPOINT_FILE:-}"
+TASK_WAYPOINT_ROUTE="${TASK_WAYPOINT_ROUTE:-inspection_interleaved}"
+TASK_EXPECTED_MAP_ID="${TASK_EXPECTED_MAP_ID:-}"
+
+if $CONE_TO_WHZ_L6; then
+    ENABLE_CONE_AVOIDANCE=true
+    ENABLE_TASK_MANAGER=true
+    ENABLE_WHZ=true
+    TASK_MAX_NAV_RETRIES=0
+    TASK_MAX_INSPECTION_RETRIES=0
+    TASK_FINISH_AFTER_INSPECTION=true
+    TASK_ALLOW_PLACEHOLDER_MANIPULATION=false
+    TASK_WAYPOINT_FILE="${TASK_WAYPOINT_FILE:-$PROJECT_ROOT/configs/navigation/waypoints_real.yaml}"
+fi
 
 if $ENABLE_CONE_AVOIDANCE && $ENABLE_TASK_MANAGER; then
     ENABLE_CONE_MODE_CONTROL=true
@@ -87,7 +110,7 @@ echo ''
 echo '==================================='
 echo ' 四足机器人竞赛系统 v2 — 鲁棒启动'
 echo '==================================='
-echo " DOG=$ENABLE_DOG  CMD_VEL_BRIDGE=$ENABLE_CMD_VEL_BRIDGE  BRIDGE_INIT_DOG=$ENABLE_CMD_VEL_BRIDGE_INIT  PREPARE_LITE3_MOTION=$PREPARE_LITE3_MOTION  YOLO=$ENABLE_YOLO  WHZ=$ENABLE_WHZ  CAMERA_RELAY=$ENABLE_CAMERA_RELAY  DEPTH_RELAY=$ENABLE_DEPTH_RELAY  DEPTH_PIPELINE=$ENABLE_DEPTH_PIPELINE  CONE_AVOIDANCE=$ENABLE_CONE_AVOIDANCE  CONE_MODE_CONTROL=$ENABLE_CONE_MODE_CONTROL  VERIFY_DEPTH_DISABLE_LOCALIZATION=$VERIFY_DEPTH_DISABLE_LOCALIZATION  TASK_MANAGER=$ENABLE_TASK_MANAGER  AUTO_ADVANCE=$AUTO_ADVANCE"
+echo " DOG=$ENABLE_DOG  CMD_VEL_BRIDGE=$ENABLE_CMD_VEL_BRIDGE  BRIDGE_INIT_DOG=$ENABLE_CMD_VEL_BRIDGE_INIT  PREPARE_LITE3_MOTION=$PREPARE_LITE3_MOTION  YOLO=$ENABLE_YOLO  WHZ=$ENABLE_WHZ  CAMERA_RELAY=$ENABLE_CAMERA_RELAY  DEPTH_RELAY=$ENABLE_DEPTH_RELAY  DEPTH_PIPELINE=$ENABLE_DEPTH_PIPELINE  CONE_AVOIDANCE=$ENABLE_CONE_AVOIDANCE  CONE_MODE_CONTROL=$ENABLE_CONE_MODE_CONTROL  VERIFY_DEPTH_DISABLE_LOCALIZATION=$VERIFY_DEPTH_DISABLE_LOCALIZATION  TASK_MANAGER=$ENABLE_TASK_MANAGER  AUTO_ADVANCE=$AUTO_ADVANCE  CONE_TO_WHZ_L6=$CONE_TO_WHZ_L6"
 
 export CUVSLAM_MOUNT_MODE="${CUVSLAM_MOUNT_MODE:-robot}"
 export CUVSLAM_PROFILE="${CUVSLAM_PROFILE:-custom}"
@@ -153,6 +176,7 @@ BASE_NAV2_PARAMS_FILE="$PROJECT_ROOT/configs/navigation/nav2_params.yaml"
 snapshot_value "STARTUP_TIMESTAMP" "$STARTUP_TIMESTAMP"
 snapshot_value "CONE_AVOIDANCE" "$ENABLE_CONE_AVOIDANCE"
 snapshot_value "CONE_MODE_CONTROL" "$ENABLE_CONE_MODE_CONTROL"
+snapshot_value "CONE_TO_WHZ_L6" "$CONE_TO_WHZ_L6"
 snapshot_value "VERIFY_DEPTH_DISABLE_LOCALIZATION" "$VERIFY_DEPTH_DISABLE_LOCALIZATION"
 snapshot_value "FOXY_SETUP" "$FOXY_SETUP"
 snapshot_value "CONE_PLUGIN_OVERLAY_SETUP" "$CONE_PLUGIN_OVERLAY_SETUP"
@@ -161,6 +185,15 @@ snapshot_value "FORMAL_DEPLOY_SETUP" "$FORMAL_DEPLOY_SETUP"
 snapshot_value "BASE_NAV2_PARAMS_FILE" "$BASE_NAV2_PARAMS_FILE"
 snapshot_value "CONE_NAV2_PARAMS_FILE" "$CONE_NAV2_PARAMS_FILE"
 snapshot_value "CONE_NAV2_PROFILE" "$CONE_NAV2_PROFILE"
+snapshot_value "TASK_MAX_NAV_RETRIES" "$TASK_MAX_NAV_RETRIES"
+snapshot_value "TASK_MAX_INSPECTION_RETRIES" "$TASK_MAX_INSPECTION_RETRIES"
+snapshot_value "TASK_FINISH_AFTER_INSPECTION" "$TASK_FINISH_AFTER_INSPECTION"
+snapshot_value "TASK_ALLOW_PLACEHOLDER_MANIPULATION" "$TASK_ALLOW_PLACEHOLDER_MANIPULATION"
+snapshot_value "TASK_PASS_OBSTACLE_TIMEOUT_SEC" "$TASK_PASS_OBSTACLE_TIMEOUT_SEC"
+snapshot_value "TASK_INSPECTION_TIMEOUT_SEC" "$TASK_INSPECTION_TIMEOUT_SEC"
+snapshot_value "TASK_WAYPOINT_FILE" "$TASK_WAYPOINT_FILE"
+snapshot_value "TASK_WAYPOINT_ROUTE" "$TASK_WAYPOINT_ROUTE"
+snapshot_value "TASK_EXPECTED_MAP_ID" "$TASK_EXPECTED_MAP_ID"
 
 [ -f "$FOXY_SETUP" ] || startup_no_go "Foxy setup is missing: $FOXY_SETUP"
 [ -f "$BASE_NAV2_PARAMS_FILE" ] || startup_no_go "base Nav2 params are missing: $BASE_NAV2_PARAMS_FILE"
@@ -236,6 +269,40 @@ if $ENABLE_CONE_AVOIDANCE; then
     snapshot_value "plugin_library_real" "$PLUGIN_LIBRARY_REAL"
 fi
 snapshot_value "PYTHONPATH" "${PYTHONPATH:-}"
+
+if $CONE_TO_WHZ_L6; then
+    [ -n "$TASK_WAYPOINT_FILE" ] \
+        || startup_no_go "Phase 113 requires a calibrated waypoint file"
+    [ -n "$TASK_EXPECTED_MAP_ID" ] \
+        || startup_no_go "Phase 113 requires TASK_EXPECTED_MAP_ID"
+    TASK_WAYPOINT_FILE_REAL="$(readlink -f "$TASK_WAYPOINT_FILE")" \
+        || startup_no_go "cannot resolve Phase 113 waypoint file: $TASK_WAYPOINT_FILE"
+    [ -f "$TASK_WAYPOINT_FILE_REAL" ] \
+        || startup_no_go "Phase 113 waypoint file is missing: $TASK_WAYPOINT_FILE_REAL"
+    TASK_WAYPOINT_FILE="$TASK_WAYPOINT_FILE_REAL"
+    WAYPOINT_GATE_JSON="$(python3 - "$TASK_WAYPOINT_FILE" "$TASK_WAYPOINT_ROUTE" "$TASK_EXPECTED_MAP_ID" <<'PY'
+import json
+import sys
+
+from nodes.navigation.mission_route import MISSION_NAV_WAYPOINTS
+from nodes.navigation.navigation_client import load_calibrated_waypoints
+
+path, route, expected_map_id = sys.argv[1:4]
+waypoints = load_calibrated_waypoints(path, route, expected_map_id)
+missing = sorted(set(MISSION_NAV_WAYPOINTS) - set(waypoints))
+if missing:
+    raise SystemExit("route missing required waypoints: %s" % ", ".join(missing))
+print(json.dumps({
+    "path": path,
+    "route": route,
+    "map_id": next(iter(waypoints.values()))["map_id"],
+    "waypoint_count": len(waypoints),
+}, sort_keys=True))
+PY
+    )" || startup_no_go "Phase 113 waypoint calibration gate failed"
+    snapshot_value "phase113_waypoint_gate" "$WAYPOINT_GATE_JSON"
+    echo " Phase 113 waypoint gate passed: $WAYPOINT_GATE_JSON"
+fi
 
 if $ENABLE_CONE_AVOIDANCE; then
     python3 - <<'PY' \
@@ -481,6 +548,15 @@ ros2 launch quadruped_robot_competition competition.launch.py \
   verify_depth_disable_localization:=$VERIFY_DEPTH_DISABLE_LOCALIZATION \
   cone_params_file:="$CONE_NAV2_PARAMS_FILE" \
   enable_yolo:=$YF enable_whz:=$WF \
+  max_nav_retries:=$TASK_MAX_NAV_RETRIES \
+  max_inspection_retries:=$TASK_MAX_INSPECTION_RETRIES \
+  finish_after_inspection:=$TASK_FINISH_AFTER_INSPECTION \
+  allow_placeholder_manipulation:=$TASK_ALLOW_PLACEHOLDER_MANIPULATION \
+  pass_obstacle_timeout_sec:=$TASK_PASS_OBSTACLE_TIMEOUT_SEC \
+  inspection_timeout_sec:=$TASK_INSPECTION_TIMEOUT_SEC \
+  waypoint_file:="$TASK_WAYPOINT_FILE" \
+  waypoint_route:="$TASK_WAYPOINT_ROUTE" \
+  expected_map_id:="$TASK_EXPECTED_MAP_ID" \
   auto_advance:=$AUTO_ADVANCE > /tmp/competition.log 2>&1 &
 COMP_PID=$!
 echo "  Launch PID=$COMP_PID YOLO=$YF WHZ=$WF TASK_MANAGER=$ENABLE_TASK_MANAGER AUTO_ADVANCE=$AUTO_ADVANCE"
@@ -611,6 +687,25 @@ PY
     fi
 }
 
+require_exact_parameter() {
+    local node="$1"
+    local parameter="$2"
+    local expected="$3"
+    local actual
+    actual="$(parameter_value "$node" "$parameter")" \
+        || startup_no_go "cannot read live parameter $node:$parameter"
+    case "$expected" in
+        true|false)
+            [ "${actual,,}" = "$expected" ] \
+                || startup_no_go "live parameter $node:$parameter is $actual; expected $expected"
+            ;;
+        *)
+            [ "$actual" = "$expected" ] \
+                || startup_no_go "live parameter $node:$parameter is $actual; expected $expected"
+            ;;
+    esac
+}
+
 if $ENABLE_CONE_AVOIDANCE; then
     SCAN_INFO="$(timeout "$STARTUP_CLI_TIMEOUT_SEC" ros2 topic info /cone_obstacle/scan --verbose 2>&1)" \
         || startup_no_go "cannot inspect cone scan endpoints"
@@ -700,6 +795,16 @@ if $ENABLE_CONE_AVOIDANCE; then
         --min-scan-rate-hz "$STARTUP_MIN_SCAN_RATE_HZ" 2>&1)" \
         || startup_no_go "cone scan/health acceptance failed: $HEALTH_PROBE_JSON"
     snapshot_value "cone_health_probe" "$HEALTH_PROBE_JSON"
+fi
+
+if $CONE_TO_WHZ_L6; then
+    require_exact_parameter /task_manager_node max_nav_retries 0
+    require_exact_parameter /task_manager_node max_inspection_retries 0
+    require_exact_parameter /task_manager_node finish_after_inspection true
+    require_exact_parameter /task_manager_node allow_placeholder_manipulation false
+    require_exact_parameter /task_manager_node waypoint_file "$TASK_WAYPOINT_FILE"
+    require_exact_parameter /task_manager_node waypoint_route "$TASK_WAYPOINT_ROUTE"
+    require_exact_parameter /task_manager_node expected_map_id "$TASK_EXPECTED_MAP_ID"
 fi
 
 kill -0 "$COMP_PID" 2>/dev/null \

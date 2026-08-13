@@ -153,6 +153,29 @@ frame convention. The `action` fields are calibration metadata; this Nav-only
 probe records them in output but does not execute grasp, placement, or vision
 tasks.
 
+## Phase 113 Cone-to-WHZ route
+
+The supervised Cone-to-WHZ acceptance uses the dedicated
+`--cone-to-whz-l6` preset. The preset does not enable a Lite3 actuator path by
+itself. Before any runtime cleanup, Docker start, or ROS launch, it requires:
+
+- `configs/navigation/waypoints_real.yaml` with `calibration.status=complete`;
+- all named `inspection_interleaved` route waypoints present;
+- a non-empty file `map_id` matching `TASK_EXPECTED_MAP_ID`;
+- TaskManager navigation and WHZ retries fixed at zero;
+- completion after the four WHZ observations, without entering manipulation.
+
+No-actuation startup gate:
+
+```bash
+TASK_EXPECTED_MAP_ID=<current-map-id> \
+  bash scripts/start_competition.sh --cone-to-whz-l6
+```
+
+The later supervised motion run requires the same map and waypoint file plus
+the separately authorized Lite3 arguments. A failed Nav2 goal or WHZ request
+ends the attempt; TaskManager does not submit it again.
+
 ## Staged D455 depth pipeline
 
 The competition launch keeps the validated static-only Nav2 path when neither

@@ -42,11 +42,13 @@ from nodes.decision.inspection_workflow import (
 from nodes.navigation.navigation_client import (
     NavigationClient,
     WAYPOINTS,
+    load_calibrated_waypoints,
 )
 from nodes.navigation.depth_contract import DepthMode
 from nodes.navigation.depth_mode_client import DepthModeClient
 from nodes.navigation.mission_depth_policy import MissionDepthPolicy, StationaryWindow
 from nodes.navigation.mission_route import (
+    MISSION_NAV_WAYPOINTS,
     OBSTACLE_ROUTE,
     inspection_route_steps,
     observation_steps,
@@ -135,6 +137,8 @@ class TaskManagerNode(Node):
             "find_red_bar", "grasp_bar", "place_to_abnormal_zone", "finish",
         ])
         self.declare_parameter("timeout_per_phase", 300.0)   # 每阶段超时 (秒), 含YOLO
+        self.declare_parameter("pass_obstacle_timeout_sec", 120.0)
+        self.declare_parameter("inspection_timeout_sec", 300.0)
         self.declare_parameter("tick_rate", 10.0)             # 状态机主循环频率 (Hz)
         self.declare_parameter("require_stable_gauge", True)  # 是否必须稳定检测
         self.declare_parameter("auto_advance", False)         # 调试: 自动推进阶段
@@ -158,6 +162,11 @@ class TaskManagerNode(Node):
         self.declare_parameter("inspection_response_timeout_sec", 20.0)
         self.declare_parameter("require_inspection_audio", True)
         self.declare_parameter("inspection_only", False)
+        self.declare_parameter("finish_after_inspection", False)
+        self.declare_parameter("allow_placeholder_manipulation", False)
+        self.declare_parameter("waypoint_file", "")
+        self.declare_parameter("waypoint_route", "inspection_interleaved")
+        self.declare_parameter("expected_map_id", "")
         self.declare_parameter("inspection_start_index", 0)
         self.declare_parameter("inspection_count", 0)
         self.declare_parameter("enable_phase2_map_switch", False)
@@ -172,6 +181,16 @@ class TaskManagerNode(Node):
 
         # ── 读取参数 ──────────────────────────────
         self._timeout_per_phase = float(self.get_parameter("timeout_per_phase").value)
+        self._phase_timeouts = {
+            Phase.PASS_OBSTACLE: max(
+                0.1,
+                float(self.get_parameter("pass_obstacle_timeout_sec").value),
+            ),
+            Phase.INSPECT_GAUGES: max(
+                0.1,
+                float(self.get_parameter("inspection_timeout_sec").value),
+            ),
+        }
         self._tick_rate = float(self.get_parameter("tick_rate").value)
         self._require_stable = bool(self.get_parameter("require_stable_gauge").value)
         self._auto_advance = bool(self.get_parameter("auto_advance").value)
@@ -213,6 +232,12 @@ class TaskManagerNode(Node):
         )
         self._inspection_only = bool(
             self.get_parameter("inspection_only").value
+        )
+        self._finish_after_inspection = bool(
+            self.get_parameter("finish_after_inspection").value
+        )
+        self._allow_placeholder_manipulation = bool(
+            self.get_parameter("allow_placeholder_manipulation").value
         )
         inspection_start_index = int(
             self.get_parameter("inspection_start_index").value
@@ -282,7 +307,8 @@ class TaskManagerNode(Node):
             letter: GaugeInfo(letter=letter) for letter in "ABCD"
         }
         self._latest_yolo: Optional[YoloDetection] = None
-        self._slam_ok: bool = False                  # SLAM 定位是否正常
+        self._slam_tracking_ok: bool = False
+        self._slam_status_time: float = 0.0
         self._last_odom_time: float = 0.0
         self._last_odom_linear_speed: float = float("inf")
         self._last_odom_angular_speed: float = float("inf")
@@ -317,7 +343,27 @@ class TaskManagerNode(Node):
         self._whz_client = self.create_client(Trigger, whz_service)
 
         # ── 导航客户端 (Nav2 NavigateToPose) ─────
-        self._nav = NavigationClient(self)
+        waypoint_file = str(self.get_parameter("waypoint_file").value).strip()
+        waypoint_route = str(self.get_parameter("waypoint_route").value).strip()
+        expected_map_id = str(self.get_parameter("expected_map_id").value).strip()
+        task_waypoints = WAYPOINTS
+        if waypoint_file:
+            task_waypoints = load_calibrated_waypoints(
+                waypoint_file,
+                waypoint_route,
+                expected_map_id=expected_map_id,
+            )
+            missing_waypoints = sorted(
+                set(MISSION_NAV_WAYPOINTS) - set(task_waypoints)
+            )
+            if missing_waypoints:
+                raise ValueError(
+                    "calibrated route is missing required waypoints: %s"
+                    % ", ".join(missing_waypoints)
+                )
+        self._waypoint_source = "waypoint_file" if waypoint_file else "builtin"
+        self._waypoint_route = waypoint_route if waypoint_file else "builtin"
+        self._nav = NavigationClient(self, waypoints=task_waypoints)
         if self._enable_depth_milestones:
             self._depth_policy = MissionDepthPolicy()
             self._depth_mode_client = DepthModeClient(
@@ -376,7 +422,11 @@ class TaskManagerNode(Node):
             f"| timeout={self._timeout_per_phase}s "
             f"| require_stable={self._require_stable} "
             f"| inspection_only={self._inspection_only} "
+            f"| finish_after_inspection={self._finish_after_inspection} "
+            f"| placeholder_manipulation={self._allow_placeholder_manipulation} "
             f"| inspection_steps={len(self._inspection_steps)} "
+            f"| waypoint_source={self._waypoint_source} "
+            f"| waypoint_route={self._waypoint_route} "
             f"| depth_milestones={self._enable_depth_milestones} "
             f"| phase2_map_switch={self._enable_phase2_map_switch}"
         )
@@ -418,8 +468,6 @@ class TaskManagerNode(Node):
     def _tick_start(self, elapsed: float) -> None:
         """START: 等待各子系统就绪后自动推进。"""
         odom_fresh = (time.time() - self._last_odom_time) <= self._odom_timeout_sec
-        if odom_fresh:
-            self._slam_ok = True
         if (
             self._enable_depth_milestones
             and odom_fresh
@@ -532,8 +580,10 @@ class TaskManagerNode(Node):
             else:
                 self.get_logger().info("巡检完成 — 未发现异常")
             self._abnormal_handled = 0
-            if self._inspection_only:
+            if self._inspection_only or self._finish_after_inspection:
                 self._enter_phase(Phase.FINISH)
+            elif not self._allow_placeholder_manipulation:
+                self._abort("mechanical arm feedback is not implemented")
             else:
                 self._advance_to_next_phase()
             return
@@ -810,8 +860,11 @@ class TaskManagerNode(Node):
         if self._handle_timeout(elapsed):
             return
 
-        # TODO: 接入机械臂反馈 —— 收到 "grasp_success" 时推进
-        # 当前占位: 1 秒后自动推进
+        if not self._allow_placeholder_manipulation:
+            self._abort("mechanical arm feedback is not implemented")
+            return
+
+        # Bench-only placeholder; production must use explicit arm feedback.
         if elapsed > 1.0:
             self.get_logger().info("抓取完成 (占位)，进入放置阶段")
             self._advance_to_next_phase()
@@ -819,6 +872,10 @@ class TaskManagerNode(Node):
     def _tick_place_to_abnormal_zone(self, elapsed: float) -> None:
         """PLACE_TO_ABNORMAL_ZONE: 导航到当前异常区域放置纸箱。"""
         if self._handle_timeout(elapsed):
+            return
+
+        if not self._allow_placeholder_manipulation:
+            self._abort("mechanical arm feedback is not implemented")
             return
 
         if self._abnormal_handled >= len(self._abnormal_zones):
@@ -848,8 +905,7 @@ class TaskManagerNode(Node):
         if self._placement_arrival_time is None:
             self._placement_arrival_time = time.monotonic()
 
-        # TODO: 接入机械臂反馈 —— 收到 "place_success" 时推进
-        # 当前占位: 到达后 1 秒视为放置完成
+        # Bench-only placeholder; production must use explicit arm feedback.
         if time.monotonic() - self._placement_arrival_time > 1.0:
             self._abnormal_handled += 1
             remaining = len(self._abnormal_zones) - self._abnormal_handled
@@ -1084,10 +1140,11 @@ class TaskManagerNode(Node):
 
     def _handle_timeout(self, elapsed: float) -> bool:
         """检查超时。返回 True 表示已超时并中止。"""
-        if elapsed > self._timeout_per_phase:
+        timeout = self._phase_timeouts.get(self._phase, self._timeout_per_phase)
+        if elapsed > timeout:
             self._abort(
                 "阶段 %s 超时 (%.1fs > %.1fs)"
-                % (self._phase.label(), elapsed, self._timeout_per_phase)
+                % (self._phase.label(), elapsed, timeout)
             )
             return True
         return False
@@ -1133,16 +1190,22 @@ class TaskManagerNode(Node):
             # SLAM status 可能不是 JSON，尝试直接读字符串
             text = msg.data.strip().lower()
             if text in ("ok", "tracking", "nominal"):
-                self._slam_ok = True
+                self._slam_tracking_ok = True
             elif text in ("lost", "degraded", "unknown"):
-                self._slam_ok = False
+                self._slam_tracking_ok = False
+            self._slam_status_time = time.time()
             return
 
         # JSON 格式: 检查 vo_state 字段
         state = data.get("vo_state", data.get("state", "")).lower()
-        self._slam_ok = state in ("ok", "tracking", "nominal")
+        self._slam_tracking_ok = state in ("ok", "tracking", "nominal")
+        self._slam_status_time = time.time()
 
-        if not self._slam_ok and self._phase not in (Phase.START, Phase.FINISH, Phase.ABORT):
+        if not self._slam_tracking_ok and self._phase not in (
+            Phase.START,
+            Phase.FINISH,
+            Phase.ABORT,
+        ):
             self.get_logger().warn(
                 f"SLAM 定位状态异常: {state}，当前阶段 {self._phase.label()}"
             )
@@ -1157,7 +1220,6 @@ class TaskManagerNode(Node):
         )
         self._last_odom_angular_speed = abs(twist.angular.z)
         self._last_odom_time = time.time()
-        self._slam_ok = True
 
     # ═══════════════════════════════════════════════════════════
     #  状态发布
@@ -1194,8 +1256,20 @@ class TaskManagerNode(Node):
             "phase": self._phase.name.lower(),
             "phase_label": self._phase.label(),
             "phase_elapsed_s": round(time.time() - self._phase_enter_time, 2),
-            "timeout_s": self._timeout_per_phase,
-            "slam_ok": self._slam_ok,
+            "timeout_s": self._phase_timeouts.get(
+                self._phase,
+                self._timeout_per_phase,
+            ),
+            "slam_tracking_ok": self._slam_tracking_ok,
+            "slam_ok": self._slam_tracking_ok,
+            "slam_status_age_s": (
+                round(time.time() - self._slam_status_time, 3)
+                if self._slam_status_time > 0.0 else None
+            ),
+            "odom_ok": (
+                time.time() - self._last_odom_time <= self._odom_timeout_sec
+                if self._last_odom_time > 0.0 else False
+            ),
             "odom_age_s": (
                 round(time.time() - self._last_odom_time, 3)
                 if self._last_odom_time > 0.0 else None
@@ -1203,6 +1277,8 @@ class TaskManagerNode(Node):
             "abnormal_zones": self._abnormal_zones,
             "abnormal_handled": self._abnormal_handled,
             "abort_reason": self._abort_reason,
+            "waypoint_source": self._waypoint_source,
+            "waypoint_route": self._waypoint_route,
             "navigation": self._nav.status_dict(),
             "depth": {
                 "enabled": self._enable_depth_milestones,

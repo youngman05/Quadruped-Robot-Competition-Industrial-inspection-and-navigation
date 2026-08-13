@@ -19,8 +19,17 @@ TRANSIT_DESCRIPTIONS = {
     "lower_corner_clear": "绕行下柜拐角",
 }
 
-OBSTACLE_ROUTE: Tuple[str, ...] = tuple(DEFAULT_INSPECTION_ROUTE[:3])
-INSPECTION_ROUTE: Tuple[str, ...] = tuple(DEFAULT_INSPECTION_ROUTE[2:])
+OBSTACLE_TO_INSPECTION_HANDOFF = "pos1_middle"
+_HANDOFF_INDEX = DEFAULT_INSPECTION_ROUTE.index(OBSTACLE_TO_INSPECTION_HANDOFF)
+OBSTACLE_ROUTE: Tuple[str, ...] = tuple(
+    DEFAULT_INSPECTION_ROUTE[: _HANDOFF_INDEX + 1]
+)
+INSPECTION_ROUTE: Tuple[str, ...] = tuple(
+    DEFAULT_INSPECTION_ROUTE[_HANDOFF_INDEX:]
+)
+MISSION_NAV_WAYPOINTS: Tuple[str, ...] = tuple(
+    dict.fromkeys(OBSTACLE_ROUTE + INSPECTION_ROUTE)
+)
 
 
 def observation_steps() -> Tuple[Dict[str, str], ...]:

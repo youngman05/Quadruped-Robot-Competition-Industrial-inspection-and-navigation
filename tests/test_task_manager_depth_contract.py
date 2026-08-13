@@ -41,6 +41,15 @@ class TaskManagerDepthContractTests(unittest.TestCase):
         params = COMPETITION_PARAMS.read_text(encoding="utf-8")
         for parameter in (
             "auto_advance",
+            "max_nav_retries",
+            "max_inspection_retries",
+            "finish_after_inspection",
+            "allow_placeholder_manipulation",
+            "pass_obstacle_timeout_sec",
+            "inspection_timeout_sec",
+            "waypoint_file",
+            "waypoint_route",
+            "expected_map_id",
             "enable_phase2_map_switch",
             "enable_depth_milestones",
             "depth_safety_status_topic",
@@ -59,6 +68,28 @@ class TaskManagerDepthContractTests(unittest.TestCase):
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.source)
+
+    def test_phase113_stops_after_inspection_and_rejects_placeholders(self):
+        for token in (
+            'declare_parameter("finish_after_inspection", False)',
+            'declare_parameter("allow_placeholder_manipulation", False)',
+            "if self._inspection_only or self._finish_after_inspection:",
+            "elif not self._allow_placeholder_manipulation:",
+            'self._abort("mechanical arm feedback is not implemented")',
+            'declare_parameter("pass_obstacle_timeout_sec", 120.0)',
+            'declare_parameter("inspection_timeout_sec", 300.0)',
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.source)
+
+    def test_slam_tracking_and_odom_readiness_are_separate(self):
+        self.assertIn("self._slam_tracking_ok", self.source)
+        self.assertIn('"slam_tracking_ok": self._slam_tracking_ok', self.source)
+        self.assertIn('"odom_ok": (', self.source)
+        odom_block = self.source.split("def _on_odom", 1)[1].split(
+            "# ═══════════════════════════════════════════════════════════", 1
+        )[0]
+        self.assertNotIn("_slam_tracking_ok", odom_block)
 
 
 if __name__ == "__main__":
