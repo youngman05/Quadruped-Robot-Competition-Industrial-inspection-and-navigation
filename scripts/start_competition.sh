@@ -626,6 +626,7 @@ ps -eo pcpu,pid,comm --sort=-pcpu 2>/dev/null | head -6 | tail -5
 # Success is a runtime acceptance result, not a process-start banner.
 STARTUP_LIFECYCLE_TIMEOUT_SEC="${STARTUP_LIFECYCLE_TIMEOUT_SEC:-90}"
 STARTUP_CLI_TIMEOUT_SEC="${STARTUP_CLI_TIMEOUT_SEC:-8}"
+STARTUP_LIFECYCLE_SNAPSHOT_RETRIES="${STARTUP_LIFECYCLE_SNAPSHOT_RETRIES:-3}"
 STARTUP_HEALTH_WINDOW_SEC="${STARTUP_HEALTH_WINDOW_SEC:-10}"
 STARTUP_MIN_SCAN_RATE_HZ="${STARTUP_MIN_SCAN_RATE_HZ:-8}"
 EXPECTED_CMD_VEL_SUBSCRIBERS="${EXPECTED_CMD_VEL_SUBSCRIBERS:-0}"
@@ -633,9 +634,11 @@ if $ENABLE_DOG || $ENABLE_CMD_VEL_BRIDGE; then
     EXPECTED_CMD_VEL_SUBSCRIBERS="${EXPECTED_CMD_VEL_SUBSCRIBERS_MOTION:-1}"
 fi
 
-case "$STARTUP_LIFECYCLE_TIMEOUT_SEC:$STARTUP_CLI_TIMEOUT_SEC:$EXPECTED_CMD_VEL_SUBSCRIBERS" in
+case "$STARTUP_LIFECYCLE_TIMEOUT_SEC:$STARTUP_CLI_TIMEOUT_SEC:$STARTUP_LIFECYCLE_SNAPSHOT_RETRIES:$EXPECTED_CMD_VEL_SUBSCRIBERS" in
     *[!0-9:]*|'') startup_no_go "startup timeout and subscriber settings must be non-negative integers" ;;
 esac
+[ "$STARTUP_LIFECYCLE_SNAPSHOT_RETRIES" -ge 1 ] \
+    || startup_no_go "startup lifecycle snapshot retries must be at least 1"
 
 LIFECYCLE_NODES=(map_server planner_server controller_server recoveries_server bt_navigator)
 ALL_LIFECYCLE_ACTIVE=false
@@ -658,8 +661,16 @@ $ALL_LIFECYCLE_ACTIVE \
     || startup_no_go "Nav2 lifecycle nodes did not all become active within ${STARTUP_LIFECYCLE_TIMEOUT_SEC}s"
 
 for node in "${LIFECYCLE_NODES[@]}"; do
-    state="$(timeout "$STARTUP_CLI_TIMEOUT_SEC" ros2 lifecycle get "/$node" 2>&1)" \
-        || startup_no_go "cannot read lifecycle state for /$node"
+    state=""
+    for attempt in $(seq 1 "$STARTUP_LIFECYCLE_SNAPSHOT_RETRIES"); do
+        state="$(timeout "$STARTUP_CLI_TIMEOUT_SEC" ros2 lifecycle get "/$node" 2>&1 || true)"
+        printf '%s\n' "$state" | grep -Fq 'active [3]' && break
+        kill -0 "$COMP_PID" 2>/dev/null \
+            || startup_no_go "competition launch exited while reading lifecycle state for /$node"
+        [ "$attempt" -lt "$STARTUP_LIFECYCLE_SNAPSHOT_RETRIES" ] && sleep 1
+    done
+    printf '%s\n' "$state" | grep -Fq 'active [3]' \
+        || startup_no_go "cannot confirm active lifecycle state for /$node after ${STARTUP_LIFECYCLE_SNAPSHOT_RETRIES} attempts"
     printf 'lifecycle.%s=%s\n' "$node" "$state" >> "$STARTUP_SNAPSHOT"
 done
 

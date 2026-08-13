@@ -110,6 +110,22 @@ class FormalStartupChainContractTests(unittest.TestCase):
         self.assertIn('snapshot_value "runtime_cuvslam_container"', self.script)
         self.assertNotIn("✅ 启动完成!", self.script)
 
+    def test_lifecycle_snapshot_retries_without_weakening_active_gate(self):
+        for token in (
+            'STARTUP_LIFECYCLE_SNAPSHOT_RETRIES="${STARTUP_LIFECYCLE_SNAPSHOT_RETRIES:-3}"',
+            'for attempt in $(seq 1 "$STARTUP_LIFECYCLE_SNAPSHOT_RETRIES")',
+            "grep -Fq 'active [3]' && break",
+            'kill -0 "$COMP_PID"',
+            'cannot confirm active lifecycle state for /$node after ${STARTUP_LIFECYCLE_SNAPSHOT_RETRIES} attempts',
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.script)
+        snapshot_block = self.script.split(
+            'for node in "${LIFECYCLE_NODES[@]}"; do', 2
+        )[2].split("CMD_VEL_INFO=", 1)[0]
+        self.assertIn("grep -Fq 'active [3]'", snapshot_block)
+        self.assertNotIn('state="active [3]"', snapshot_block)
+
     def test_phase113_preset_is_no_retry_and_calibration_gated(self):
         for token in (
             "--cone-to-whz-l6",
