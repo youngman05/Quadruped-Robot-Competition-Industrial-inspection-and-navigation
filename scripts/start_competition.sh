@@ -41,6 +41,13 @@ startup_no_go() {
     exit 1
 }
 
+# Supervisors may watch this path before the ROS launch starts. Remove stale
+# motion/status lines from an earlier run before any long preflight work.
+: > /tmp/competition.log || {
+    echo "ERROR: cannot reset /tmp/competition.log"
+    exit 1
+}
+
 snapshot_value() {
     printf '%s=%s\n' "$1" "$2" >> "$STARTUP_SNAPSHOT"
 }
@@ -82,6 +89,7 @@ TASK_ALLOW_PLACEHOLDER_MANIPULATION="${TASK_ALLOW_PLACEHOLDER_MANIPULATION:-fals
 TASK_PASS_OBSTACLE_TIMEOUT_SEC="${TASK_PASS_OBSTACLE_TIMEOUT_SEC:-180.0}"
 TASK_PASS_OBSTACLE_WAYPOINT_TIMEOUT_SEC="${TASK_PASS_OBSTACLE_WAYPOINT_TIMEOUT_SEC:-120.0}"
 TASK_INSPECTION_TIMEOUT_SEC="${TASK_INSPECTION_TIMEOUT_SEC:-300.0}"
+TASK_MISSION_START_ARMED="${TASK_MISSION_START_ARMED:-true}"
 TASK_WAYPOINT_FILE="${TASK_WAYPOINT_FILE:-}"
 TASK_WAYPOINT_ROUTE="${TASK_WAYPOINT_ROUTE:-inspection_interleaved}"
 TASK_EXPECTED_MAP_ID="${TASK_EXPECTED_MAP_ID:-}"
@@ -94,6 +102,7 @@ if $CONE_TO_WHZ_L6; then
     TASK_MAX_INSPECTION_RETRIES=0
     TASK_FINISH_AFTER_INSPECTION=true
     TASK_ALLOW_PLACEHOLDER_MANIPULATION=false
+    TASK_MISSION_START_ARMED=false
     TASK_WAYPOINT_FILE="${TASK_WAYPOINT_FILE:-$PROJECT_ROOT/configs/navigation/waypoints_real.yaml}"
 fi
 
@@ -198,6 +207,7 @@ snapshot_value "TASK_ALLOW_PLACEHOLDER_MANIPULATION" "$TASK_ALLOW_PLACEHOLDER_MA
 snapshot_value "TASK_PASS_OBSTACLE_TIMEOUT_SEC" "$TASK_PASS_OBSTACLE_TIMEOUT_SEC"
 snapshot_value "TASK_PASS_OBSTACLE_WAYPOINT_TIMEOUT_SEC" "$TASK_PASS_OBSTACLE_WAYPOINT_TIMEOUT_SEC"
 snapshot_value "TASK_INSPECTION_TIMEOUT_SEC" "$TASK_INSPECTION_TIMEOUT_SEC"
+snapshot_value "TASK_MISSION_START_ARMED" "$TASK_MISSION_START_ARMED"
 snapshot_value "TASK_WAYPOINT_FILE" "$TASK_WAYPOINT_FILE"
 snapshot_value "TASK_WAYPOINT_ROUTE" "$TASK_WAYPOINT_ROUTE"
 snapshot_value "TASK_EXPECTED_MAP_ID" "$TASK_EXPECTED_MAP_ID"
@@ -610,6 +620,7 @@ COMPETITION_LAUNCH_ARGS=(
   "pass_obstacle_timeout_sec:=$TASK_PASS_OBSTACLE_TIMEOUT_SEC"
   "pass_obstacle_waypoint_timeout_sec:=$TASK_PASS_OBSTACLE_WAYPOINT_TIMEOUT_SEC"
   "inspection_timeout_sec:=$TASK_INSPECTION_TIMEOUT_SEC"
+  "mission_start_armed:=$TASK_MISSION_START_ARMED"
   "waypoint_route:=$TASK_WAYPOINT_ROUTE"
   "auto_advance:=$AUTO_ADVANCE"
 )
@@ -895,10 +906,19 @@ if $CONE_TO_WHZ_L6; then
     require_exact_parameter /task_manager_node enable_cone_controller true
     require_exact_parameter /task_manager_node require_cone_layer_startup_ready true
     require_exact_parameter /task_manager_node cone_behavior_tree "$FORMAL_CONE_BEHAVIOR_TREE"
+    require_exact_parameter /task_manager_node mission_start_armed false
 fi
 
 kill -0 "$COMP_PID" 2>/dev/null \
     || startup_no_go "competition launch exited before the final acceptance result"
+
+if $CONE_TO_WHZ_L6; then
+    MISSION_ARM_RESULT="$(timeout "$STARTUP_CLI_TIMEOUT_SEC" \
+        ros2 param set /task_manager_node mission_start_armed true 2>&1)" \
+        || startup_no_go "cannot arm TaskManager after startup acceptance: $MISSION_ARM_RESULT"
+    snapshot_value "mission_start_arm_result" "$MISSION_ARM_RESULT"
+    require_exact_parameter /task_manager_node mission_start_armed true
+fi
 
 echo ''
 echo '==================================='

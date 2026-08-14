@@ -59,6 +59,7 @@ def generate_launch_description() -> LaunchDescription:
     whz_required_frames = LaunchConfiguration("whz_required_frames")
     whz_min_agree_frames = LaunchConfiguration("whz_min_agree_frames")
     auto_advance = LaunchConfiguration("auto_advance", default="false")
+    mission_start_armed = LaunchConfiguration("mission_start_armed", default="true")
     max_nav_retries = LaunchConfiguration("max_nav_retries", default="3")
     max_inspection_retries = LaunchConfiguration("max_inspection_retries", default="3")
     finish_after_inspection = LaunchConfiguration("finish_after_inspection", default="false")
@@ -179,6 +180,10 @@ def generate_launch_description() -> LaunchDescription:
         "auto_advance", default_value="false",
         description="调试模式：跳过部分任务等待条件"
     )
+    declare_mission_start_armed = DeclareLaunchArgument(
+        "mission_start_armed", default_value="true",
+        description="允许 TaskManager 从 START 推进；正式启动验收期间设为 false。",
+    )
     declare_max_nav_retries = DeclareLaunchArgument(
         "max_nav_retries", default_value="3",
         description="TaskManager 对失败 Nav2 goal 的重新提交次数",
@@ -278,6 +283,9 @@ def generate_launch_description() -> LaunchDescription:
             str(PARAMS_FILE),
             {
                 "auto_advance": auto_advance,
+                "mission_start_armed": ParameterValue(
+                    mission_start_armed, value_type=bool
+                ),
                 "max_nav_retries": ParameterValue(max_nav_retries, value_type=int),
                 "max_inspection_retries": ParameterValue(
                     max_inspection_retries, value_type=int
@@ -472,6 +480,7 @@ def generate_launch_description() -> LaunchDescription:
         declare_whz_required_frames,
         declare_whz_min_agree_frames,
         declare_auto_advance,
+        declare_mission_start_armed,
         declare_max_nav_retries,
         declare_max_inspection_retries,
         declare_finish_after_inspection,

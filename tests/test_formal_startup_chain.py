@@ -6,6 +6,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 START_SCRIPT = REPO_ROOT / "scripts" / "start_competition.sh"
+ROSBAG_SCRIPT = REPO_ROOT / "scripts" / "record_formal_l6_rosbag.sh"
 HEALTH_PROBE = REPO_ROOT / "scripts" / "cone_startup_health_probe.py"
 BASE_PARAMS = REPO_ROOT / "configs" / "navigation" / "nav2_params.yaml"
 CONE_PARAMS = REPO_ROOT / "configs" / "navigation" / "nav2_cone_obstacles.yaml"
@@ -111,6 +112,49 @@ class FormalStartupChainContractTests(unittest.TestCase):
         self.assertIn('docker stop -t 10 "$RUNTIME_CUVSLAM_CONTAINER"', self.script)
         self.assertIn('snapshot_value "runtime_cuvslam_container"', self.script)
         self.assertNotIn("✅ 启动完成!", self.script)
+
+    def test_formal_l6_is_armed_only_after_every_acceptance_gate(self):
+        arm = self.script.index(
+            "ros2 param set /task_manager_node mission_start_armed true"
+        )
+        banner = self.script.index("GO: 启动完成，运行验收通过!")
+        self.assertIn("TASK_MISSION_START_ARMED=false", self.script)
+        self.assertIn(
+            '"mission_start_armed:=$TASK_MISSION_START_ARMED"', self.script
+        )
+        disarmed_check = self.script.index(
+            "require_exact_parameter /task_manager_node mission_start_armed false"
+        )
+        armed_check = self.script.index(
+            "require_exact_parameter /task_manager_node mission_start_armed true"
+        )
+        for token in (
+            "cone scan publisher/subscriber QoS is incomplete or incompatible",
+            "cone_startup_health_probe.py",
+            "planner_server did not map the pinned",
+            "require_exact_parameter /task_manager_node cone_behavior_tree",
+            'kill -0 "$COMP_PID"',
+        ):
+            with self.subTest(token=token):
+                self.assertLess(self.script.rindex(token, 0, arm), arm)
+        self.assertLess(disarmed_check, arm)
+        self.assertLess(arm, armed_check)
+        self.assertLess(armed_check, banner)
+
+    def test_supervisor_log_is_reset_before_runtime_preflight(self):
+        reset = self.script.index(": > /tmp/competition.log")
+        cleanup = self.script.index("echo '[0/6] 清理旧进程...'")
+        self.assertLess(reset, cleanup)
+
+    def test_formal_rosbag_wrapper_always_uses_foxy_qos_override(self):
+        wrapper = ROSBAG_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn(
+            'QOS_OVERRIDE="$PROJECT_ROOT/configs/ros/cone_rosbag_qos.yaml"',
+            wrapper,
+        )
+        self.assertIn("exec ros2 bag record", wrapper)
+        self.assertIn('--qos-profile-overrides-path "$QOS_OVERRIDE"', wrapper)
+        self.assertNotIn("/cmd_vel_arbiter/mode", wrapper)
 
     def test_lifecycle_snapshot_retries_without_weakening_active_gate(self):
         for token in (

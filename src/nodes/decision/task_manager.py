@@ -145,6 +145,7 @@ class TaskManagerNode(Node):
         self.declare_parameter("tick_rate", 10.0)             # 状态机主循环频率 (Hz)
         self.declare_parameter("require_stable_gauge", True)  # 是否必须稳定检测
         self.declare_parameter("auto_advance", False)         # 调试: 自动推进阶段
+        self.declare_parameter("mission_start_armed", True)
 
         self.declare_parameter("phase2_map_yaml", "navi/map/competition_field_phase2.yaml")
         self.declare_parameter("gauge_topic", "/gauge/status")
@@ -348,7 +349,11 @@ class TaskManagerNode(Node):
         self._mission_start_cone_layers_ready = (
             not self._require_cone_layer_startup_ready
         )
-        self._mission_start_wait_reason = "waiting for fresh odometry"
+        self._mission_start_wait_reason = (
+            "waiting for fresh odometry"
+            if self._mission_start_is_armed()
+            else "waiting for mission start arm"
+        )
 
         # ── 地图切换客户端 ────────────────────────
         self._phase2_yaml = str(self.get_parameter("phase2_map_yaml").value)
@@ -469,6 +474,7 @@ class TaskManagerNode(Node):
             f"| cone_controller={enable_cone_controller} "
             f"| cone_behavior_tree={cone_behavior_tree if enable_cone_controller else 'default'} "
             f"| depth_milestones={self._enable_depth_milestones} "
+            f"| mission_start_armed={self._mission_start_is_armed()} "
             f"| phase2_map_switch={self._enable_phase2_map_switch}"
         )
 
@@ -508,6 +514,13 @@ class TaskManagerNode(Node):
 
     def _tick_start(self, elapsed: float) -> None:
         """START: 等待各子系统就绪后自动推进。"""
+        if not self._mission_start_is_armed():
+            self._set_mission_start_wait_reason("waiting for mission start arm")
+            return
+        if self._mission_start_wait_reason == "waiting for mission start arm":
+            self.get_logger().info("START armed by the startup acceptance gate")
+            self._mission_start_wait_reason = "waiting for fresh odometry"
+
         odom_fresh = (time.time() - self._last_odom_time) <= self._odom_timeout_sec
         if (
             self._enable_depth_milestones
@@ -1029,6 +1042,20 @@ class TaskManagerNode(Node):
             stationary,
         )
 
+    def _mission_start_is_armed(self) -> bool:
+        return bool(self.get_parameter("mission_start_armed").value)
+
+    def _set_mission_start_wait_reason(self, reason: str) -> None:
+        if reason == self._mission_start_wait_reason:
+            return
+        if reason:
+            self.get_logger().info("START readiness: %s" % reason)
+        else:
+            self.get_logger().info(
+                "START readiness confirmed: Nav2 lifecycle, action, and cone costmaps ready"
+            )
+        self._mission_start_wait_reason = reason
+
     def _mission_start_prerequisites_ready(self) -> bool:
         nav_ready, nav_reason = self._nav.startup_readiness()
         self._mission_start_nav_ready = nav_ready
@@ -1045,14 +1072,7 @@ class TaskManagerNode(Node):
             reason = self._depth_mode_client.cone_layer_baseline_reason
         else:
             reason = ""
-        if reason != self._mission_start_wait_reason:
-            if reason:
-                self.get_logger().info("START readiness: %s" % reason)
-            else:
-                self.get_logger().info(
-                    "START readiness confirmed: Nav2 lifecycle, action, and cone costmaps ready"
-                )
-            self._mission_start_wait_reason = reason
+        self._set_mission_start_wait_reason(reason)
         return not reason
 
     def _ensure_depth_mode(self, mode, milestone: str) -> bool:
@@ -1367,6 +1387,7 @@ class TaskManagerNode(Node):
             "waypoint_source": self._waypoint_source,
             "waypoint_route": self._waypoint_route,
             "mission_start_readiness": {
+                "armed": self._mission_start_is_armed(),
                 "nav2_lifecycle_action_ready": self._mission_start_nav_ready,
                 "cone_layer_baseline_required": (
                     self._require_cone_layer_startup_ready

@@ -47,6 +47,7 @@ class TaskManagerDepthContractTests(unittest.TestCase):
         params = COMPETITION_PARAMS.read_text(encoding="utf-8")
         for parameter in (
             "auto_advance",
+            "mission_start_armed",
             "max_nav_retries",
             "max_inspection_retries",
             "finish_after_inspection",
@@ -95,6 +96,26 @@ class TaskManagerDepthContractTests(unittest.TestCase):
         ):
             self.assertIn(token, navigation_client)
         self.assertNotIn("spin_until_future_complete", navigation_client)
+
+    def test_mission_start_arm_is_dynamic_and_defaults_to_compatible_true(self):
+        launch_source = COMPETITION_LAUNCH.read_text(encoding="utf-8")
+        start_block = self.source.split("def _tick_start", 1)[1].split(
+            "def _tick_pass_obstacle", 1
+        )[0]
+        self.assertIn('declare_parameter("mission_start_armed", True)', self.source)
+        self.assertIn('get_parameter("mission_start_armed").value', self.source)
+        self.assertLess(
+            start_block.index("if not self._mission_start_is_armed():"),
+            start_block.index("self._mission_start_prerequisites_ready()"),
+        )
+        self.assertLess(
+            start_block.index("if not self._mission_start_is_armed():"),
+            start_block.index("self._auto_advance"),
+        )
+        self.assertIn(
+            '"mission_start_armed", default_value="true"', launch_source
+        )
+        self.assertIn('"mission_start_armed": ParameterValue(', launch_source)
 
     def test_task_manager_uses_safe_route_transits_and_approach_names(self):
         for token in (
