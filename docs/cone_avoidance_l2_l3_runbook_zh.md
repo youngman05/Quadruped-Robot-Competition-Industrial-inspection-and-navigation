@@ -89,7 +89,7 @@ test ! -s "$EVIDENCE/forbidden_processes_before.txt" \
 ```bash
 export CONE_PLUGIN_WS="$HOME/cone_l2_plugin_ws_2_2_1"
 test -f "$CONE_PLUGIN_WS/install/local_setup.bash" \
-  || { echo "STOP: pinned NonPersistentVoxelLayer overlay is missing"; exit 1; }
+  || { echo "STOP: pinned cone plugin overlay is missing"; exit 1; }
 ```
 
 ### 4.1 记录 Foxy 与插件来源
@@ -102,18 +102,20 @@ source "$CONE_PLUGIN_WS/install/local_setup.bash"
 ros2 pkg prefix nav2_costmap_2d | tee "$EVIDENCE/nav2_costmap_prefix.txt"
 ros2 pkg prefix nonpersistent_voxel_layer \
   | tee "$EVIDENCE/nonpersistent_voxel_layer_prefix.txt"
+ros2 pkg prefix cone_inflated_voxel_layer \
+  | tee "$EVIDENCE/cone_inflated_voxel_layer_prefix.txt"
 dpkg-query -W 'ros-foxy-nav2-*' 2>/dev/null \
   | sort | tee "$EVIDENCE/nav2_packages.txt"
 
-PLUGIN_PREFIX="$(ros2 pkg prefix nonpersistent_voxel_layer)"
-grep -R -n 'nav2_costmap_2d/NonPersistentVoxelLayer' \
-  "$PLUGIN_PREFIX/share/nonpersistent_voxel_layer" \
-  | tee "$EVIDENCE/nonpersistent_plugin.txt"
-test -s "$EVIDENCE/nonpersistent_plugin.txt" \
-  || { echo "STOP: NonPersistentVoxelLayer is not installed"; exit 1; }
+PLUGIN_PREFIX="$(ros2 pkg prefix cone_inflated_voxel_layer)"
+grep -R -n 'cone_inflated_voxel_layer/ConeInflatedVoxelLayer' \
+  "$PLUGIN_PREFIX/share/cone_inflated_voxel_layer" \
+  | tee "$EVIDENCE/cone_inflated_plugin.txt"
+test -s "$EVIDENCE/cone_inflated_plugin.txt" \
+  || { echo "STOP: ConeInflatedVoxelLayer is not installed"; exit 1; }
 ```
 
-`nonpersistent_voxel_layer` 是独立 ROS 包，不是 `nav2_costmap_2d` share 目录中的内置类。这里以独立包的插件 XML 中实际存在 `nav2_costmap_2d/NonPersistentVoxelLayer` 为准，不能只根据 apt 包名或系统 `nav2_costmap_2d` 版本推断已安装。
+`cone_inflated_voxel_layer` 是本仓库的独立 C++ 插件包，运行时依赖同一 overlay 中固定在 `0704666393ef1747562a93d934923fa45a3a8d4b` 的 `nonpersistent_voxel_layer` 源码。这里以新包插件 XML 中实际存在 `cone_inflated_voxel_layer/ConeInflatedVoxelLayer` 为准，不能只根据旧依赖包或系统 `nav2_costmap_2d` 版本推断已安装。
 
 ### 4.2 构建并核对安装路径
 
@@ -121,6 +123,16 @@ test -s "$EVIDENCE/nonpersistent_plugin.txt" \
 cd "$REPO"
 export CONE_PLUGIN_WS="$HOME/cone_l2_plugin_ws_2_2_1"
 source /opt/ros/foxy/setup.bash
+source "$CONE_PLUGIN_WS/install/local_setup.bash"
+(
+  cd "$CONE_PLUGIN_WS" &&
+  colcon build --symlink-install \
+    --base-paths "$CONE_PLUGIN_WS/src" "$REPO/ros2_plugins" \
+    --packages-select cone_inflated_voxel_layer \
+    --cmake-args \
+      -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+      -DNONPERSISTENT_VOXEL_LAYER_SOURCE_INCLUDE="$CONE_PLUGIN_WS/src/nonpersistent_voxel_layer/include"
+) 2>&1 | tee "$EVIDENCE/cone_plugin_build.log"
 source "$CONE_PLUGIN_WS/install/local_setup.bash"
 colcon build --symlink-install --packages-select quadruped_robot_competition \
   2>&1 | tee "$EVIDENCE/colcon_build.log"
@@ -425,7 +437,7 @@ PY
 - 锥桶进入后，local/global costmap 都必须在对应方向产生致命/膨胀代价；`global_cone_in.json` 相对 clear baseline 必须变化。这证明 NavFn 能看见锥桶，不等同于已证明物理绕行。
 - `CONE_OUT` 只是人工操作标记，不作为清除计时起点。离线从 bag 中找出最后一帧仍含锥桶聚类的 `/cone_obstacle/scan` source timestamp，并用对应 `/cone_obstacle/health` 的 `sequence/source_timestamp_ns` 交叉确认；分别计到第一帧不再含该锥桶动态连通区的已发布 local/global costmap。
 - 正式 `observation_persistence=1.5 s`。初始清除合同分别为 local 不超过 `2.5 s`（5 Hz 更新、2 Hz 发布）和 global 不超过 `3.5 s`（1 Hz 更新、1 Hz 发布），均包含调度余量。至少记录实测值，积累重复数据后才能收紧阈值，不能从首个 clear scan 或 `CONE_OUT` 直接推算通过。
-- `NonPersistentVoxelLayer` 仍每周期重置；1.5 s 缓冲中的观测会在重置后重新标记，完全过期后才消失，不依赖 raytrace clearing。
+- `ConeInflatedVoxelLayer` 仍由基类每周期重置锥桶私有栅格；1.5 s 缓冲中的观测会在重置后重新标记，完全过期后定向重算上一 halo 区域，不依赖全图 clear 或 raytrace clearing。
 - 首次 `healthy=true` 到第三个连续健康帧之前，gate 不得 `allowed=true`。
 - 记录首次 local/global 标记与首次 `allowed=true` 的时间差。若存在锥桶时 gate 已放行，但任一 costmap 在随后一个自身更新周期内仍未标记，判 NO-GO。
 - 在机器狗和相机全程静止、且 observation buffer 完全过期后，local/global clear-before 与 clear-after 的 `data_sha256` 都必须一致；header 时间不参与哈希。后续运动中的 rolling local costmap 不使用逐字节哈希，应改看致命格数量、连通区域和空间位置。
@@ -505,7 +517,7 @@ docker ps --format '{{.Names}}' | grep -F "$L3D_CONTAINER" \
 | 项目 | GO 条件 |
 |---|---|
 | 来源 | clean HEAD、SHA、build/install/import 路径一致 |
-| 插件 | configure-only 成功，`NonPersistentVoxelLayer` 实际加载 |
+| 插件 | configure-only 成功，`ConeInflatedVoxelLayer` 实际加载，local/global 进程映射新 `.so` |
 | 隔离探针 | 全部步骤通过，失败也写 JSON，无残留子进程 |
 | 故障关闭 | CRC、时间戳、序号、几何、深度、断流均归零，最大延迟不超过 250 ms |
 | 恢复 | 新 stream 与初始 stream 都必须重新累计 3 个健康帧 |

@@ -84,7 +84,7 @@ def generate_launch_description() -> LaunchDescription:
         "enable_cone_avoidance",
         default_value="false",
         description=(
-            "Enable latest-only D455 LaserScan UDP, local/global NonPersistentVoxelLayer, "
+            "Enable latest-only D455 LaserScan UDP, local/global ConeInflatedVoxelLayer, "
             "and the fail-closed cone scan velocity gate."
         ),
     )

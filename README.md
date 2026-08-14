@@ -143,7 +143,7 @@ map -> odom -> base_link -> camera_link -> camera_infra*
 
 ### Nav2 导航
 
-导航主线是 **Nav2 + PGM 静态地图 + D455 深度扫描避障**。锥桶避障为显式 opt-in：Humble 容器内完成 decimation、点云投影、TF 和高度过滤，只把约 180 束 `LaserScan` 通过 latest-only UDP 送到 Foxy；Host 在 local/global costmap 中加载同一个 `NonPersistentVoxelLayer`，使 NavFn 先规划绕开锥桶，再由 DWB 跟踪可行路径。
+导航主线是 **Nav2 + PGM 静态地图 + D455 深度扫描避障**。锥桶避障为显式 opt-in：Humble 容器内完成 decimation、点云投影、TF 和高度过滤，只把约 180 束 `LaserScan` 通过 latest-only UDP 送到 Foxy；Host 在 local/global costmap 中加载同一个 `ConeInflatedVoxelLayer`，只对锥桶应用较宽代价带，使 NavFn 先规划绕开锥桶，同时保留静态柜体窄通道能力。
 
 仓库内相关文件：
 
@@ -165,7 +165,7 @@ Nav2 配置要点：
 | 定位 | cuVSLAM，不使用 AMCL |
 | 全局规划器 | NavFn，`use_astar: true` |
 | 局部控制器 | DWB |
-| 局部避障 | D455 depth -> decimation x4 -> base_link LaserScan UDP -> NonPersistentVoxelLayer（仅 local） |
+| 锥桶避障 | D455 depth -> decimation x4 -> base_link LaserScan UDP -> ConeInflatedVoxelLayer（local/global） |
 | 机器人 footprint | 约 `1.0 m x 0.5 m` |
 
 导航任务点定义在 `navigation_client.py` 和 `navi/map/navi_map_data.py` 中，包括：

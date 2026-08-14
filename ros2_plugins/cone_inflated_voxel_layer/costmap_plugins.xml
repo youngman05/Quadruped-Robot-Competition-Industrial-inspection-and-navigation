@@ -1,0 +1,10 @@
+<library path="cone_inflated_voxel_layer_core">
+  <class
+    name="cone_inflated_voxel_layer/ConeInflatedVoxelLayer"
+    type="cone_inflated_voxel_layer::ConeInflatedVoxelLayer"
+    base_class_type="nav2_costmap_2d::Layer">
+    <description>
+      Non-persistent voxel observations with source-local inflation and applied-state acknowledgement.
+    </description>
+  </class>
+</library>

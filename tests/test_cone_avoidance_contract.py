@@ -16,9 +16,38 @@ CONE_EXPERIMENT_PARAMS = (
 )
 BASE_PARAMS = REPO_ROOT / "configs" / "navigation" / "nav2_params.yaml"
 CONE_DOCKERFILE = REPO_ROOT / "docker" / "Dockerfile.cuvslam-cone"
+CONE_PLUGIN_PACKAGE = REPO_ROOT / "ros2_plugins" / "cone_inflated_voxel_layer"
 
 
 class ConeAvoidanceContractTests(unittest.TestCase):
+    def test_cone_plugin_package_exports_source_specific_layer(self):
+        expected_files = (
+            "CMakeLists.txt",
+            "package.xml",
+            "costmap_plugins.xml",
+            "include/cone_inflated_voxel_layer/cone_inflated_voxel_layer.hpp",
+            "src/cone_inflated_voxel_layer.cpp",
+            "test/test_cone_inflation.cpp",
+        )
+        for relative_path in expected_files:
+            self.assertTrue((CONE_PLUGIN_PACKAGE / relative_path).is_file())
+
+        cmake = (CONE_PLUGIN_PACKAGE / "CMakeLists.txt").read_text(encoding="utf-8")
+        plugin_xml = (CONE_PLUGIN_PACKAGE / "costmap_plugins.xml").read_text(
+            encoding="utf-8"
+        )
+        source = (
+            CONE_PLUGIN_PACKAGE / "src" / "cone_inflated_voxel_layer.cpp"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "cone_inflated_voxel_layer/ConeInflatedVoxelLayer",
+            plugin_xml,
+        )
+        self.assertIn("NONPERSISTENT_VOXEL_LAYER_SOURCE_INCLUDE", cmake)
+        self.assertIn("touchBounds(halo_bounds_", source)
+        self.assertIn("completed_status_pending_ = true", source)
+        self.assertIn('name_ + "/applied_status"', source)
+
     def test_single_realsense_owner_generates_decimated_base_link_scan(self):
         source = CUVSLAM_START.read_text(encoding="utf-8")
         self.assertEqual(source.count("realsense_camera_node = Node("), 1)
@@ -39,7 +68,7 @@ class ConeAvoidanceContractTests(unittest.TestCase):
         self.assertIn("global_costmap:", overlay)
         for token in (
             'plugins: ["static_layer", "cone_obstacle_layer", "inflation_layer"]',
-            "nav2_costmap_2d/NonPersistentVoxelLayer",
+            "cone_inflated_voxel_layer/ConeInflatedVoxelLayer",
             'topic: "/cone_obstacle/scan"',
             'data_type: "LaserScan"',
             "origin_z: 0.0",
@@ -50,6 +79,10 @@ class ConeAvoidanceContractTests(unittest.TestCase):
             "inflation_radius: 0.60",
         ):
             self.assertEqual(overlay.count(token), 2, token)
+        self.assertEqual(
+            overlay.count('plugin: "nav2_costmap_2d::InflationLayer"'),
+            2,
+        )
         self.assertIn("ObstacleFootprint.scale: 1.0", overlay)
         self.assertIn("vtheta_samples: 21", overlay)
         self.assertIn("sim_time: 2.5", overlay)
@@ -209,7 +242,11 @@ class ConeAvoidanceContractTests(unittest.TestCase):
         self.assertIn('"cone_obstacle_layer.enabled"', gate)
         self.assertIn('node + "/set_parameters"', gate)
         self.assertIn('node + "/get_parameters"', gate)
-        self.assertIn("ClearEntireCostmap", gate)
+        self.assertIn("ConeLayerAppliedTracker", gate)
+        self.assertIn("waiting_layer_apply", gate)
+        self.assertNotIn("ClearEntireCostmap", gate)
+        self.assertNotIn("clear_entirely_local_costmap", gate)
+        self.assertNotIn("clear_entirely_global_costmap", gate)
         self.assertIn("require_scan_health=require_scan_health", gate)
 
     def test_cone_image_dependency_is_pinned_and_checked_without_devices(self):
@@ -252,12 +289,13 @@ class ConeAvoidanceContractTests(unittest.TestCase):
             with self.subTest(message=message):
                 self.assertIn('startup_no_go "' + message, source)
 
-    def test_package_installs_bridge_gate_and_nonpersistent_dependency(self):
+    def test_package_installs_bridge_gate_and_cone_plugin_dependency(self):
         setup = (REPO_ROOT / "setup.py").read_text(encoding="utf-8")
         package = (REPO_ROOT / "package.xml").read_text(encoding="utf-8")
         self.assertIn("cone_scan_udp_bridge =", setup)
         self.assertIn("cone_scan_safety_gate =", setup)
-        self.assertIn("<exec_depend>nonpersistent_voxel_layer</exec_depend>", package)
+        self.assertIn("<exec_depend>cone_inflated_voxel_layer</exec_depend>", package)
+        self.assertNotIn("<exec_depend>nonpersistent_voxel_layer</exec_depend>", package)
         self.assertIn("<exec_depend>rcl_interfaces</exec_depend>", package)
 
 

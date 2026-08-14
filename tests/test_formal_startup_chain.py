@@ -57,7 +57,7 @@ class FormalStartupChainContractTests(unittest.TestCase):
 
     def test_non_cone_mode_does_not_require_plugin_package(self):
         package_lookup = self.script.index(
-            "ros2 pkg prefix nonpersistent_voxel_layer"
+            "ros2 pkg prefix cone_inflated_voxel_layer"
         )
         enclosing_guard = self.script.rfind(
             "if $ENABLE_CONE_AVOIDANCE; then", 0, package_lookup
@@ -68,11 +68,13 @@ class FormalStartupChainContractTests(unittest.TestCase):
 
     def test_preflight_proves_packages_plugin_xml_and_library(self):
         for token in (
-            "ros2 pkg prefix nonpersistent_voxel_layer",
+            "ros2 pkg prefix cone_inflated_voxel_layer",
             "ros2 pkg prefix nav2_bt_navigator",
             "ros2 pkg prefix quadruped_robot_competition",
-            "nav2_costmap_2d/NonPersistentVoxelLayer",
-            "libnonpersistent_voxel_layer_core.so",
+            "cone_inflated_voxel_layer/ConeInflatedVoxelLayer",
+            "libcone_inflated_voxel_layer_core.so",
+            "NONPERSISTENT_VOXEL_LAYER_SOURCE_INCLUDE",
+            "0704666393ef1747562a93d934923fa45a3a8d4b",
             'snapshot_value "plugin_library"',
             'snapshot_value "plugin_library_real"',
             'pkg_resources.load_entry_point(',
@@ -223,14 +225,23 @@ class FormalStartupChainContractTests(unittest.TestCase):
         self.assertIn('CONE_NAV2_PROFILE="formal"', self.script)
         self.assertIn('CONE_NAV2_PROFILE="experimental"', self.script)
         self.assertIn(
-            'inflation_layer.inflation_radius "$CONE_EXPECTED_INFLATION_RADIUS"',
+            'cone_obstacle_layer.inflation_radius "$CONE_EXPECTED_INFLATION_RADIUS"',
             self.script,
         )
+        self.assertIn("inflation_layer.inflation_radius 0.30", self.script)
+        self.assertIn("inflation_layer.cost_scaling_factor 3.0", self.script)
         self.assertIn(
             'FollowPath.sim_time "$CONE_EXPECTED_SIM_TIME"',
             self.script,
         )
         self.assertIn("inflation_radius: 0.75", experimental)
+
+    def test_cone_plugin_build_precedes_runtime_mutation(self):
+        build = self.script.index("--packages-select cone_inflated_voxel_layer")
+        cleanup = self.script.index("echo '[0/6] 清理旧进程...'")
+        docker = self.script.index("echo '[1/6] Docker cuVSLAM...'")
+        self.assertLess(build, cleanup)
+        self.assertLess(build, docker)
 
 
 class ConeStartupHealthProbeTests(unittest.TestCase):

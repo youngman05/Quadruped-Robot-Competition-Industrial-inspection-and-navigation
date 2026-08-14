@@ -167,10 +167,14 @@ fi
 # local_setup.bash keeps each overlay independent instead of following a
 # workspace setup.bash chain that may reintroduce a legacy deployment prefix.
 FOXY_SETUP="${FOXY_SETUP:-/opt/ros/foxy/setup.bash}"
-CONE_PLUGIN_OVERLAY_SETUP="${CONE_PLUGIN_OVERLAY_SETUP:-$HOME/cone_l2_plugin_ws_2_2_1/install/local_setup.bash}"
+CONE_PLUGIN_WS="${CONE_PLUGIN_WS:-$HOME/cone_l2_plugin_ws_2_2_1}"
+CONE_PLUGIN_OVERLAY_SETUP="${CONE_PLUGIN_OVERLAY_SETUP:-$CONE_PLUGIN_WS/install/local_setup.bash}"
 NAV2_BT_OVERLAY_SETUP="${NAV2_BT_OVERLAY_SETUP:-$HOME/nav2_foxy_overlay_ws/install/local_setup.bash}"
 FORMAL_DEPLOY_SETUP="${FORMAL_DEPLOY_SETUP:-$PROJECT_ROOT/install/local_setup.bash}"
 BASE_NAV2_PARAMS_FILE="$PROJECT_ROOT/configs/navigation/nav2_params.yaml"
+NONPERSISTENT_VOXEL_LAYER_SOURCE="$CONE_PLUGIN_WS/src/nonpersistent_voxel_layer"
+NONPERSISTENT_VOXEL_LAYER_COMMIT="0704666393ef1747562a93d934923fa45a3a8d4b"
+CONE_PLUGIN_SOURCE="$PROJECT_ROOT/ros2_plugins/cone_inflated_voxel_layer"
 
 : > "$STARTUP_SNAPSHOT" || startup_no_go "cannot create startup snapshot: $STARTUP_SNAPSHOT"
 snapshot_value "STARTUP_TIMESTAMP" "$STARTUP_TIMESTAMP"
@@ -179,6 +183,7 @@ snapshot_value "CONE_MODE_CONTROL" "$ENABLE_CONE_MODE_CONTROL"
 snapshot_value "CONE_TO_WHZ_L6" "$CONE_TO_WHZ_L6"
 snapshot_value "VERIFY_DEPTH_DISABLE_LOCALIZATION" "$VERIFY_DEPTH_DISABLE_LOCALIZATION"
 snapshot_value "FOXY_SETUP" "$FOXY_SETUP"
+snapshot_value "CONE_PLUGIN_WS" "$CONE_PLUGIN_WS"
 snapshot_value "CONE_PLUGIN_OVERLAY_SETUP" "$CONE_PLUGIN_OVERLAY_SETUP"
 snapshot_value "NAV2_BT_OVERLAY_SETUP" "$NAV2_BT_OVERLAY_SETUP"
 snapshot_value "FORMAL_DEPLOY_SETUP" "$FORMAL_DEPLOY_SETUP"
@@ -203,9 +208,31 @@ source "$FOXY_SETUP" || startup_no_go "failed to source Foxy setup: $FOXY_SETUP"
 if $ENABLE_CONE_AVOIDANCE; then
     [ -f "$CONE_PLUGIN_OVERLAY_SETUP" ] \
         || startup_no_go "pinned cone plugin overlay is missing: $CONE_PLUGIN_OVERLAY_SETUP"
+    [ -f "$CONE_PLUGIN_SOURCE/package.xml" ] \
+        || startup_no_go "ConeInflatedVoxelLayer source package is missing: $CONE_PLUGIN_SOURCE"
+    [ -f "$NONPERSISTENT_VOXEL_LAYER_SOURCE/include/nonpersistent_voxel_layer/nonpersistent_voxel_layer.hpp" ] \
+        || startup_no_go "pinned NonPersistentVoxelLayer source header is missing"
+    ACTUAL_NONPERSISTENT_COMMIT="$(git -C "$NONPERSISTENT_VOXEL_LAYER_SOURCE" rev-parse HEAD 2>/dev/null)" \
+        || startup_no_go "cannot read pinned NonPersistentVoxelLayer source commit"
+    [ "$ACTUAL_NONPERSISTENT_COMMIT" = "$NONPERSISTENT_VOXEL_LAYER_COMMIT" ] \
+        || startup_no_go "NonPersistentVoxelLayer source commit is $ACTUAL_NONPERSISTENT_COMMIT; expected $NONPERSISTENT_VOXEL_LAYER_COMMIT"
+    snapshot_value "nonpersistent_voxel_layer_source_commit" "$ACTUAL_NONPERSISTENT_COMMIT"
     # shellcheck disable=SC1090
     source "$CONE_PLUGIN_OVERLAY_SETUP" \
         || startup_no_go "failed to source cone plugin overlay: $CONE_PLUGIN_OVERLAY_SETUP"
+    (
+        cd "$CONE_PLUGIN_WS" &&
+        colcon build \
+            --symlink-install \
+            --base-paths "$CONE_PLUGIN_WS/src" "$PROJECT_ROOT/ros2_plugins" \
+            --packages-select cone_inflated_voxel_layer \
+            --cmake-args \
+                -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+                -DNONPERSISTENT_VOXEL_LAYER_SOURCE_INCLUDE="$NONPERSISTENT_VOXEL_LAYER_SOURCE/include"
+    ) || startup_no_go "ConeInflatedVoxelLayer overlay build failed"
+    # shellcheck disable=SC1090
+    source "$CONE_PLUGIN_OVERLAY_SETUP" \
+        || startup_no_go "failed to re-source rebuilt cone plugin overlay"
 fi
 
 [ -f "$NAV2_BT_OVERLAY_SETUP" ] \
@@ -241,24 +268,24 @@ PLUGIN_PREFIX="disabled"
 PLUGIN_XML="disabled"
 PLUGIN_LIBRARY="disabled"
 if $ENABLE_CONE_AVOIDANCE; then
-    PLUGIN_PREFIX="$(ros2 pkg prefix nonpersistent_voxel_layer 2>/dev/null)" \
-        || startup_no_go "nonpersistent_voxel_layer package is not resolvable"
+    PLUGIN_PREFIX="$(ros2 pkg prefix cone_inflated_voxel_layer 2>/dev/null)" \
+        || startup_no_go "cone_inflated_voxel_layer package is not resolvable"
     CONE_PLUGIN_INSTALL_ROOT="$(cd "$(dirname "$CONE_PLUGIN_OVERLAY_SETUP")" && pwd -P)"
     case "$PLUGIN_PREFIX" in
         "$CONE_PLUGIN_INSTALL_ROOT"/*) ;;
-        *) startup_no_go "nonpersistent_voxel_layer resolved outside the pinned overlay: $PLUGIN_PREFIX" ;;
+        *) startup_no_go "cone_inflated_voxel_layer resolved outside the pinned overlay: $PLUGIN_PREFIX" ;;
     esac
-    PLUGIN_SHARE="$PLUGIN_PREFIX/share/nonpersistent_voxel_layer"
+    PLUGIN_SHARE="$PLUGIN_PREFIX/share/cone_inflated_voxel_layer"
     [ -d "$PLUGIN_SHARE" ] \
-        || startup_no_go "nonpersistent_voxel_layer share directory is missing: $PLUGIN_SHARE"
-    PLUGIN_XML="$(grep -R -l --include='*.xml' 'nav2_costmap_2d/NonPersistentVoxelLayer' "$PLUGIN_SHARE" 2>/dev/null | head -1)"
+        || startup_no_go "cone_inflated_voxel_layer share directory is missing: $PLUGIN_SHARE"
+    PLUGIN_XML="$(grep -R -l --include='*.xml' 'cone_inflated_voxel_layer/ConeInflatedVoxelLayer' "$PLUGIN_SHARE" 2>/dev/null | head -1)"
     [ -n "$PLUGIN_XML" ] && [ -f "$PLUGIN_XML" ] \
-        || startup_no_go "NonPersistentVoxelLayer plugin XML is missing under $PLUGIN_SHARE"
-    PLUGIN_LIBRARY="$(find "$PLUGIN_PREFIX" -name 'libnonpersistent_voxel_layer_core.so' -print -quit 2>/dev/null)"
+        || startup_no_go "ConeInflatedVoxelLayer plugin XML is missing under $PLUGIN_SHARE"
+    PLUGIN_LIBRARY="$(find "$PLUGIN_PREFIX" -name 'libcone_inflated_voxel_layer_core.so' -print -quit 2>/dev/null)"
     [ -n "$PLUGIN_LIBRARY" ] && [ -e "$PLUGIN_LIBRARY" ] \
-        || startup_no_go "NonPersistentVoxelLayer shared library is missing under $PLUGIN_PREFIX"
+        || startup_no_go "ConeInflatedVoxelLayer shared library is missing under $PLUGIN_PREFIX"
 fi
-snapshot_value "nonpersistent_voxel_layer_prefix" "$PLUGIN_PREFIX"
+snapshot_value "cone_inflated_voxel_layer_prefix" "$PLUGIN_PREFIX"
 snapshot_value "plugin_xml" "$PLUGIN_XML"
 snapshot_value "plugin_library" "$PLUGIN_LIBRARY"
 if $ENABLE_CONE_AVOIDANCE; then
@@ -756,11 +783,15 @@ if $ENABLE_CONE_AVOIDANCE; then
         || startup_no_go "cone health publisher/subscriber QoS is incomplete or incompatible"
 
     require_numeric_parameter /local_costmap/local_costmap cone_obstacle_layer.cone_scan.observation_persistence 1.5
-    require_numeric_parameter /local_costmap/local_costmap inflation_layer.inflation_radius "$CONE_EXPECTED_INFLATION_RADIUS"
-    require_numeric_parameter /local_costmap/local_costmap inflation_layer.cost_scaling_factor "$CONE_EXPECTED_COST_SCALING_FACTOR"
+    require_numeric_parameter /local_costmap/local_costmap cone_obstacle_layer.inflation_radius "$CONE_EXPECTED_INFLATION_RADIUS"
+    require_numeric_parameter /local_costmap/local_costmap cone_obstacle_layer.cost_scaling_factor "$CONE_EXPECTED_COST_SCALING_FACTOR"
+    require_numeric_parameter /local_costmap/local_costmap inflation_layer.inflation_radius 0.30
+    require_numeric_parameter /local_costmap/local_costmap inflation_layer.cost_scaling_factor 3.0
     require_numeric_parameter /global_costmap/global_costmap cone_obstacle_layer.cone_scan.observation_persistence 1.5
-    require_numeric_parameter /global_costmap/global_costmap inflation_layer.inflation_radius "$CONE_EXPECTED_INFLATION_RADIUS"
-    require_numeric_parameter /global_costmap/global_costmap inflation_layer.cost_scaling_factor "$CONE_EXPECTED_COST_SCALING_FACTOR"
+    require_numeric_parameter /global_costmap/global_costmap cone_obstacle_layer.inflation_radius "$CONE_EXPECTED_INFLATION_RADIUS"
+    require_numeric_parameter /global_costmap/global_costmap cone_obstacle_layer.cost_scaling_factor "$CONE_EXPECTED_COST_SCALING_FACTOR"
+    require_numeric_parameter /global_costmap/global_costmap inflation_layer.inflation_radius 0.30
+    require_numeric_parameter /global_costmap/global_costmap inflation_layer.cost_scaling_factor 3.0
     require_numeric_parameter /controller_server FollowPath.PathAlign.scale "$CONE_EXPECTED_PATH_ALIGN_SCALE"
     require_numeric_parameter /controller_server FollowPath.PathDist.scale "$CONE_EXPECTED_PATH_DIST_SCALE"
     require_numeric_parameter /controller_server FollowPath.sim_time "$CONE_EXPECTED_SIM_TIME"
@@ -785,11 +816,11 @@ if $ENABLE_CONE_AVOIDANCE; then
     done
     [ -n "$CONTROLLER_PID" ] && [ -r "/proc/$CONTROLLER_PID/maps" ] \
         || startup_no_go "cannot identify the live controller_server process"
-    PLUGIN_MAP="$(grep -F 'libnonpersistent_voxel_layer_core.so' "/proc/$CONTROLLER_PID/maps" 2>/dev/null | head -1)"
+    PLUGIN_MAP="$(grep -F 'libcone_inflated_voxel_layer_core.so' "/proc/$CONTROLLER_PID/maps" 2>/dev/null | head -1)"
     PLUGIN_MAP_PATH="$(printf '%s\n' "$PLUGIN_MAP" | awk '{print $NF}')"
     PLUGIN_MAP_REAL="$(readlink -f "$PLUGIN_MAP_PATH" 2>/dev/null || true)"
     [ -n "$PLUGIN_MAP_REAL" ] && [ "$PLUGIN_MAP_REAL" = "$PLUGIN_LIBRARY_REAL" ] \
-        || startup_no_go "controller_server did not map the pinned NonPersistentVoxelLayer library"
+        || startup_no_go "controller_server did not map the pinned ConeInflatedVoxelLayer library"
     snapshot_value "controller_server_pid" "$CONTROLLER_PID"
     snapshot_value "controller_plugin_map" "$PLUGIN_MAP"
     snapshot_value "controller_plugin_map_real" "$PLUGIN_MAP_REAL"
@@ -808,11 +839,11 @@ if $ENABLE_CONE_AVOIDANCE; then
     done
     [ -n "$PLANNER_PID" ] && [ -r "/proc/$PLANNER_PID/maps" ] \
         || startup_no_go "cannot identify the live planner_server process"
-    PLANNER_PLUGIN_MAP="$(grep -F 'libnonpersistent_voxel_layer_core.so' "/proc/$PLANNER_PID/maps" 2>/dev/null | head -1)"
+    PLANNER_PLUGIN_MAP="$(grep -F 'libcone_inflated_voxel_layer_core.so' "/proc/$PLANNER_PID/maps" 2>/dev/null | head -1)"
     PLANNER_PLUGIN_MAP_PATH="$(printf '%s\n' "$PLANNER_PLUGIN_MAP" | awk '{print $NF}')"
     PLANNER_PLUGIN_MAP_REAL="$(readlink -f "$PLANNER_PLUGIN_MAP_PATH" 2>/dev/null || true)"
     [ -n "$PLANNER_PLUGIN_MAP_REAL" ] && [ "$PLANNER_PLUGIN_MAP_REAL" = "$PLUGIN_LIBRARY_REAL" ] \
-        || startup_no_go "planner_server did not map the pinned NonPersistentVoxelLayer library"
+        || startup_no_go "planner_server did not map the pinned ConeInflatedVoxelLayer library"
     snapshot_value "planner_server_pid" "$PLANNER_PID"
     snapshot_value "planner_plugin_map" "$PLANNER_PLUGIN_MAP"
     snapshot_value "planner_plugin_map_real" "$PLANNER_PLUGIN_MAP_REAL"

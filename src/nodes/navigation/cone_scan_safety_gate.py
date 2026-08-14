@@ -7,7 +7,6 @@ import time
 
 import rclpy
 from geometry_msgs.msg import Twist
-from nav2_msgs.srv import ClearEntireCostmap
 from rcl_interfaces.srv import GetParameters, SetParameters
 from rclpy.node import Node
 from rclpy.parameter import Parameter
@@ -17,12 +16,14 @@ from std_msgs.msg import String
 from nodes.navigation.depth_contract import DepthMode, parse_depth_mode
 from nodes.navigation.cone_scan_safety import (
     ZERO_COMMAND,
+    ConeLayerAppliedTracker,
     ConeScanHealthTracker,
 )
 
 try:
-    from rclpy.qos import HistoryPolicy
+    from rclpy.qos import DurabilityPolicy, HistoryPolicy
 except ImportError:
+    from rclpy.qos import QoSDurabilityPolicy as DurabilityPolicy
     from rclpy.qos import QoSHistoryPolicy as HistoryPolicy
 
 
@@ -34,6 +35,14 @@ class ConeScanSafetyGate(Node):
         self.declare_parameter("health_topic", "/cone_obstacle/health")
         self.declare_parameter("status_topic", "/cone_obstacle/safety_gate_status")
         self.declare_parameter("mode_status_topic", "/depth/mode_status")
+        self.declare_parameter(
+            "local_layer_status_topic",
+            "/local_costmap/cone_obstacle_layer/applied_status",
+        )
+        self.declare_parameter(
+            "global_layer_status_topic",
+            "/global_costmap/cone_obstacle_layer/applied_status",
+        )
         self.declare_parameter("enable_mode_control", False)
         self.declare_parameter("mode_status_timeout_sec", 1.0)
         self.declare_parameter("resource_transition_timeout_sec", 8.0)
@@ -85,6 +94,7 @@ class ConeScanSafetyGate(Node):
             ),
             max_age_sec=float(self.get_parameter("health_timeout_sec").value),
         )
+        self._layer_tracker = ConeLayerAppliedTracker()
 
         self._publisher = self.create_publisher(
             Twist, str(self.get_parameter("output_topic").value), 10
@@ -128,20 +138,27 @@ class ConeScanSafetyGate(Node):
                 self.create_client(GetParameters, node + "/get_parameters")
                 for node in costmap_nodes
             ]
-            self._clear_clients = [
-                self.create_client(
-                    ClearEntireCostmap,
-                    "/local_costmap/clear_entirely_local_costmap",
-                ),
-                self.create_client(
-                    ClearEntireCostmap,
-                    "/global_costmap/clear_entirely_global_costmap",
-                ),
-            ]
+            layer_status_qos = QoSProfile(
+                history=HistoryPolicy.KEEP_LAST,
+                depth=1,
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            )
+            self.create_subscription(
+                String,
+                str(self.get_parameter("local_layer_status_topic").value),
+                lambda msg: self._on_layer_status("local", msg),
+                layer_status_qos,
+            )
+            self.create_subscription(
+                String,
+                str(self.get_parameter("global_layer_status_topic").value),
+                lambda msg: self._on_layer_status("global", msg),
+                layer_status_qos,
+            )
         else:
             self._costmap_set_clients = []
             self._costmap_get_clients = []
-            self._clear_clients = []
         self.create_timer(1.0 / output_rate, self._publish)
         self.get_logger().info(
             "cone scan safety gate ready | timeout=%.3fs required_frames=%d mode_control=%s"
@@ -194,6 +211,7 @@ class ConeScanSafetyGate(Node):
                 self._resource_stage = "waiting_ack"
                 self._resource_started = time.monotonic()
                 self._resource_futures = []
+                self._layer_tracker.cancel_transition()
                 self._resource_ready = False
                 self._resource_reason = "waiting for depth controller acknowledgement"
         except Exception as exc:  # noqa: BLE001
@@ -203,6 +221,15 @@ class ConeScanSafetyGate(Node):
             self._controller_healthy = False
             self._resource_ready = False
             self._resource_reason = "invalid depth mode status: %s" % exc
+
+    def _on_layer_status(self, source: str, msg: String) -> None:
+        try:
+            data = json.loads(msg.data)
+            if not isinstance(data, dict):
+                raise ValueError("status JSON must be an object")
+            self._layer_tracker.observe(source, data, time.monotonic())
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            self._layer_tracker.record_error(source, str(exc))
 
     @staticmethod
     def _parameter_results_succeeded(response) -> bool:
@@ -229,6 +256,9 @@ class ConeScanSafetyGate(Node):
             ):
                 return
             enabled = self._requested_mode.requires_depth
+            if not self._layer_tracker.begin_transition(enabled):
+                self._resource_reason = self._layer_tracker.last_reason
+                return
             if not all(
                 client.wait_for_service(timeout_sec=0.0)
                 for client in self._costmap_set_clients
@@ -296,42 +326,21 @@ class ConeScanSafetyGate(Node):
                 self._resource_reason = "cone costmap layer verification failed: %s" % exc
                 return
             self._resource_futures = []
-            if self._requested_mode == DepthMode.DISABLED:
-                if not all(
-                    client.wait_for_service(timeout_sec=0.0)
-                    for client in self._clear_clients
-                ):
-                    self._resource_stage = "waiting_clear_services"
-                    self._resource_reason = "waiting for costmap clear services"
-                    return
-                self._start_costmap_clear()
+            self._resource_stage = "waiting_layer_apply"
+            self._resource_reason = "waiting for local/global cone layer application"
+            return
+        if self._resource_stage == "waiting_layer_apply":
+            ready, reason = self._layer_tracker.readiness()
+            if not ready:
+                self._resource_reason = reason
                 return
             self._resource_stage = "ready"
             self._resource_ready = True
-            self._resource_reason = "cone costmap layers enabled"
-            return
-        if self._resource_stage == "waiting_clear_services":
-            if not all(
-                client.wait_for_service(timeout_sec=0.0)
-                for client in self._clear_clients
-            ):
-                return
-            self._start_costmap_clear()
-            return
-        if self._resource_stage == "clearing_costmaps":
-            if not all(future.done() for future in self._resource_futures):
-                return
-            try:
-                for future in self._resource_futures:
-                    future.result()
-            except Exception as exc:  # noqa: BLE001
-                self._resource_stage = "fault"
-                self._resource_reason = "cone costmap clear failed: %s" % exc
-                return
-            self._resource_futures = []
-            self._resource_stage = "ready"
-            self._resource_ready = True
-            self._resource_reason = "cone costmaps disabled and cleared"
+            self._resource_reason = (
+                "cone costmap layers enabled and applied"
+                if self._resource_expected_enabled
+                else "cone costmap layers disabled and stale halo cleared"
+            )
 
     def _start_costmap_parameter_readback(self) -> None:
         self._resource_futures = []
@@ -341,14 +350,6 @@ class ConeScanSafetyGate(Node):
             self._resource_futures.append(client.call_async(request))
         self._resource_stage = "verifying_layers"
         self._resource_reason = "verifying live cone costmap layer parameters"
-
-    def _start_costmap_clear(self) -> None:
-        self._resource_futures = [
-            client.call_async(ClearEntireCostmap.Request())
-            for client in self._clear_clients
-        ]
-        self._resource_stage = "clearing_costmaps"
-        self._resource_reason = "clearing cone costmaps"
 
     def _publish(self) -> None:
         now = time.monotonic()

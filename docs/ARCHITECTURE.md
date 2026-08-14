@@ -190,7 +190,7 @@ D455 depth -> decimation x4 -> pointcloud
   -> pointcloud_to_laserscan(target_frame=base_link, height filtered)
   -> 180-beam CRC UDP (latest only)
   -> Foxy /cone_obstacle/scan
-  -> local/global NonPersistentVoxelLayer -> NavFn + DWB
+  -> local/global ConeInflatedVoxelLayer -> NavFn + DWB
 ```
 
 UDP 包同时携带 `stream_id`、递增序号、源时间戳和深度有效率/左中右覆盖率。Host 会排空旧包并拒绝 CRC 错误、序号回退、超过 250 ms 的源数据、空深度和单飞点。速度链路中的独立 cone safety gate 需要至少连续 3 帧健康数据；断流或异常立即输出零速度。local/global costmap 使用同一份带 1.5 秒缓冲的扫描观测，Host 不接收点云，也不依赖相机 TF。

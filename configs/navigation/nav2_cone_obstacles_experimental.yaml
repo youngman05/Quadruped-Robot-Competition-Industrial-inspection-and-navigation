@@ -20,8 +20,10 @@ local_costmap:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: true
       cone_obstacle_layer:
-        plugin: "nav2_costmap_2d/NonPersistentVoxelLayer"
+        plugin: "cone_inflated_voxel_layer/ConeInflatedVoxelLayer"
         enabled: true
+        inflation_radius: 0.75
+        cost_scaling_factor: 1.5
         publish_voxel_map: false
         origin_z: 0.0
         z_resolution: 0.08
@@ -43,8 +45,6 @@ local_costmap:
           observation_persistence: 1.5
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 1.5
-        inflation_radius: 0.75
 
 global_costmap:
   global_costmap:
@@ -54,8 +54,10 @@ global_costmap:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: true
       cone_obstacle_layer:
-        plugin: "nav2_costmap_2d/NonPersistentVoxelLayer"
+        plugin: "cone_inflated_voxel_layer/ConeInflatedVoxelLayer"
         enabled: true
+        inflation_radius: 0.75
+        cost_scaling_factor: 1.5
         publish_voxel_map: false
         origin_z: 0.0
         z_resolution: 0.08
@@ -77,5 +79,3 @@ global_costmap:
           observation_persistence: 1.5
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 1.5
-        inflation_radius: 0.75

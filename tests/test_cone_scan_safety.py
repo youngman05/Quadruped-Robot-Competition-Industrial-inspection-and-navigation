@@ -2,11 +2,58 @@ import unittest
 
 from nodes.navigation.cone_scan_safety import (
     ZERO_COMMAND,
+    ConeLayerAppliedTracker,
     ConeScanHealthTracker,
 )
 
 
 class ConeScanSafetyTests(unittest.TestCase):
+    @staticmethod
+    def layer_status(enabled, revision, sequence):
+        return {
+            "plugin": "cone_obstacle_layer",
+            "requested_enabled": enabled,
+            "applied_enabled": enabled,
+            "applied_revision": revision,
+            "status_sequence": sequence,
+        }
+
+    def test_layer_transition_requires_both_post_baseline_revisions(self):
+        tracker = ConeLayerAppliedTracker()
+        tracker.observe("local", self.layer_status(True, 0, 3), 1.0)
+        tracker.observe("global", self.layer_status(True, 0, 7), 1.0)
+        self.assertTrue(tracker.begin_transition(False))
+        self.assertFalse(tracker.readiness()[0])
+
+        tracker.observe("local", self.layer_status(False, 1, 4), 1.1)
+        self.assertFalse(tracker.readiness()[0])
+        tracker.observe("global", self.layer_status(False, 1, 8), 1.2)
+        self.assertEqual(tracker.readiness(), (True, "local/global cone layers applied"))
+
+    def test_retained_pre_transition_status_cannot_acknowledge(self):
+        tracker = ConeLayerAppliedTracker()
+        tracker.observe("local", self.layer_status(True, 2, 10), 1.0)
+        tracker.observe("global", self.layer_status(True, 2, 20), 1.0)
+        tracker.begin_transition(True)
+        tracker.observe("local", self.layer_status(True, 2, 11), 1.1)
+        tracker.observe("global", self.layer_status(True, 2, 21), 1.1)
+        ready, reason = tracker.readiness()
+        self.assertFalse(ready)
+        self.assertIn("applied revision", reason)
+
+    def test_layer_state_mismatch_fails_closed(self):
+        tracker = ConeLayerAppliedTracker()
+        tracker.observe("local", self.layer_status(True, 0, 1), 1.0)
+        tracker.observe("global", self.layer_status(True, 0, 1), 1.0)
+        tracker.begin_transition(False)
+        tracker.observe("local", self.layer_status(False, 1, 2), 1.1)
+        mismatch = self.layer_status(False, 1, 2)
+        mismatch["applied_enabled"] = True
+        tracker.observe("global", mismatch, 1.1)
+        ready, reason = tracker.readiness()
+        self.assertFalse(ready)
+        self.assertIn("applied state mismatch", reason)
+
     def test_requires_three_consecutive_healthy_frames(self):
         tracker = ConeScanHealthTracker(required_consecutive=3, max_age_sec=0.25)
         for sequence in (1, 2):

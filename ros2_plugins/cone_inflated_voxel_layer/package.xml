@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>cone_inflated_voxel_layer</name>
+  <version>0.1.0</version>
+  <description>Source-specific inflated voxel costmap layer for competition cones.</description>
+  <maintainer email="youngman05@github.com">youngman05</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>nav2_costmap_2d</depend>
+  <depend>nonpersistent_voxel_layer</depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
+  <depend>rcl_interfaces</depend>
+  <depend>std_msgs</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <nav2_costmap_2d plugin="${prefix}/costmap_plugins.xml" />
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

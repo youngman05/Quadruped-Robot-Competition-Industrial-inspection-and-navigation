@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 
 Command3 = Tuple[float, float, float]
@@ -16,6 +16,105 @@ class ConeGateDecision:
     command: Command3
     allowed: bool
     reason: str
+
+
+@dataclass(frozen=True)
+class ConeLayerAppliedStatus:
+    requested_enabled: bool
+    applied_enabled: bool
+    applied_revision: int
+    status_sequence: int
+    received_at: float
+
+
+class ConeLayerAppliedTracker:
+    SOURCES = ("local", "global")
+
+    def __init__(self) -> None:
+        self._latest: Dict[str, ConeLayerAppliedStatus] = {}
+        self._baseline: Dict[str, Tuple[int, int]] = {}
+        self._expected_enabled: Optional[bool] = None
+        self.last_reason = "waiting for cone layer applied status"
+
+    def observe(self, source: str, data: dict, now: float) -> None:
+        if source not in self.SOURCES:
+            raise ValueError("unknown cone layer source: %s" % source)
+        if str(data.get("plugin", "")) != "cone_obstacle_layer":
+            raise ValueError("unexpected cone layer plugin name")
+        requested = data.get("requested_enabled")
+        applied = data.get("applied_enabled")
+        revision = data.get("applied_revision")
+        sequence = data.get("status_sequence")
+        if not isinstance(requested, bool) or not isinstance(applied, bool):
+            raise ValueError("cone layer enabled fields must be bool")
+        if (
+            isinstance(revision, bool)
+            or not isinstance(revision, int)
+            or revision < 0
+            or isinstance(sequence, bool)
+            or not isinstance(sequence, int)
+            or sequence < 1
+        ):
+            raise ValueError("cone layer revision and sequence must be non-negative integers")
+        now = float(now)
+        if not math.isfinite(now):
+            raise ValueError("cone layer status timestamp must be finite")
+        previous = self._latest.get(source)
+        if previous is not None and sequence <= previous.status_sequence:
+            self.last_reason = "%s cone layer status did not advance" % source
+            return
+        self._latest[source] = ConeLayerAppliedStatus(
+            requested_enabled=requested,
+            applied_enabled=applied,
+            applied_revision=revision,
+            status_sequence=sequence,
+            received_at=now,
+        )
+        self.last_reason = "ready for cone layer transition"
+
+    def record_error(self, source: str, reason: str) -> None:
+        self.last_reason = "%s cone layer status invalid: %s" % (source, reason)
+
+    def baseline_ready(self) -> bool:
+        return all(source in self._latest for source in self.SOURCES)
+
+    def begin_transition(self, expected_enabled: bool) -> bool:
+        if not self.baseline_ready():
+            self.last_reason = "waiting for local/global cone layer applied status"
+            return False
+        self._expected_enabled = bool(expected_enabled)
+        self._baseline = {
+            source: (
+                self._latest[source].status_sequence,
+                self._latest[source].applied_revision,
+            )
+            for source in self.SOURCES
+        }
+        self.last_reason = "waiting for local/global cone layer application"
+        return True
+
+    def cancel_transition(self) -> None:
+        self._baseline = {}
+        self._expected_enabled = None
+
+    def readiness(self) -> Tuple[bool, str]:
+        if self._expected_enabled is None or not self._baseline:
+            return False, "cone layer transition has not started"
+        expected = self._expected_enabled
+        for source in self.SOURCES:
+            status = self._latest.get(source)
+            if status is None:
+                return False, "waiting for %s cone layer applied status" % source
+            baseline_sequence, baseline_revision = self._baseline[source]
+            if status.status_sequence <= baseline_sequence:
+                return False, "waiting for %s cone layer status sequence" % source
+            if status.applied_revision <= baseline_revision:
+                return False, "waiting for %s cone layer applied revision" % source
+            if status.requested_enabled != expected:
+                return False, "%s cone layer requested state mismatch" % source
+            if status.applied_enabled != expected:
+                return False, "%s cone layer applied state mismatch" % source
+        return True, "local/global cone layers applied"
 
 
 class ConeScanHealthTracker:
