@@ -45,13 +45,15 @@ CONE_NAV2_PARAMS_FILE="$PWD/configs/navigation/nav2_cone_obstacles_experimental.
   bash scripts/start_competition.sh --cone-avoidance
 ```
 
-正式锥桶 overlay 在 local/global costmap 中加载同一锥桶层，并把 DWB 覆盖为
-`ObstacleFootprint=1.0`、`vtheta_samples=21`；仍保持 `min_vel_x=0`、
-`max_vel_y=0`，不在未经真机验证时引入倒退或横移。Phase 106 起正式 overlay
-面向"提前绕行"：`obstacle_range=3.00`（顶到 scan 链路上限）、inflation
-`0.60/2.0`、`sim_time=2.5`，并覆盖 `PathAlign=16.0`、`PathDist=16.0`，使
-NavFn 提前弯出、DWB 允许提前偏离直线，消除锥桶前原地踏步。实验文件保留相同的双
-costmap 和 DWB 安全基线，是更激进的独立档位：inflation `0.75/1.5`、
+正式锥桶 overlay 在 local/global costmap 中加载同一锥桶层，并新增专用
+`FollowPathCone`：`ObstacleFootprint=1.0`、`vtheta_samples=21`；仍保持
+`min_vel_x=0`、`max_vel_y=0`，不在未经真机验证时引入倒退或横移。只有
+`obstacle_cross_target` 通过 `navigate_cone_w_replanning_and_recovery.xml`
+选择该 controller；后续目标恢复基础 `FollowPath`。Phase 106 起锥桶档面向
+"提前绕行"：`obstacle_range=3.00`（顶到 scan 链路上限）、锥桶内部 inflation
+`0.60/2.0`、`sim_time=2.5`，并设置 `PathAlign=16.0`、`PathDist=16.0`，使
+NavFn 提前弯出、DWB 允许提前偏离直线。实验文件保留相同的双 costmap 和 DWB
+安全基线，是更激进的独立档位：锥桶 inflation `0.75/1.5`、
 `PathAlign=12.0`、`PathDist=12.0`、`sim_time=3.0`。未设置
 `CONE_NAV2_PARAMS_FILE` 时始终加载正式 `nav2_cone_obstacles.yaml`；静态和
 depth 模式不读取这两个 cone overlay。

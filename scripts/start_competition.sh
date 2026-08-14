@@ -263,6 +263,14 @@ case "$FORMAL_PACKAGE_PREFIX" in
 esac
 snapshot_value "nav2_bt_navigator_prefix" "$NAV2_BT_PREFIX"
 snapshot_value "quadruped_robot_competition_prefix" "$FORMAL_PACKAGE_PREFIX"
+FORMAL_CONE_BEHAVIOR_TREE="$FORMAL_PACKAGE_PREFIX/share/quadruped_robot_competition/configs/navigation/navigate_cone_w_replanning_and_recovery.xml"
+if $ENABLE_CONE_AVOIDANCE; then
+    [ -f "$FORMAL_CONE_BEHAVIOR_TREE" ] \
+        || startup_no_go "installed cone behavior tree is missing: $FORMAL_CONE_BEHAVIOR_TREE"
+    grep -Fq 'controller_id="FollowPathCone"' "$FORMAL_CONE_BEHAVIOR_TREE" \
+        || startup_no_go "installed cone behavior tree does not select FollowPathCone"
+fi
+snapshot_value "cone_behavior_tree" "$FORMAL_CONE_BEHAVIOR_TREE"
 
 PLUGIN_PREFIX="disabled"
 PLUGIN_XML="disabled"
@@ -792,13 +800,24 @@ if $ENABLE_CONE_AVOIDANCE; then
     require_numeric_parameter /global_costmap/global_costmap cone_obstacle_layer.cost_scaling_factor "$CONE_EXPECTED_COST_SCALING_FACTOR"
     require_numeric_parameter /global_costmap/global_costmap inflation_layer.inflation_radius 0.30
     require_numeric_parameter /global_costmap/global_costmap inflation_layer.cost_scaling_factor 3.0
-    require_numeric_parameter /controller_server FollowPath.PathAlign.scale "$CONE_EXPECTED_PATH_ALIGN_SCALE"
-    require_numeric_parameter /controller_server FollowPath.PathDist.scale "$CONE_EXPECTED_PATH_DIST_SCALE"
-    require_numeric_parameter /controller_server FollowPath.sim_time "$CONE_EXPECTED_SIM_TIME"
-    require_numeric_parameter /controller_server FollowPath.ObstacleFootprint.scale 1.0
-    require_numeric_parameter /controller_server FollowPath.vtheta_samples 21
-    require_numeric_parameter /controller_server FollowPath.min_vel_x 0.0
-    require_numeric_parameter /controller_server FollowPath.max_vel_y 0.0
+    CONTROLLER_PLUGINS="$(parameter_value /controller_server controller_plugins)" \
+        || startup_no_go "cannot read live controller plugin list"
+    case "$CONTROLLER_PLUGINS" in
+        *FollowPath*FollowPathCone*) ;;
+        *) startup_no_go "controller_plugins does not contain FollowPath and FollowPathCone: $CONTROLLER_PLUGINS" ;;
+    esac
+    require_numeric_parameter /controller_server FollowPathCone.PathAlign.scale "$CONE_EXPECTED_PATH_ALIGN_SCALE"
+    require_numeric_parameter /controller_server FollowPathCone.PathDist.scale "$CONE_EXPECTED_PATH_DIST_SCALE"
+    require_numeric_parameter /controller_server FollowPathCone.sim_time "$CONE_EXPECTED_SIM_TIME"
+    require_numeric_parameter /controller_server FollowPathCone.ObstacleFootprint.scale 1.0
+    require_numeric_parameter /controller_server FollowPathCone.vtheta_samples 21
+    require_numeric_parameter /controller_server FollowPathCone.min_vel_x 0.0
+    require_numeric_parameter /controller_server FollowPathCone.max_vel_y 0.0
+    require_numeric_parameter /controller_server FollowPath.PathAlign.scale 32.0
+    require_numeric_parameter /controller_server FollowPath.PathDist.scale 32.0
+    require_numeric_parameter /controller_server FollowPath.sim_time 1.5
+    require_numeric_parameter /controller_server FollowPath.ObstacleFootprint.scale 0.02
+    require_numeric_parameter /controller_server FollowPath.vtheta_samples 20
     require_numeric_parameter /cone_scan_safety_gate required_consecutive_frames 3
     require_numeric_parameter /cone_scan_safety_gate health_timeout_sec 0.20
 
@@ -863,6 +882,8 @@ if $CONE_TO_WHZ_L6; then
     require_exact_parameter /task_manager_node waypoint_file "$TASK_WAYPOINT_FILE"
     require_exact_parameter /task_manager_node waypoint_route "$TASK_WAYPOINT_ROUTE"
     require_exact_parameter /task_manager_node expected_map_id "$TASK_EXPECTED_MAP_ID"
+    require_exact_parameter /task_manager_node enable_cone_controller true
+    require_exact_parameter /task_manager_node cone_behavior_tree "$FORMAL_CONE_BEHAVIOR_TREE"
 fi
 
 kill -0 "$COMP_PID" 2>/dev/null \

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from typing import Mapping
 
 from nodes.navigation.waypoint_calibration import (
     WaypointCalibrationError,
@@ -61,6 +62,13 @@ def _deg_to_quat(yaw_deg: float) -> tuple[float, float, float, float]:
 def _yaw_to_quat(yaw: float) -> tuple[float, float, float, float]:
     half = float(yaw) / 2.0
     return (0.0, 0.0, math.sin(half), math.cos(half))
+
+
+def _behavior_tree_for_waypoint(
+    waypoint_name: str,
+    behavior_tree_by_waypoint: Mapping[str, str],
+) -> str:
+    return str(behavior_tree_by_waypoint.get(waypoint_name, "")).strip()
 
 
 # yaw=None means Nav2 only needs to reach the position.
@@ -168,6 +176,7 @@ class NavigationClient:
         node,
         action_name: str = "navigate_to_pose",
         waypoints=None,
+        behavior_tree_by_waypoint=None,
     ):
         """
         Args:
@@ -177,6 +186,7 @@ class NavigationClient:
         self._node = node
         self._logger = node.get_logger()
         self._waypoints = dict(WAYPOINTS if waypoints is None else waypoints)
+        self._behavior_tree_by_waypoint = dict(behavior_tree_by_waypoint or {})
 
         # Lazy import so the module is importable without rclpy in non-ROS contexts
         from rclpy.action import ActionClient
@@ -211,6 +221,10 @@ class NavigationClient:
             x=wp["x"], y=wp["y"],
             qx=wp["qx"], qy=wp["qy"], qz=wp["qz"], qw=wp["qw"],
             waypoint_label=wp["label"],
+            behavior_tree=_behavior_tree_for_waypoint(
+                waypoint_name,
+                self._behavior_tree_by_waypoint,
+            ),
         )
 
     def navigate_to_pose(
@@ -218,6 +232,7 @@ class NavigationClient:
         x: float, y: float,
         qx: float = 0.0, qy: float = 0.0, qz: float = 0.0, qw: float = 1.0,
         waypoint_label: str = "",
+        behavior_tree: str = "",
     ) -> bool:
         """Submit a NavigateToPose goal; acceptance arrives asynchronously."""
         from nav2_msgs.action import NavigateToPose
@@ -244,7 +259,7 @@ class NavigationClient:
 
         goal_msg = NavigateToPose.Goal()
         goal_msg.pose = pose
-        goal_msg.behavior_tree = ""
+        goal_msg.behavior_tree = str(behavior_tree).strip()
 
         self._goal_handle = None
         self._goal_result = None
@@ -267,7 +282,8 @@ class NavigationClient:
             self._mark_terminal("error", reason)
             return False
 
-        self._logger.info(f"Nav goal sent → {label}")
+        controller_profile = goal_msg.behavior_tree or "default"
+        self._logger.info(f"Nav goal sent → {label} | behavior_tree={controller_profile}")
         return True
 
     def cancel(self):

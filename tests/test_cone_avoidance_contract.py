@@ -17,6 +17,12 @@ CONE_EXPERIMENT_PARAMS = (
 BASE_PARAMS = REPO_ROOT / "configs" / "navigation" / "nav2_params.yaml"
 CONE_DOCKERFILE = REPO_ROOT / "docker" / "Dockerfile.cuvslam-cone"
 CONE_PLUGIN_PACKAGE = REPO_ROOT / "ros2_plugins" / "cone_inflated_voxel_layer"
+CONE_BEHAVIOR_TREE = (
+    REPO_ROOT
+    / "configs"
+    / "navigation"
+    / "navigate_cone_w_replanning_and_recovery.xml"
+)
 
 
 class ConeAvoidanceContractTests(unittest.TestCase):
@@ -88,6 +94,8 @@ class ConeAvoidanceContractTests(unittest.TestCase):
         self.assertIn("sim_time: 2.5", overlay)
         self.assertIn("PathAlign.scale: 16.0", overlay)
         self.assertIn("PathDist.scale: 16.0", overlay)
+        self.assertIn('controller_plugins: ["FollowPath", "FollowPathCone"]', overlay)
+        self.assertIn("FollowPathCone:", overlay)
         self.assertNotIn("obstacle_max_range", overlay)
         self.assertNotIn("PointCloud2", overlay)
 
@@ -166,6 +174,18 @@ class ConeAvoidanceContractTests(unittest.TestCase):
         self.assertIn('CONE_NAV2_PROFILE="formal"', competition_start)
         self.assertIn('CONE_NAV2_PROFILE="experimental"', competition_start)
         self.assertIn('CONE_EXPECTED_INFLATION_RADIUS="0.75"', competition_start)
+
+    def test_cone_behavior_tree_selects_only_follow_path_cone(self):
+        tree = CONE_BEHAVIOR_TREE.read_text(encoding="utf-8")
+        client = (
+            REPO_ROOT / "src" / "nodes" / "navigation" / "navigation_client.py"
+        ).read_text(encoding="utf-8")
+        launch = COMP_LAUNCH.read_text(encoding="utf-8")
+        self.assertIn('controller_id="FollowPathCone"', tree)
+        self.assertNotIn('controller_id="FollowPath"', tree)
+        self.assertIn("navigate_cone_w_replanning_and_recovery.xml", launch)
+        self.assertIn("behavior_tree_by_waypoint", client)
+        self.assertIn("goal_msg.behavior_tree = str(behavior_tree).strip()", client)
 
     def test_non_cone_base_global_costmap_remains_static(self):
         base = BASE_PARAMS.read_text(encoding="utf-8")

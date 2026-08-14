@@ -25,6 +25,12 @@ PARAMS_FILE = PROJECT_ROOT / "configs" / "ros" / "competition_params.yaml"
 DEFAULT_CONE_PARAMS = (
     PROJECT_ROOT / "configs" / "navigation" / "nav2_cone_obstacles.yaml"
 )
+CONE_BEHAVIOR_TREE = PathJoinSubstitution([
+    FindPackageShare("quadruped_robot_competition"),
+    "configs",
+    "navigation",
+    "navigate_cone_w_replanning_and_recovery.xml",
+])
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -284,6 +290,11 @@ def generate_launch_description() -> LaunchDescription:
                 "waypoint_file": waypoint_file,
                 "waypoint_route": waypoint_route,
                 "expected_map_id": expected_map_id,
+                "enable_cone_controller": ParameterValue(
+                    enable_cone_avoidance,
+                    value_type=bool,
+                ),
+                "cone_behavior_tree": CONE_BEHAVIOR_TREE,
                 "phase2_map_yaml": str(PROJECT_ROOT / "navi" / "map" / "competition_field_phase2.yaml"),
                 "enable_phase2_map_switch": False,
                 "enable_depth_milestones": ParameterValue(

@@ -56,6 +56,8 @@ class TaskManagerDepthContractTests(unittest.TestCase):
             "enable_depth_milestones",
             "depth_safety_status_topic",
             "verify_host_odom_after_depth_disable",
+            "enable_cone_controller",
+            "cone_behavior_tree",
         ):
             with self.subTest(parameter=parameter):
                 self.assertIn('"' + parameter + '"', launch_source)
@@ -70,6 +72,19 @@ class TaskManagerDepthContractTests(unittest.TestCase):
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.source)
+
+    def test_only_obstacle_cross_target_receives_cone_behavior_tree(self):
+        for token in (
+            'declare_parameter("enable_cone_controller", False)',
+            'declare_parameter("cone_behavior_tree", "")',
+            'behavior_tree_by_waypoint["obstacle_cross_target"] = cone_behavior_tree',
+            "behavior_tree_by_waypoint=behavior_tree_by_waypoint",
+        ):
+            self.assertIn(token, self.source)
+        self.assertNotIn(
+            'behavior_tree_by_waypoint["pos1_left_clear"]',
+            self.source,
+        )
 
     def test_phase113_stops_after_inspection_and_rejects_placeholders(self):
         for token in (

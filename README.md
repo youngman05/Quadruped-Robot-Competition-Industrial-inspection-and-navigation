@@ -164,7 +164,7 @@ Nav2 配置要点：
 | 地图 | `navi/map/competition_field.pgm` |
 | 定位 | cuVSLAM，不使用 AMCL |
 | 全局规划器 | NavFn，`use_astar: true` |
-| 局部控制器 | DWB |
+| 局部控制器 | DWB：基础 `FollowPath`；仅锥桶穿越目标使用 `FollowPathCone` |
 | 锥桶避障 | D455 depth -> decimation x4 -> base_link LaserScan UDP -> ConeInflatedVoxelLayer（local/global） |
 | 机器人 footprint | 约 `1.0 m x 0.5 m` |
 

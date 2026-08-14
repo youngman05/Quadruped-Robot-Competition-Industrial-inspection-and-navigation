@@ -24,6 +24,7 @@ import math
 import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import rclpy
@@ -167,6 +168,8 @@ class TaskManagerNode(Node):
         self.declare_parameter("waypoint_file", "")
         self.declare_parameter("waypoint_route", "inspection_interleaved")
         self.declare_parameter("expected_map_id", "")
+        self.declare_parameter("enable_cone_controller", False)
+        self.declare_parameter("cone_behavior_tree", "")
         self.declare_parameter("inspection_start_index", 0)
         self.declare_parameter("inspection_count", 0)
         self.declare_parameter("enable_phase2_map_switch", False)
@@ -346,6 +349,12 @@ class TaskManagerNode(Node):
         waypoint_file = str(self.get_parameter("waypoint_file").value).strip()
         waypoint_route = str(self.get_parameter("waypoint_route").value).strip()
         expected_map_id = str(self.get_parameter("expected_map_id").value).strip()
+        enable_cone_controller = bool(
+            self.get_parameter("enable_cone_controller").value
+        )
+        cone_behavior_tree = str(
+            self.get_parameter("cone_behavior_tree").value
+        ).strip()
         task_waypoints = WAYPOINTS
         if waypoint_file:
             task_waypoints = load_calibrated_waypoints(
@@ -363,7 +372,20 @@ class TaskManagerNode(Node):
                 )
         self._waypoint_source = "waypoint_file" if waypoint_file else "builtin"
         self._waypoint_route = waypoint_route if waypoint_file else "builtin"
-        self._nav = NavigationClient(self, waypoints=task_waypoints)
+        behavior_tree_by_waypoint = {}
+        if enable_cone_controller:
+            if not cone_behavior_tree:
+                raise ValueError("cone controller requires a behavior tree path")
+            if not Path(cone_behavior_tree).is_file():
+                raise ValueError(
+                    "cone behavior tree does not exist: %s" % cone_behavior_tree
+                )
+            behavior_tree_by_waypoint["obstacle_cross_target"] = cone_behavior_tree
+        self._nav = NavigationClient(
+            self,
+            waypoints=task_waypoints,
+            behavior_tree_by_waypoint=behavior_tree_by_waypoint,
+        )
         if self._enable_depth_milestones:
             self._depth_policy = MissionDepthPolicy()
             self._depth_mode_client = DepthModeClient(
@@ -427,6 +449,8 @@ class TaskManagerNode(Node):
             f"| inspection_steps={len(self._inspection_steps)} "
             f"| waypoint_source={self._waypoint_source} "
             f"| waypoint_route={self._waypoint_route} "
+            f"| cone_controller={enable_cone_controller} "
+            f"| cone_behavior_tree={cone_behavior_tree if enable_cone_controller else 'default'} "
             f"| depth_milestones={self._enable_depth_milestones} "
             f"| phase2_map_switch={self._enable_phase2_map_switch}"
         )

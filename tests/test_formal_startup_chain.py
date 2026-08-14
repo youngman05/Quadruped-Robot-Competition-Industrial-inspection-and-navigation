@@ -213,10 +213,12 @@ class FormalStartupChainContractTests(unittest.TestCase):
         ):
             self.assertIn(token, cone)
         for token in (
-            "FollowPath.ObstacleFootprint.scale 1.0",
-            "FollowPath.vtheta_samples 21",
-            "FollowPath.min_vel_x 0.0",
-            "FollowPath.max_vel_y 0.0",
+            "FollowPathCone.ObstacleFootprint.scale 1.0",
+            "FollowPathCone.vtheta_samples 21",
+            "FollowPathCone.min_vel_x 0.0",
+            "FollowPathCone.max_vel_y 0.0",
+            "FollowPath.ObstacleFootprint.scale 0.02",
+            "FollowPath.vtheta_samples 20",
             "/global_costmap/global_costmap cone_obstacle_layer.cone_scan.observation_persistence 1.5",
         ):
             self.assertIn(token, self.script)
@@ -231,10 +233,20 @@ class FormalStartupChainContractTests(unittest.TestCase):
         self.assertIn("inflation_layer.inflation_radius 0.30", self.script)
         self.assertIn("inflation_layer.cost_scaling_factor 3.0", self.script)
         self.assertIn(
-            'FollowPath.sim_time "$CONE_EXPECTED_SIM_TIME"',
+            'FollowPathCone.sim_time "$CONE_EXPECTED_SIM_TIME"',
             self.script,
         )
         self.assertIn("inflation_radius: 0.75", experimental)
+
+    def test_cone_bt_and_dual_controller_provenance_are_checked(self):
+        for token in (
+            "navigate_cone_w_replanning_and_recovery.xml",
+            'controller_id="FollowPathCone"',
+            "controller_plugins does not contain FollowPath and FollowPathCone",
+            "enable_cone_controller true",
+            'cone_behavior_tree "$FORMAL_CONE_BEHAVIOR_TREE"',
+        ):
+            self.assertIn(token, self.script)
 
     def test_cone_plugin_build_precedes_runtime_mutation(self):
         build = self.script.index("--packages-select cone_inflated_voxel_layer")

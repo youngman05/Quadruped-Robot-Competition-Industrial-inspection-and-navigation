@@ -2,7 +2,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from nodes.navigation.navigation_client import load_calibrated_waypoints
+from nodes.navigation.navigation_client import (
+    NavigationClient,
+    _behavior_tree_for_waypoint,
+    load_calibrated_waypoints,
+)
 from nodes.navigation.waypoint_calibration import (
     DEFAULT_INSPECTION_ROUTE,
     WaypointCalibrationError,
@@ -25,6 +29,44 @@ def completed_document(map_id="field-v1"):
 
 
 class NavigationClientWaypointTests(unittest.TestCase):
+    def test_only_configured_waypoint_selects_cone_behavior_tree(self):
+        mapping = {
+            "obstacle_cross_target": "/tmp/navigate_cone.xml",
+        }
+        self.assertEqual(
+            _behavior_tree_for_waypoint("obstacle_cross_target", mapping),
+            "/tmp/navigate_cone.xml",
+        )
+        self.assertEqual(
+            _behavior_tree_for_waypoint("pos1_left_clear", mapping),
+            "",
+        )
+
+    def test_navigation_goal_routing_restores_default_after_cone_goal(self):
+        client = object.__new__(NavigationClient)
+        client._waypoints = {
+            "obstacle_cross_target": {
+                "x": 1.0, "y": 0.5,
+                "qx": 0.0, "qy": 0.0, "qz": 0.0, "qw": 1.0,
+                "label": "cone",
+            },
+            "pos1_left_clear": {
+                "x": 0.6, "y": 2.9,
+                "qx": 0.0, "qy": 0.0, "qz": 0.0, "qw": 1.0,
+                "label": "clear",
+            },
+        }
+        client._behavior_tree_by_waypoint = {
+            "obstacle_cross_target": "/tmp/navigate_cone.xml",
+        }
+        calls = []
+        client.navigate_to_pose = lambda **kwargs: calls.append(kwargs) or True
+
+        self.assertTrue(client.navigate_to_waypoint("obstacle_cross_target"))
+        self.assertTrue(client.navigate_to_waypoint("pos1_left_clear"))
+        self.assertEqual(calls[0]["behavior_tree"], "/tmp/navigate_cone.xml")
+        self.assertEqual(calls[1]["behavior_tree"], "")
+
     def write_document(self, document):
         directory = tempfile.TemporaryDirectory()
         path = Path(directory.name) / "waypoints_real.yaml"
