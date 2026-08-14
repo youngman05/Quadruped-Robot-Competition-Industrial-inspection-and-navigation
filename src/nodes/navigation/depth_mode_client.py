@@ -54,6 +54,8 @@ class DepthModeClient:
         self.safety_request_id = ""
         self.safety_reason = "waiting for depth safety gate status"
         self.safety_status_time = float("-inf")
+        self.cone_layer_baseline_ready = False
+        self.cone_layer_baseline_reason = "waiting for cone layer applied status"
         self._active_request = None
         self._active_request_payload = ""
         self._next_republish_at = float("-inf")
@@ -146,9 +148,20 @@ class DepthModeClient:
             self.safety_ready = bool(data.get("allowed", False))
             self.safety_reason = str(data.get("reason", "unknown"))
             self.safety_status_time = time.monotonic()
+            self.cone_layer_baseline_ready = bool(
+                data.get("layer_baseline_ready", False)
+            )
+            self.cone_layer_baseline_reason = str(
+                data.get(
+                    "layer_baseline_reason",
+                    "waiting for cone layer applied status",
+                )
+            )
         except Exception as exc:  # noqa: BLE001
             self.safety_mode = DepthMode.FAULT
             self.safety_request_id = ""
             self.safety_ready = False
             self.safety_reason = "invalid safety gate status: %s" % exc
             self.safety_status_time = time.monotonic()
+            self.cone_layer_baseline_ready = False
+            self.cone_layer_baseline_reason = self.safety_reason

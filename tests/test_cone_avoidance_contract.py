@@ -270,6 +270,8 @@ class ConeAvoidanceContractTests(unittest.TestCase):
         self.assertIn('node + "/get_parameters"', gate)
         self.assertIn("ConeLayerAppliedTracker", gate)
         self.assertIn("waiting_layer_apply", gate)
+        self.assertIn('"layer_baseline_ready": self._layer_tracker.baseline_ready()', gate)
+        self.assertIn('"layer_baseline_reason": self._layer_tracker.last_reason', gate)
         self.assertNotIn("ClearEntireCostmap", gate)
         self.assertNotIn("clear_entirely_local_costmap", gate)
         self.assertNotIn("clear_entirely_global_costmap", gate)
@@ -323,6 +325,7 @@ class ConeAvoidanceContractTests(unittest.TestCase):
         self.assertIn("<exec_depend>cone_inflated_voxel_layer</exec_depend>", package)
         self.assertNotIn("<exec_depend>nonpersistent_voxel_layer</exec_depend>", package)
         self.assertIn("<exec_depend>rcl_interfaces</exec_depend>", package)
+        self.assertIn("<exec_depend>lifecycle_msgs</exec_depend>", package)
 
 
 if __name__ == "__main__":

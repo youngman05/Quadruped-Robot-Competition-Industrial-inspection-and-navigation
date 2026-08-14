@@ -81,6 +81,28 @@ class FakeNode:
 
 
 class DepthModeClientTests(unittest.TestCase):
+    def test_cone_layer_baseline_readiness_is_exposed_before_transition(self):
+        client = DepthModeClient(FakeNode())
+        client._on_safety_status(
+            SimpleNamespace(
+                data=json.dumps(
+                    {
+                        "mode": "AVOIDANCE",
+                        "active_request_id": "",
+                        "allowed": False,
+                        "reason": "waiting for depth mode",
+                        "layer_baseline_ready": True,
+                        "layer_baseline_reason": "ready for cone layer transition",
+                    }
+                )
+            )
+        )
+        self.assertTrue(client.cone_layer_baseline_ready)
+        self.assertEqual(
+            client.cone_layer_baseline_reason,
+            "ready for cone layer transition",
+        )
+
     def test_relay_uses_the_same_latched_request_qos(self):
         source = (
             Path(__file__).resolve().parents[1]

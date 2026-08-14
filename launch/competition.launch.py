@@ -314,6 +314,10 @@ def generate_launch_description() -> LaunchDescription:
                     ]),
                     value_type=bool,
                 ),
+                "require_cone_layer_startup_ready": ParameterValue(
+                    enable_cone_mode_control,
+                    value_type=bool,
+                ),
                 "depth_safety_status_topic": PythonExpression([
                     "'/cone_obstacle/safety_gate_status' if '",
                     enable_cone_mode_control,

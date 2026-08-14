@@ -263,6 +263,7 @@ class FormalStartupChainContractTests(unittest.TestCase):
             'controller_id="FollowPathCone"',
             "controller_plugins does not contain FollowPath and FollowPathCone",
             "enable_cone_controller true",
+            "require_cone_layer_startup_ready true",
             'cone_behavior_tree "$FORMAL_CONE_BEHAVIOR_TREE"',
         ):
             self.assertIn(token, self.script)

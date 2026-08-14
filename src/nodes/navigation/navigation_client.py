@@ -43,6 +43,14 @@ _TERMINAL_RESULTS = frozenset((
     "unknown_waypoint",
     "error",
 ))
+_NAV2_LIFECYCLE_NODES = (
+    "map_server",
+    "planner_server",
+    "controller_server",
+    "recoveries_server",
+    "bt_navigator",
+)
+_LIFECYCLE_ACTIVE = 3
 
 
 def _mm_to_ros(x_mm: float, y_mm: float) -> tuple[float, float]:
@@ -190,9 +198,19 @@ class NavigationClient:
 
         # Lazy import so the module is importable without rclpy in non-ROS contexts
         from rclpy.action import ActionClient
+        from lifecycle_msgs.srv import GetState
         from nav2_msgs.action import NavigateToPose
 
         self._action_client = ActionClient(node, NavigateToPose, action_name)
+        self._lifecycle_get_state = GetState
+        self._lifecycle_clients = {
+            name: node.create_client(GetState, "/%s/get_state" % name)
+            for name in _NAV2_LIFECYCLE_NODES
+        }
+        self._lifecycle_futures = {}
+        self._lifecycle_states = {}
+        self._startup_ready = False
+        self._startup_reason = "waiting for Nav2 lifecycle services"
         self._goal_handle = None
         self._goal_sent = False
         self._goal_result = None
@@ -240,7 +258,7 @@ class NavigationClient:
 
         label = waypoint_label or f"({x:.2f}, {y:.2f})"
         self._current_waypoint = label
-        if not self._action_client.server_is_ready():
+        if not self.server_is_ready():
             reason = "NavigateToPose action server not available"
             self._logger.error(reason)
             self._mark_terminal("unavailable", reason)
@@ -312,6 +330,83 @@ class NavigationClient:
         self._result_name = "idle"
         self._failure_reason = ""
 
+    def server_is_ready(self) -> bool:
+        """Return immediately; do not start a mission while Nav2 is unavailable."""
+        return bool(self._action_client.server_is_ready())
+
+    def startup_readiness(self) -> tuple[bool, str]:
+        """Poll one non-blocking lifecycle snapshot and latch an all-active result."""
+        if self._startup_ready:
+            return True, "Nav2 lifecycle and NavigateToPose action are ready"
+
+        unavailable = []
+        for name, client in self._lifecycle_clients.items():
+            if name in self._lifecycle_futures:
+                continue
+            if not client.wait_for_service(timeout_sec=0.0):
+                unavailable.append(name)
+                continue
+            try:
+                self._lifecycle_futures[name] = client.call_async(
+                    self._lifecycle_get_state.Request()
+                )
+            except Exception as exc:  # noqa: BLE001
+                self._startup_reason = "%s lifecycle query failed: %s" % (
+                    name,
+                    exc,
+                )
+                return False, self._startup_reason
+        if unavailable:
+            self._startup_reason = "waiting for Nav2 lifecycle services: %s" % (
+                ", ".join(unavailable)
+            )
+            return False, self._startup_reason
+
+        pending = [
+            name
+            for name, future in self._lifecycle_futures.items()
+            if not future.done()
+        ]
+        if pending:
+            self._startup_reason = "waiting for Nav2 lifecycle states: %s" % (
+                ", ".join(pending)
+            )
+            return False, self._startup_reason
+
+        states = {}
+        try:
+            for name in _NAV2_LIFECYCLE_NODES:
+                response = self._lifecycle_futures[name].result()
+                current_state = response.current_state
+                states[name] = (
+                    int(current_state.id),
+                    str(getattr(current_state, "label", "")),
+                )
+        except Exception as exc:  # noqa: BLE001
+            self._lifecycle_futures = {}
+            self._startup_reason = "Nav2 lifecycle query failed: %s" % exc
+            return False, self._startup_reason
+        self._lifecycle_futures = {}
+        self._lifecycle_states = states
+
+        inactive = [
+            "%s=%s[%d]" % (name, label or "unknown", state_id)
+            for name, (state_id, label) in states.items()
+            if state_id != _LIFECYCLE_ACTIVE
+        ]
+        if inactive:
+            self._startup_reason = "waiting for Nav2 lifecycle active: %s" % (
+                ", ".join(inactive)
+            )
+            return False, self._startup_reason
+        if not self.server_is_ready():
+            self._startup_reason = "waiting for NavigateToPose action server"
+            return False, self._startup_reason
+
+        self._startup_ready = True
+        self._startup_reason = "Nav2 lifecycle and NavigateToPose action are ready"
+        return True, self._startup_reason
+
     @property
     def goal_sent(self) -> bool:
         """True if a goal has been sent but not yet resolved."""
@@ -337,6 +432,12 @@ class NavigationClient:
             "nav_result": self._result_name,
             "nav_failure_reason": self._failure_reason,
             "current_waypoint": self._current_waypoint or "",
+            "nav2_startup_ready": self._startup_ready,
+            "nav2_startup_reason": self._startup_reason,
+            "nav2_lifecycle_states": {
+                name: {"id": state_id, "label": label}
+                for name, (state_id, label) in self._lifecycle_states.items()
+            },
         }
 
     # ── action callbacks ────────────────────────────────────

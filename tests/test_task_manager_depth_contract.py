@@ -28,6 +28,9 @@ class TaskManagerDepthContractTests(unittest.TestCase):
             'declare_parameter("verify_host_odom_after_depth_disable", True)',
             'declare_parameter("depth_transition_settle_duration_sec", 1.0)',
             "self._depth_transition_stationary.update(",
+            "self._mission_start_prerequisites_ready()",
+            "self._nav.startup_readiness()",
+            "self._depth_mode_client.cone_layer_baseline_ready",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.source)
@@ -56,6 +59,7 @@ class TaskManagerDepthContractTests(unittest.TestCase):
             "expected_map_id",
             "enable_phase2_map_switch",
             "enable_depth_milestones",
+            "require_cone_layer_startup_ready",
             "depth_safety_status_topic",
             "verify_host_odom_after_depth_disable",
             "enable_cone_controller",
@@ -64,6 +68,33 @@ class TaskManagerDepthContractTests(unittest.TestCase):
             with self.subTest(parameter=parameter):
                 self.assertIn('"' + parameter + '"', launch_source)
                 self.assertNotIn("    " + parameter + ":", params)
+
+    def test_mission_start_transition_is_ordered_after_nav2_and_costmap_readiness(self):
+        start_block = self.source.split("def _tick_start", 1)[1].split(
+            "def _tick_pass_obstacle", 1
+        )[0]
+        self.assertLess(
+            start_block.index("self._mission_start_prerequisites_ready()"),
+            start_block.index("self._ensure_depth_mode("),
+        )
+        self.assertIn(
+            'declare_parameter("require_cone_layer_startup_ready", False)',
+            self.source,
+        )
+        navigation_client = (
+            REPO_ROOT / "src" / "nodes" / "navigation" / "navigation_client.py"
+        ).read_text(encoding="utf-8")
+        for token in (
+            '"map_server"',
+            '"planner_server"',
+            '"controller_server"',
+            '"recoveries_server"',
+            '"bt_navigator"',
+            "client.call_async(",
+            "state_id != _LIFECYCLE_ACTIVE",
+        ):
+            self.assertIn(token, navigation_client)
+        self.assertNotIn("spin_until_future_complete", navigation_client)
 
     def test_task_manager_uses_safe_route_transits_and_approach_names(self):
         for token in (

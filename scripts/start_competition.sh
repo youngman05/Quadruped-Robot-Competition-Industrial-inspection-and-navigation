@@ -893,6 +893,7 @@ if $CONE_TO_WHZ_L6; then
     require_exact_parameter /task_manager_node waypoint_route "$TASK_WAYPOINT_ROUTE"
     require_exact_parameter /task_manager_node expected_map_id "$TASK_EXPECTED_MAP_ID"
     require_exact_parameter /task_manager_node enable_cone_controller true
+    require_exact_parameter /task_manager_node require_cone_layer_startup_ready true
     require_exact_parameter /task_manager_node cone_behavior_tree "$FORMAL_CONE_BEHAVIOR_TREE"
 fi
 

@@ -401,6 +401,8 @@ class ConeScanSafetyGate(Node):
                     "mode_control_enabled": self._enable_mode_control,
                     "resource_stage": self._resource_stage,
                     "resource_ready": self._resource_ready,
+                    "layer_baseline_ready": self._layer_tracker.baseline_ready(),
+                    "layer_baseline_reason": self._layer_tracker.last_reason,
                 },
                 sort_keys=True,
                 separators=(",", ":"),

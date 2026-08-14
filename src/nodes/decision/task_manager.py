@@ -176,6 +176,7 @@ class TaskManagerNode(Node):
         self.declare_parameter("inspection_count", 0)
         self.declare_parameter("enable_phase2_map_switch", False)
         self.declare_parameter("enable_depth_milestones", False)
+        self.declare_parameter("require_cone_layer_startup_ready", False)
         self.declare_parameter("depth_mode_request_topic", "/depth/mode_request")
         self.declare_parameter("depth_mode_status_topic", "/depth/mode_status")
         self.declare_parameter("depth_safety_status_topic", "/depth/safety_gate_status")
@@ -256,6 +257,9 @@ class TaskManagerNode(Node):
         )
         self._enable_depth_milestones = bool(
             self.get_parameter("enable_depth_milestones").value
+        )
+        self._require_cone_layer_startup_ready = bool(
+            self.get_parameter("require_cone_layer_startup_ready").value
         )
         depth_mode_request_topic = str(
             self.get_parameter("depth_mode_request_topic").value
@@ -340,6 +344,11 @@ class TaskManagerNode(Node):
         self._grab_depth_mode = None
         self._grab_depth_transition_complete = False
         self._depth_recorded_waypoints = set()
+        self._mission_start_nav_ready = False
+        self._mission_start_cone_layers_ready = (
+            not self._require_cone_layer_startup_ready
+        )
+        self._mission_start_wait_reason = "waiting for fresh odometry"
 
         # ── 地图切换客户端 ────────────────────────
         self._phase2_yaml = str(self.get_parameter("phase2_map_yaml").value)
@@ -503,12 +512,14 @@ class TaskManagerNode(Node):
         if (
             self._enable_depth_milestones
             and odom_fresh
-            and not self._ensure_depth_mode(
+        ):
+            if not self._mission_start_prerequisites_ready():
+                return
+            if not self._ensure_depth_mode(
                 self._startup_depth_mode,
                 "mission_start",
-            )
-        ):
-            return
+            ):
+                return
 
         # 调试模式: 跳过所有条件直接推进
         if self._auto_advance and elapsed > 0.5:
@@ -1018,6 +1029,32 @@ class TaskManagerNode(Node):
             stationary,
         )
 
+    def _mission_start_prerequisites_ready(self) -> bool:
+        nav_ready, nav_reason = self._nav.startup_readiness()
+        self._mission_start_nav_ready = nav_ready
+        self._mission_start_cone_layers_ready = bool(
+            not self._require_cone_layer_startup_ready
+            or (
+                self._depth_mode_client is not None
+                and self._depth_mode_client.cone_layer_baseline_ready
+            )
+        )
+        if not self._mission_start_nav_ready:
+            reason = nav_reason
+        elif not self._mission_start_cone_layers_ready:
+            reason = self._depth_mode_client.cone_layer_baseline_reason
+        else:
+            reason = ""
+        if reason != self._mission_start_wait_reason:
+            if reason:
+                self.get_logger().info("START readiness: %s" % reason)
+            else:
+                self.get_logger().info(
+                    "START readiness confirmed: Nav2 lifecycle, action, and cone costmaps ready"
+                )
+            self._mission_start_wait_reason = reason
+        return not reason
+
     def _ensure_depth_mode(self, mode, milestone: str) -> bool:
         if mode is None or self._depth_mode_client is None:
             return True
@@ -1329,6 +1366,16 @@ class TaskManagerNode(Node):
             "abort_reason": self._abort_reason,
             "waypoint_source": self._waypoint_source,
             "waypoint_route": self._waypoint_route,
+            "mission_start_readiness": {
+                "nav2_lifecycle_action_ready": self._mission_start_nav_ready,
+                "cone_layer_baseline_required": (
+                    self._require_cone_layer_startup_ready
+                ),
+                "cone_layer_baseline_ready": (
+                    self._mission_start_cone_layers_ready
+                ),
+                "reason": self._mission_start_wait_reason,
+            },
             "navigation": self._nav.status_dict(),
             "depth": {
                 "enabled": self._enable_depth_milestones,
