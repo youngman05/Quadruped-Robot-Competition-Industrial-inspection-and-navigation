@@ -1,0 +1,18 @@
+# Copy to manipulation_scenarios.local.yaml before editing or using it.
+# This file is test input only. Fixed map poses remain exclusively in
+# configs/calibration/competition_sites.yaml.
+scenarios:
+  pick_from_i0:
+    route_mode: segment
+    segment_name: pick_one
+
+  place_at_b_from_j0:
+    route_mode: segment
+    segment_name: place_one
+    segment_zone: B
+    # Only valid for a supervised segment test after the operator has loaded a block.
+    manual_carrying_block: true
+
+  full_replay_b_d:
+    route_mode: full
+    abnormal_zones: [B, D]

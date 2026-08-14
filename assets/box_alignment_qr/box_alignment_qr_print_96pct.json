@@ -1,0 +1,13 @@
+{
+  "expected_printed_black_symbol_side_mm": 150.0,
+  "expected_printed_reference_bar_mm": 100.0,
+  "expected_printed_total_square_side_mm": 191.3793103448276,
+  "marker_id": "box_center_v1",
+  "measured_printer_scale": 0.96,
+  "payload": "QRCOMP:BOX_CENTER:V1",
+  "pdf_black_symbol_side_mm": 156.25,
+  "pdf_compensation_factor": 1.0416666666666667,
+  "pdf_reference_bar_mm": 104.16666666666667,
+  "pdf_total_square_side_mm": 199.3534482758621,
+  "schema_version": 1
+}

@@ -117,6 +117,34 @@ class DepthGeometryTest(unittest.TestCase):
         self.assertAlmostEqual(estimate.position_m[1], 0.0)
         self.assertEqual(estimate.valid_pixels, 16)
 
+    def test_preprojected_depth_is_reusable_across_masks(self) -> None:
+        depth = np.full((8, 10), 1000, dtype=np.uint16)
+        intrinsics = CORE.CameraIntrinsics(100.0, 100.0, 4.5, 3.5)
+        projection = CORE.project_raw_depth_to_color(
+            depth,
+            (8, 10),
+            intrinsics,
+            intrinsics,
+            CORE.RigidTransform.identity(),
+        )
+        left_mask = np.zeros((8, 10), dtype=bool)
+        right_mask = np.zeros((8, 10), dtype=bool)
+        left_mask[2:6, 1:5] = True
+        right_mask[2:6, 5:9] = True
+
+        left = CORE.estimate_mask_3d_from_projected_depth(
+            projection, left_mask, erosion_iterations=0, min_valid_pixels=4
+        )
+        right = CORE.estimate_mask_3d_from_projected_depth(
+            projection, right_mask, erosion_iterations=0, min_valid_pixels=4
+        )
+
+        self.assertTrue(left.valid)
+        self.assertTrue(right.valid)
+        self.assertEqual(left.valid_pixels, 16)
+        self.assertEqual(right.valid_pixels, 16)
+        self.assertLess(left.position_m[0], right.position_m[0])
+
     def test_raw_depth_projection_applies_extrinsics(self) -> None:
         depth = np.full((5, 5), 1000, dtype=np.uint16)
         mask = np.zeros((5, 5), dtype=bool)
@@ -139,6 +167,28 @@ class DepthGeometryTest(unittest.TestCase):
         self.assertEqual(estimate.center_px, (3, 2))
         self.assertAlmostEqual(estimate.position_m[0], 0.1)
         self.assertAlmostEqual(estimate.position_m[2], 1.0)
+
+    def test_raw_depth_projection_ratio_uses_unique_color_coverage(self) -> None:
+        depth = np.full((3, 3), 1000, dtype=np.uint16)
+        mask = np.zeros((3, 3), dtype=bool)
+        mask[1, 1] = True
+        # A wide depth focal length makes all nine depth pixels round to the
+        # same color pixel. Raw point count therefore exceeds mask area.
+        depth_intrinsics = CORE.CameraIntrinsics(100.0, 100.0, 1.0, 1.0)
+        color_intrinsics = CORE.CameraIntrinsics(1.0, 1.0, 1.0, 1.0)
+
+        estimate = CORE.estimate_mask_3d_from_raw_depth(
+            depth,
+            mask,
+            depth_intrinsics,
+            color_intrinsics,
+            CORE.RigidTransform.identity(),
+            erosion_iterations=0,
+            min_valid_pixels=1,
+        )
+
+        self.assertEqual(estimate.valid_pixels, 9)
+        self.assertAlmostEqual(estimate.valid_ratio, 1.0)
 
     def test_raw_depth_projection_marks_empty_overlap_invalid(self) -> None:
         depth = np.full((5, 5), 1000, dtype=np.uint16)

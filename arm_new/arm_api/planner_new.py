@@ -121,6 +121,82 @@ class PoseConstrainedArmIK(LocalGeometricArmIK):
         }
         return ik_angles, servo_data, used_pitch
 
+    def solve_wrist_fixed(self, coordinate_data, wrist_deg, previous_servo_data=None, used_pitch=None):
+        """Solve TCP position while preserving the relative wrist joint angle.
+
+        ``wrist_deg`` is theta3, the joint commanded through servo ID3.  This
+        is intentionally different from holding the tool-axis angle ``phi``:
+        the placement descent must keep the physical wrist joint unchanged.
+        """
+
+        x, y, z = [float(value) for value in coordinate_data]
+        l1 = self.config.link_l1
+        l2 = self.config.link_l2
+        l3 = self.config.link_l3
+        l4 = self.config.link_l4
+        wrist_rad = math.radians(float(wrist_deg))
+
+        forward, lateral = self._project_to_arm_plane(x, y)
+        base_rad = math.atan2(lateral, forward)
+        radial = math.hypot(forward, lateral)
+        height = z - l1
+
+        # With theta3 fixed, L3 and L4 form one virtual link.  Solve L2 and
+        # that virtual link, then recover the physical elbow angle.
+        virtual_r = l3 + l4 * math.cos(wrist_rad)
+        virtual_h = l4 * math.sin(wrist_rad)
+        virtual_length = math.hypot(virtual_r, virtual_h)
+        virtual_offset = math.atan2(virtual_h, virtual_r)
+        distance = math.hypot(radial, height)
+        self._check_two_link_reachable(distance, l2, virtual_length, coordinate_data, radial, wrist_rad)
+
+        best = None
+        best_score = None
+        last_limit_error = None
+        for elbow_mode, virtual_elbow_rad in self._two_link_elbow_candidates(
+            radial, height, l2, virtual_length
+        ):
+            shoulder_rad = self._solve_shoulder_for_wrist(
+                radial, height, virtual_elbow_rad, l2, virtual_length
+            )
+            elbow_rad = virtual_elbow_rad - virtual_offset
+            raw_servo_data = self._joint_angles_to_raw_servos(
+                wrist_deg=float(wrist_deg),
+                elbow_deg=math.degrees(elbow_rad),
+                shoulder_deg=math.degrees(shoulder_rad),
+                base_deg=math.degrees(base_rad),
+            )
+            try:
+                self._check_servo_limits(raw_servo_data, coordinate_data)
+            except IKNoSolution as exc:
+                last_limit_error = exc
+                continue
+            score = self._score_pose_solution(raw_servo_data, previous_servo_data, elbow_mode)
+            if best_score is None or score > best_score:
+                best_score = score
+                best = (shoulder_rad, elbow_rad, raw_servo_data, elbow_mode)
+
+        if best is None:
+            detail = "" if last_limit_error is None else "; last_limit_error={}".format(last_limit_error)
+            raise IKNoSolution(
+                "IK wrist-fixed no solution: coordinate={} theta3={:.2f}deg{}".format(
+                    coordinate_data, float(wrist_deg), detail
+                )
+            )
+
+        shoulder_rad, elbow_rad, raw_servo_data, elbow_mode = best
+        servo_data = {name: clamp(pulse) for name, pulse in raw_servo_data.items()}
+        ik_angles = {
+            "theta3": float(wrist_deg),
+            "theta4": math.degrees(elbow_rad),
+            "theta5": math.degrees(shoulder_rad),
+            "theta6": math.degrees(base_rad),
+            "ik_mode": "wrist_fixed",
+            "elbow_mode": elbow_mode,
+            "unit": "deg",
+        }
+        return ik_angles, servo_data, used_pitch
+
     def _two_link_elbow_candidates(self, wrist_r, wrist_h, l2, l3):
         cos_elbow = (
             wrist_r * wrist_r
@@ -280,6 +356,20 @@ class ArmGrabPlannerNew(object):
             "used_pitch": used_pitch,
         }
 
+    def solve_wrist_fixed(self, coordinate, wrist_deg, previous_servo_data=None):
+        ik_angles, servo_data, used_pitch = self.arm_ik.solve_wrist_fixed(
+            coordinate,
+            wrist_deg=float(wrist_deg),
+            previous_servo_data=previous_servo_data,
+            used_pitch=self.config.pitch,
+        )
+        return {
+            "coordinate": tuple(float(x) for x in coordinate),
+            "servo_pulses": servo_data,
+            "ik_angles": ik_angles,
+            "used_pitch": used_pitch,
+        }
+
     def solve_end_effector(self, coordinate, phi=0.0, pose_constrained=False, previous_servo_data=None):
         """兼容式入口：调用者可以通过 pose_constrained 选择 IK 类型。"""
 
@@ -329,7 +419,7 @@ class ArmGrabPlannerNew(object):
                 "pre_grasp_open_and_rotate",
                 None,
                 500,
-                ((1, self.config.open_gripper), (2, wrist)),
+                ((1, self.config.grasp_open_gripper), (2, wrist)),
             ),
             MotionStep(
                 "approach",
@@ -498,6 +588,43 @@ class ArmGrabPlannerNew(object):
             steps.append(self._home_step())
         return steps
 
+    def plan_place_from_lift(
+        self,
+        grasp_point,
+        lift_height_m,
+        descent_m,
+        pose1_duration_ms=1200,
+        descent_duration_ms=800,
+    ):
+        """Return to the grasp-end lift pose, descend with theta3 held, release."""
+
+        grasp_point = tuple(float(value) for value in grasp_point)
+        if len(grasp_point) != 3:
+            raise ValueError("grasp_point must contain exactly three values")
+        lift_height_m = float(lift_height_m)
+        descent_m = float(descent_m)
+        if lift_height_m <= 0.0 or descent_m <= 0.0 or descent_m > lift_height_m:
+            raise ValueError("descent_m must be positive and no greater than lift_height_m")
+
+        pose1_point = (grasp_point[0], grasp_point[1], grasp_point[2] + lift_height_m)
+        release_point = (pose1_point[0], pose1_point[1], pose1_point[2] - descent_m)
+        pose1 = self.solve_position_only(pose1_point)
+        wrist_deg = float(pose1["ik_angles"]["theta3"])
+        descent = self.solve_wrist_fixed(
+            release_point,
+            wrist_deg=wrist_deg,
+            previous_servo_data=pose1["servo_pulses"],
+        )
+        return [
+            self._motion_step_from_solution(
+                "place_pose_1", pose1_point, max(1, int(pose1_duration_ms)), pose1
+            ),
+            self._motion_step_from_solution(
+                "place_descend_2cm", release_point, max(1, int(descent_duration_ms)), descent
+            ),
+            MotionStep("open_gripper", None, 600, ((1, self.config.open_gripper),)),
+        ]
+
     def plan_face_grasp_pose(self, grasp_pose, include_home=False):
         """规划 50x50 近端面靠近抓取，使用姿态约束 IK。"""
 
@@ -512,7 +639,7 @@ class ArmGrabPlannerNew(object):
                 "pre_grasp_open_and_rotate",
                 None,
                 500,
-                ((1, self.config.open_gripper), (2, wrist)),
+                ((1, self.config.grasp_open_gripper), (2, wrist)),
             ),
             MotionStep(
                 "safe_pose",

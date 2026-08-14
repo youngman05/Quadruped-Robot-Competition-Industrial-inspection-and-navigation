@@ -23,6 +23,10 @@ logs/
 *.mcap
 rosbag*/
 
+# Per-operator manipulation replay values. Copy the tracked example first.
+configs/test/manipulation_scenarios.local.yaml
+configs/test/arm_pick_hardware_test.local.yaml
+
 # Data and generated outputs
 data/raw/
 data/labeled/

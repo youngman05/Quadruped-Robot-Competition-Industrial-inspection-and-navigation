@@ -19,6 +19,7 @@ class ArmGrabPlannerNewTest(unittest.TestCase):
         names = [step.name for step in steps]
 
         self.assertEqual(names[:3], ["pre_grasp_open_and_rotate", "safe_pose", "pre_grasp"])
+        self.assertEqual(dict(steps[0].servos)[1], 0)
         self.assertIn("close_gripper", names)
         self.assertEqual(names[-1], "lift")
         self.assertTrue(all(0 <= pulse <= 1000 for step in steps for _, pulse in step.servos))

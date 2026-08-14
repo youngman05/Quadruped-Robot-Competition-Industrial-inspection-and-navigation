@@ -1,0 +1,8 @@
+# Supervised I0-to-I2 test using the production nearest-visible-red selection.
+competition_manager_node:
+  ros__parameters:
+    route_mode: "segment"
+    segment_name: "pick_i0_to_i2"
+    enable_route_execution: true
+    # -1 enables the production selector: nearest visible ID in pick_red_tag_ids.
+    pick_forced_tag_id: -1

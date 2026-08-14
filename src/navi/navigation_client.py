@@ -17,6 +17,9 @@ map frame coordinates automatically.
 
 from __future__ import annotations
 
+import math
+from pathlib import Path
+
 from navi.map.navi_map_data import FIELD, mm_to_ros, mm_yaw_to_ros_quat
 
 
@@ -29,11 +32,6 @@ _RAW_WAYPOINTS: dict[str, dict] = {
     "pos1_middle_turned":      {"x_mm": 1500, "y_mm": 2750, "yaw_deg":  90,  "label": "观察位① 转身看下柜顶面"},
     "pos2a_upper_right":       {"x_mm": 2200, "y_mm": 1500, "yaw_deg": 180,  "label": "观察位②a 看上柜右侧面"},
     "pos2b_lower_right":       {"x_mm": 2200, "y_mm": 4000, "yaw_deg": 180,  "label": "观察位②b 看下柜右侧面"},
-    "grab_area":               {"x_mm": 4250, "y_mm": 3450, "yaw_deg": None, "label": "抓取区"},
-    "placement_A":             {"x_mm": 3250, "y_mm": 600,  "yaw_deg": None, "label": "A放置区"},
-    "placement_B":             {"x_mm": 3750, "y_mm": 600,  "yaw_deg": None, "label": "B放置区"},
-    "placement_C":             {"x_mm": 4250, "y_mm": 600,  "yaw_deg": None, "label": "C放置区"},
-    "placement_D":             {"x_mm": 4750, "y_mm": 600,  "yaw_deg": None, "label": "D放置区"},
     # 穿越障碍区时不设固定入口 — A* + D455 实时避障自己找路
     # 目标点在障碍区左侧的安全走廊内, 穿越过程由 local_costmap 绕开锥桶
     # x=500mm (ROS 0.5m) 在安全走廊中部, 避开障碍区 (x≥1000mm)
@@ -58,6 +56,74 @@ for name, wp in _RAW_WAYPOINTS.items():
         "yaw_set": wp["yaw_deg"] is not None,  # True=到位后转朝向, False=只到位置
         "label": wp["label"],
     }
+
+
+def _competition_sites_path() -> Path:
+    """Locate the one spatial-calibration source in source and install trees."""
+
+    source_path = Path(__file__).resolve().parents[2] / "configs" / "calibration" / "competition_sites.yaml"
+    if source_path.is_file():
+        return source_path
+    try:
+        from ament_index_python.packages import get_package_share_directory
+        installed_path = Path(get_package_share_directory("quadruped_robot_competition"))
+        installed_path = installed_path / "configs" / "calibration" / "competition_sites.yaml"
+        if installed_path.is_file():
+            return installed_path
+    except ImportError:
+        pass
+    raise RuntimeError("competition_sites.yaml was not found")
+
+
+def _load_calibrated_manipulation_waypoints() -> dict:
+    """Return only calibrated fixed map poses, never I1/J1 dynamic states."""
+
+    try:
+        import yaml
+        data = yaml.safe_load(_competition_sites_path().read_text(encoding="utf-8"))
+        poses = data.get("dog_poses", {})
+    except (ImportError, OSError, TypeError, ValueError):
+        return {}
+
+    configured = {
+        "grasp_i0": "I0抓取粗对齐点",
+        "placement_A": "A放置粗对齐点",
+        "placement_B": "B放置粗对齐点",
+        "placement_C": "C放置粗对齐点",
+        "placement_D": "D放置粗对齐点",
+    }
+    result = {}
+    for name, label in configured.items():
+        entry = poses.get(name, {})
+        pose = entry.get("pose_map_m_rad") if isinstance(entry, dict) else None
+        if entry.get("status") != "calibrated" or not isinstance(pose, list) or len(pose) != 3:
+            continue
+        try:
+            x, y, yaw = (float(value) for value in pose)
+        except (TypeError, ValueError):
+            continue
+        if not all(math.isfinite(value) for value in (x, y, yaw)):
+            continue
+        result[name] = {
+            "x": x,
+            "y": y,
+            "qx": 0.0,
+            "qy": 0.0,
+            "qz": math.sin(yaw / 2.0),
+            "qw": math.cos(yaw / 2.0),
+            "yaw_set": True,
+            "label": label,
+        }
+    if "grasp_i0" in result:
+        # Compatibility alias derived from the same calibration value.
+        result["grab_area"] = dict(result["grasp_i0"])
+    return result
+
+
+# Manipulation navigation is intentionally absent until the calibration record
+# is promoted to calibrated. This makes provisional/conflicting values fail
+# closed rather than silently turning them into Nav2 goals.
+WAYPOINTS.update(_load_calibrated_manipulation_waypoints())
 
 
 class NavigationClient:

@@ -1,0 +1,12 @@
+# Supervised cumulative Nav2 coarse I0 -> AprilTag-precise I2 test.
+# For the local I0 -> I2 test, set segment_name to "pick_i0_to_i2".
+competition_manager_node:
+  ros__parameters:
+    route_mode: "segment"
+    segment_name: "pick_until_i2"
+    enable_route_execution: true
+
+    # Keep all dog motion slow during acceptance.
+    pick_qr_linear_speed_mps: 0.025
+    pick_qr_yaw_speed_rps: 0.10
+    pick_qr_timeout_s: 80.0

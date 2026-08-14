@@ -70,19 +70,21 @@ def test_i1_and_smoke_test_share_the_expected_dynamic_z_contract():
     config = _load_config()
     grasp_i1 = config["manipulation"]["grasp_i1"]
     assert grasp_i1["target_frame"] == "arm_base_link"
-    assert grasp_i1["fixed_xy_m"] == [0.45, 0.00]
+    assert grasp_i1["fixed_xy_m"] == [0.42, 0.00]
     assert grasp_i1["z_mode"] == "dynamic_service_request"
 
     z_min, z_max = grasp_i1["z_valid_range_m"]
     assert z_min <= config["smoke_test"]["grasp_z_m"] <= z_max
 
 
-def test_arm_runtime_defaults_match_the_verified_i1_grasp_contract():
+def test_arm_runtime_defaults_match_the_configured_i1_grasp_contract():
     sites = _load_config()
     arm_config = yaml.safe_load(ARM_PARAMS_PATH.read_text(encoding="utf-8"))
     arm_params = arm_config["arm_motion_node"]["ros__parameters"]
 
     assert arm_params["grasp_reference_arm_base"] == sites["manipulation"]["grasp_i1"]["fixed_xy_m"]
+    assert arm_params["grasp_z_min_m"] == sites["manipulation"]["grasp_i1"]["z_valid_range_m"][0]
+    assert arm_params["grasp_z_max_m"] == sites["manipulation"]["grasp_i1"]["z_valid_range_m"][1]
     assert arm_params["grasp_pre_distance"] == 0.05
     assert arm_params["grasp_lift_height"] == 0.08
     assert arm_params["grasp_duration_scale"] == 2.0

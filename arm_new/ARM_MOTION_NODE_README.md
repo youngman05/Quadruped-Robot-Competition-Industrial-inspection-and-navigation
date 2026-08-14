@@ -29,21 +29,27 @@ p_arm_api = [-y_arm_base_link, x_arm_base_link, z_arm_base_link]
 ```
 
 The grasp service accepts the I1 reference target, normally
-`(0.45, 0.00, z_final)`. It validates the configured x/y tolerance and z range,
+`(0.42, 0.00, z_final)`. It validates the configured x/y tolerance and z range,
 then reuses the planning sequence from `scripts/face_approach_grab.py`:
 
 ```text
 pre_grasp -> segmented approach -> close_gripper -> lift
 ```
 
+Before the approach, ID1 is commanded to `grasp_open_gripper_pulse`; the
+default `0` is the configured maximum jaw opening. This does not change the
+release pulse used by placement.
+
 It always uses `include_home=false`; the final lift pose is the transport pose.
 
 The placement service has no request payload because the dog is already at a
-calibrated A/B/C/D base pose. It reads `place_target_arm` in ArmPi API axes
-from the parameter file and reuses `scripts/direct_place.py` planning:
+calibrated A/B/C/D base pose. It derives the grasp-end lift pose from
+`place_reference_grasp_arm` in ArmPi API axes, returns to that pose, descends
+`place_descent_m` with physical wrist joint `theta3` (servo ID3) fixed, then
+opens the gripper:
 
 ```text
-place_target -> open_gripper
+place_pose_1 -> place_descend_2cm -> open_gripper
 ```
 
 It never starts either script as a subprocess, so there is no terminal prompt.
@@ -71,8 +77,8 @@ Calibration must provide:
    `configs/transforms/static_extrinsics.yaml`.
 2. The I1 x/y reference, tolerance, and valid grasp z range in ROS
    `arm_base_link` axes.
-3. `place_target_arm` in ArmPi API axes at a dog pose that has been calibrated
-   for each A/B/C/D placement target.
+3. `place_reference_grasp_arm` in ArmPi API axes at a dog pose that has been
+   calibrated for each A/B/C/D placement target.
 4. `transform_calibrated=true`, `grasp_reference_configured=true`, and
    `place_target_configured=true` only after the above measurements pass.
 
@@ -99,10 +105,18 @@ must return `success: false` and a JSON message with `state: planned`.
 ```bash
 ros2 service call /arm/execute_grasp_fixed \
   arm_new_interfaces/srv/ExecuteGraspFixed \
-  '{target_arm_base: {x: 0.45, y: 0.00, z: 0.06}}'
+  '{target_arm_base: {x: 0.42, y: 0.00, z: 0.15}}'
 
 ros2 service call /arm/execute_place_fixed std_srvs/srv/Trigger '{}'
 ```
 
 Set `enable_motion: true` only after successful TF, preflight, and dry-run
 checks on the Xavier host.
+
+For the supervised hardware test, pass the small local override file. The
+launch file loads the production defaults first, then applies this override:
+
+```bash
+ros2 launch arm_new_ros arm_motion.launch.py \
+  params_file:=configs/test/arm_pick_hardware_test.local.yaml
+```

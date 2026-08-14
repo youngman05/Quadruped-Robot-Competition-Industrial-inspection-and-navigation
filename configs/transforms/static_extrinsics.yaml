@@ -17,6 +17,9 @@ frames:
   arm_base_link:
     owner: project_static_extrinsics
     description: "ArmPi mounting-base TF frame. Its origin is the same physical base reference point used by the arm_new API frame `arm`; ROS REP-103 axes are +X arm forward, +Y arm left, +Z up. `arm` itself is not a ROS TF frame: its right-handed API axes are +X right, +Y forward, +Z up, so for coincident origins p_arm_base_link = [y_arm, -x_arm, z_arm]. The base_link->arm_base_link mounting extrinsic is not measured yet and is intentionally absent from static_transforms."
+  dog_camera_optical_frame:
+    owner: project_static_extrinsics
+    description: "Lite3 built-in front-camera optical frame: +X image right, +Y image down, +Z forward."
 
 static_transforms:
   - parent_frame: base_link
@@ -38,9 +41,23 @@ static_transforms:
     translation_m: [0.24, 0.0, 0.41]
     rotation_xyzw: [0.0, 0.0, 0.0, 1.0]
     publish: true
-    status: provisional
-    source: "User-provided ArmPi base pose in base_link; position (front, left, up) = (0.24, 0.0, 0.41) m and axes parallel to base_link."
+    status: calibrated
+    source: "Accepted mounted ArmPi base pose in base_link; position (front, left, up) = (0.24, 0.0, 0.41) m and axes parallel to base_link."
     measurement:
-      calibrated_at: null
+      calibrated_at: "2026-08-11"
+      translational_uncertainty_m: null
+      rotational_uncertainty_deg: null
+
+  # The camera centre is 0.50 m directly ahead of base_link. The rotation maps
+  # optical +Z forward, +X image-right, +Y image-down into REP-103 base axes.
+  - parent_frame: base_link
+    child_frame: dog_camera_optical_frame
+    translation_m: [0.50, 0.0, 0.0]
+    rotation_xyzw: [0.5, -0.5, 0.5, -0.5]
+    publish: true
+    status: provisional
+    source: "User-provided mounting position on 2026-08-12; optical axes follow the OpenCV/ROS camera convention."
+    measurement:
+      calibrated_at: "2026-08-12"
       translational_uncertainty_m: null
       rotational_uncertainty_deg: null

@@ -54,15 +54,15 @@ def generate_launch_description() -> LaunchDescription:
     transform_nodes = []
     for index, (parent, child, translation, rotation) in enumerate(_load_transforms()):
         transform_nodes.append(Node(
-            package="tf2_ros",
-            executable="static_transform_publisher",
+            package="quadruped_robot_competition",
+            executable="project_static_transform_publisher",
             name=f"project_static_tf_{index}",
-            arguments=[
-                *(str(value) for value in translation),
-                *(str(value) for value in rotation),
-                parent,
-                child,
-            ],
+            parameters=[{
+                "parent_frame": parent,
+                "child_frame": child,
+                "translation_m": [float(value) for value in translation],
+                "rotation_xyzw": [float(value) for value in rotation],
+            }],
             output="screen",
         ))
     return LaunchDescription(transform_nodes)

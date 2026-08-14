@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "family": "tag36h11",
+  "markers": [
+    {
+      "id": 0,
+      "zone": "pickup",
+      "label": "PICK ZONE"
+    },
+    {
+      "id": 1,
+      "zone": "place_a",
+      "label": "PLACE ZONE A"
+    },
+    {
+      "id": 2,
+      "zone": "place_b",
+      "label": "PLACE ZONE B"
+    },
+    {
+      "id": 3,
+      "zone": "place_c",
+      "label": "PLACE ZONE C"
+    },
+    {
+      "id": 4,
+      "zone": "place_d",
+      "label": "PLACE ZONE D"
+    }
+  ],
+  "measured_printer_scale": 0.96,
+  "pdf_compensation_factor": 1.0416666666666667,
+  "marker_modules": 8,
+  "quiet_zone_modules_each_side": 1,
+  "pdf_black_tag_side_mm": 156.25,
+  "expected_printed_black_tag_side_mm": 150.0,
+  "pdf_reference_bar_mm": 104.16666666666667,
+  "expected_printed_reference_bar_mm": 100.0,
+  "expected_printed_total_side_with_quiet_zone_mm": 187.5,
+  "pnp_tag_size_m": 0.15
+}

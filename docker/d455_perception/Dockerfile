@@ -9,8 +9,11 @@ WORKDIR /opt/quadruped/perception
 COPY docker/d455_perception/d455_yolo_3d_core.py bin/d455_yolo_3d_core.py
 COPY docker/d455_perception/d455_yolo_3d_pipeline.py bin/d455_yolo_3d_pipeline.py
 COPY docker/d455_perception/d455_yolo_3d_node.py bin/d455_yolo_3d_node.py
+COPY docker/d455_perception/apriltag_pose_core.py bin/apriltag_pose_core.py
+COPY docker/d455_perception/d455_apriltag_pose_node.py bin/d455_apriltag_pose_node.py
 
 COPY docker/d455_perception/run_yolo_3d_node.sh bin/run_yolo_3d_node.sh
+COPY docker/d455_perception/run_apriltag_pose_node.sh bin/run_apriltag_pose_node.sh
 ENV PYTHONPATH=/opt/quadruped/perception/bin:${PYTHONPATH}
 ENV YOLO_MODEL_PATH=/opt/quadruped/perception/models/red_green_obstacle.pt
 

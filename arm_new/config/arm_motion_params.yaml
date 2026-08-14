@@ -9,8 +9,9 @@ arm_motion_node:
     tf_child_frame: arm_base_link
     require_tf_in_preflight: true
 
-    # Keep both false until the mounted-arm calibration is accepted.
-    transform_calibrated: false
+    # Accepted mounted-arm calibration. Motion remains separately disabled by
+    # default and must be enabled only for a supervised hardware run.
+    transform_calibrated: true
     enable_motion: false
     port: /dev/ttyACM0
     baud: 115200
@@ -21,14 +22,17 @@ arm_motion_node:
     # configs/calibration/competition_sites.yaml. Keep motion disabled if the
     # two files disagree; remove this copy when the sites loader is integrated.
     # I1 reference uses arm_base_link axes: +X forward, +Y left, +Z up.
-    grasp_reference_configured: false
-    # Mounted-arm baseline verified at z=0.06 m. ArmPi API [0.00, 0.45, z]
-    # corresponds to ROS arm_base_link [0.45, 0.00, z].
-    grasp_reference_arm_base: [0.45, 0.00]
+    grasp_reference_configured: true
+    # Current hardware-test baseline at z=0.15 m. ArmPi API [0.00, 0.42, z]
+    # corresponds to ROS arm_base_link [0.42, 0.00, z].
+    grasp_reference_arm_base: [0.42, 0.00]
     grasp_reference_xy_tolerance_m: 0.02
-    grasp_z_min_m: 0.02
-    grasp_z_max_m: 0.12
+    grasp_z_min_m: 0.15
+    grasp_z_max_m: 0.25
     grasp_rotation_deg: 0.0
+    # ID1 lower pulse means a wider jaw opening. Zero is the configured
+    # maximum opening used only before the grasp approach.
+    grasp_open_gripper_pulse: 0
     grasp_pre_distance: 0.05
     grasp_lift_height: 0.08
     grasp_duration_scale: 2.0
@@ -36,11 +40,13 @@ arm_motion_node:
     grasp_approach_steps: 8
     grasp_approach_step_duration_ms: 180
 
-    # Transitional runtime copy of manipulation.fixed_release. ArmPi API axes:
-    # +X right, +Y forward, +Z up. This point must be measured with the dog at
-    # each calibrated A/B/C/D base pose before enabling motion.
+    # Fixed placement returns to the grasp-end lift pose, descends while ID3
+    # stays fixed, then opens the gripper. ArmPi API axes: +X right, +Y
+    # forward, +Z up. Do not enable until the reference is validated on-site.
     place_target_configured: false
-    place_target_arm: [0.0, 0.0, 0.0]
-    place_duration_ms: 1200
+    place_reference_grasp_arm: [0.0, 0.0, 0.0]
+    place_pose_1_duration_ms: 1200
+    place_descent_m: 0.02
+    place_descent_duration_ms: 800
     place_duration_scale: 1.0
     place_include_home: false

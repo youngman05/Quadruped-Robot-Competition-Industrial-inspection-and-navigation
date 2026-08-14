@@ -60,6 +60,16 @@ yolo_udp_bridge_node:
     min_depth_valid_ratio: 0.60
     tf_timeout_s: 0.05
 
+apriltag_udp_bridge_node:
+  ros__parameters:
+    udp_bind_host: "127.0.0.1"
+    udp_port: 19003
+    source_frame: "camera_link"
+    target_frame: "base_link"
+    detections_topic: "/apriltag/detections_base"
+    poll_period_s: 0.01
+    max_packet_age_s: 0.5
+
 # task_manager parameters are maintained separately in task_manager_params.yaml.
 # Calibrated dog/arm spatial relationships live in
 # ../calibration/competition_sites.yaml.

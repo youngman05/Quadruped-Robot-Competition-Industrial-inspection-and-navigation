@@ -29,7 +29,7 @@ struct ImuDataReceived{
 struct RobotState {
   int robot_basic_state;                 ///< Basic motion state of robot
   int robot_gait_state;
-  int robot_policy_state;                  ///< Robot gait information
+  // Current Lite3 firmware omits robot_policy_state from the UDP wire ABI.
   double rpy[3];                         ///< IMU angular 
   double rpy_vel[3];                     ///< IMU angular velocity
   double xyz_acc[3];                     ///< IMU acceleration
@@ -92,6 +92,9 @@ struct HandleStateReceived {
   int cons_code;
   struct HandleState data;
 };
+
+static_assert(sizeof(RobotStateReceived) == 212, "unexpected Lite3 RobotState wire ABI");
+static_assert(sizeof(HandleStateReceived) == 60, "unexpected Lite3 HandleState wire ABI");
 
 }
 #pragma pack(pop)

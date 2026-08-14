@@ -32,8 +32,8 @@ python3 -m pip install -r requirements.txt
 
 ## 最小自检
 
-当前 `L4=0.2700 m` 模型的实机端面抓取基准点为
-`(0.0, 0.45, 0.06)`。完整的已验证中心线范围见 `README.md` 的
+当前 `L4=0.2700 m` 模型的端面抓取测试点为
+`(0.0, 0.42, 0.15)`。完整的已验证中心线范围见 `README.md` 的
 “新模型已验证的中心线可达范围”；不要继续使用旧模型的 `y=0.18` 或
 `y=0.34` 示例。
 
@@ -45,7 +45,7 @@ python3 - <<'PY'
 from arm_api import ArmGrabPlanner
 
 planner = ArmGrabPlanner()
-steps = planner.plan_grab((0.0, 0.45, 0.06), rotation_deg=0.0, include_home=True)
+steps = planner.plan_grab((0.0, 0.42, 0.15), rotation_deg=0.0, include_home=True)
 print("planned steps:", len(steps))
 for step in steps:
     print(step.name, step.coordinate, step.servos)
@@ -59,7 +59,7 @@ python3 - <<'PY'
 from arm_api import ArmService, ArmServiceConfig
 
 arm = ArmService(ArmServiceConfig(port="/dev/ttyACM0", dry_run=True))
-result = arm.grab_from_pose((0.0, 0.45, 0.06), rotation_deg=0.0)
+result = arm.grab_from_pose((0.0, 0.42, 0.15), rotation_deg=0.0)
 print(result.ok, result.message)
 PY
 ```
@@ -67,13 +67,13 @@ PY
 端面靠近抓取 dry-run：
 
 ```bash
-python3 scripts/face_approach_grab.py 0 0.45 0.06 --steps 8
+python3 scripts/face_approach_grab.py 0 0.42 0.15 --steps 8
 ```
 
 确认安全后真实执行：
 
 ```bash
-python3 scripts/face_approach_grab.py 0 0.45 0.06 --execute --read-before --duration-scale 2.0
+python3 scripts/face_approach_grab.py 0 0.42 0.15 --execute --read-before --duration-scale 2.0
 ```
 
 ## BusLinker 真机检查

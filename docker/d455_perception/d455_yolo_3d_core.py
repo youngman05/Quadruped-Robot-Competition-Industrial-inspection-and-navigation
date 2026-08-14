@@ -182,6 +182,152 @@ class SparseProjectionEstimate:
     def valid(self) -> bool:
         return self.position_m is not None
 
+
+@dataclass(frozen=True)
+class ProjectedDepthPoints:
+    """Raw D455 depth points projected once into color-image pixels."""
+
+    image_shape: Tuple[int, int]
+    projected_u: np.ndarray
+    projected_v: np.ndarray
+    points_color: np.ndarray
+
+
+def project_raw_depth_to_color(
+    depth_mm: np.ndarray,
+    color_shape: Tuple[int, int],
+    depth_intrinsics: CameraIntrinsics,
+    color_intrinsics: CameraIntrinsics,
+    depth_to_color: RigidTransform,
+    *,
+    min_depth_m: float = 0.2,
+    max_depth_m: float = 4.0,
+    depth_scale_m: float = 0.001,
+) -> ProjectedDepthPoints:
+    """Project valid raw-depth pixels into the corresponding color image.
+
+    This operation is independent of an instance mask. It is intentionally
+    performed once per RGB-D frame and reused by every YOLO detection.
+    """
+
+    if depth_mm.ndim != 2:
+        raise ValueError("depth must be two-dimensional")
+    if len(color_shape) != 2 or color_shape[0] <= 0 or color_shape[1] <= 0:
+        raise ValueError("color_shape must contain positive height and width")
+    if min_depth_m <= 0 or max_depth_m <= min_depth_m or depth_scale_m <= 0:
+        raise ValueError("invalid depth projection parameters")
+
+    height, width = int(color_shape[0]), int(color_shape[1])
+    empty = lambda: ProjectedDepthPoints(
+        (height, width),
+        np.empty(0, dtype=np.int32),
+        np.empty(0, dtype=np.int32),
+        np.empty((0, 3), dtype=np.float64),
+    )
+    depth_m = depth_mm.astype(np.float64) * depth_scale_m
+    valid_depth = (depth_m >= min_depth_m) & (depth_m <= max_depth_m)
+    rows, cols = np.nonzero(valid_depth)
+    if rows.size == 0:
+        return empty()
+
+    z = depth_m[rows, cols]
+    points_depth = np.column_stack((
+        (cols - depth_intrinsics.cx) * z / depth_intrinsics.fx,
+        (rows - depth_intrinsics.cy) * z / depth_intrinsics.fy,
+        z,
+    ))
+    points_color = depth_to_color.apply(points_depth)
+    points_color = points_color[points_color[:, 2] > 0]
+    if points_color.size == 0:
+        return empty()
+
+    projected_u = np.rint(
+        points_color[:, 0] * color_intrinsics.fx / points_color[:, 2]
+        + color_intrinsics.cx
+    ).astype(np.int32)
+    projected_v = np.rint(
+        points_color[:, 1] * color_intrinsics.fy / points_color[:, 2]
+        + color_intrinsics.cy
+    ).astype(np.int32)
+    in_bounds = (
+        (projected_u >= 0)
+        & (projected_u < width)
+        & (projected_v >= 0)
+        & (projected_v < height)
+    )
+    return ProjectedDepthPoints(
+        (height, width),
+        projected_u[in_bounds],
+        projected_v[in_bounds],
+        points_color[in_bounds],
+    )
+
+
+def estimate_mask_3d_from_projected_depth(
+    projection: ProjectedDepthPoints,
+    color_mask: np.ndarray,
+    *,
+    trim_fraction: float = 0.1,
+    erosion_iterations: int = 2,
+    min_valid_pixels: int = 20,
+) -> SparseProjectionEstimate:
+    """Estimate one target from a color mask and preprojected depth points."""
+
+    if color_mask.ndim != 2:
+        raise ValueError("color_mask must be two-dimensional")
+    if color_mask.shape != projection.image_shape:
+        raise ValueError("color_mask shape must match projected color image")
+    if not 0.0 <= trim_fraction < 0.5:
+        raise ValueError("trim_fraction must be in [0, 0.5)")
+    if erosion_iterations < 0 or min_valid_pixels < 1:
+        raise ValueError("invalid mask projection parameters")
+
+    binary_mask = color_mask.astype(bool).astype(np.uint8)
+    original_area = int(binary_mask.sum())
+    if original_area == 0 or projection.points_color.size == 0:
+        return SparseProjectionEstimate(None, None, (0, 0), original_area, 0, 0.0)
+
+    if erosion_iterations:
+        kernel = np.ones((3, 3), dtype=np.uint8)
+        sample_mask = cv2.erode(binary_mask, kernel, iterations=erosion_iterations)
+        if not sample_mask.any():
+            sample_mask = binary_mask
+    else:
+        sample_mask = binary_mask
+
+    inside_mask = sample_mask[projection.projected_v, projection.projected_u].astype(bool)
+    projected_u = projection.projected_u[inside_mask]
+    projected_v = projection.projected_v[inside_mask]
+    points_color = projection.points_color[inside_mask]
+    valid_pixels = int(points_color.shape[0])
+    covered_pixels = np.unique(np.column_stack((projected_u, projected_v)), axis=0).shape[0]
+    valid_ratio = covered_pixels / int(sample_mask.sum())
+    if valid_pixels < min_valid_pixels:
+        center = (0, 0) if valid_pixels == 0 else (
+            int(np.median(projected_u)), int(np.median(projected_v))
+        )
+        return SparseProjectionEstimate(
+            None, None, center, original_area, valid_pixels, float(valid_ratio)
+        )
+
+    # Trim both optical-Z tails to reduce background spill at mask boundaries.
+    points_color = points_color[np.argsort(points_color[:, 2])]
+    trim_count = int(valid_pixels * trim_fraction)
+    if trim_count and valid_pixels - 2 * trim_count >= min_valid_pixels:
+        points_color = points_color[trim_count:-trim_count]
+
+    position = tuple(float(value) for value in np.median(points_color, axis=0))
+    center = (int(np.median(projected_u)), int(np.median(projected_v)))
+    return SparseProjectionEstimate(
+        position,
+        position[2],
+        center,
+        original_area,
+        valid_pixels,
+        float(valid_ratio),
+    )
+
+
 def estimate_mask_3d_from_raw_depth(
     depth_mm: np.ndarray,
     color_mask: np.ndarray,
@@ -213,84 +359,20 @@ def estimate_mask_3d_from_raw_depth(
     if erosion_iterations < 0 or min_valid_pixels < 1 or depth_scale_m <= 0:
         raise ValueError("invalid projection parameters")
 
-    binary_mask = color_mask.astype(bool).astype(np.uint8)
-    original_area = int(binary_mask.sum())
-    if original_area == 0:
-        return SparseProjectionEstimate(None, None, (0, 0), 0, 0, 0.0)
-
-    if erosion_iterations:
-        kernel = np.ones((3, 3), dtype=np.uint8)
-        sample_mask = cv2.erode(binary_mask, kernel, iterations=erosion_iterations)
-        if not sample_mask.any():
-            sample_mask = binary_mask
-    else:
-        sample_mask = binary_mask
-
-    depth_m = depth_mm.astype(np.float64) * depth_scale_m
-    valid_depth = (depth_m >= min_depth_m) & (depth_m <= max_depth_m)
-    rows, cols = np.nonzero(valid_depth)
-    if rows.size == 0:
-        return SparseProjectionEstimate(None, None, (0, 0), original_area, 0, 0.0)
-
-    z = depth_m[rows, cols]
-    points_depth = np.column_stack((
-        (cols - depth_intrinsics.cx) * z / depth_intrinsics.fx,
-        (rows - depth_intrinsics.cy) * z / depth_intrinsics.fy,
-        z,
-    ))
-    points_color = depth_to_color.apply(points_depth)
-    points_color = points_color[points_color[:, 2] > 0]
-    if points_color.size == 0:
-        return SparseProjectionEstimate(None, None, (0, 0), original_area, 0, 0.0)
-
-    projected_u = np.rint(
-        points_color[:, 0] * color_intrinsics.fx / points_color[:, 2]
-        + color_intrinsics.cx
-    ).astype(np.int32)
-    projected_v = np.rint(
-        points_color[:, 1] * color_intrinsics.fy / points_color[:, 2]
-        + color_intrinsics.cy
-    ).astype(np.int32)
-    mask_height, mask_width = sample_mask.shape
-    in_bounds = (
-        (projected_u >= 0)
-        & (projected_u < mask_width)
-        & (projected_v >= 0)
-        & (projected_v < mask_height)
+    projection = project_raw_depth_to_color(
+        depth_mm,
+        color_mask.shape,
+        depth_intrinsics,
+        color_intrinsics,
+        depth_to_color,
+        min_depth_m=min_depth_m,
+        max_depth_m=max_depth_m,
+        depth_scale_m=depth_scale_m,
     )
-    projected_u = projected_u[in_bounds]
-    projected_v = projected_v[in_bounds]
-    points_color = points_color[in_bounds]
-    if points_color.size == 0:
-        return SparseProjectionEstimate(None, None, (0, 0), original_area, 0, 0.0)
-
-    inside_mask = sample_mask[projected_v, projected_u].astype(bool)
-    projected_u = projected_u[inside_mask]
-    projected_v = projected_v[inside_mask]
-    points_color = points_color[inside_mask]
-    valid_pixels = int(points_color.shape[0])
-    valid_ratio = valid_pixels / int(sample_mask.sum())
-    if valid_pixels < min_valid_pixels:
-        center = (0, 0) if valid_pixels == 0 else (
-            int(np.median(projected_u)), int(np.median(projected_v))
-        )
-        return SparseProjectionEstimate(
-            None, None, center, original_area, valid_pixels, float(valid_ratio)
-        )
-
-    # Trim both optical-Z tails to reduce background spill at mask boundaries.
-    points_color = points_color[np.argsort(points_color[:, 2])]
-    trim_count = int(valid_pixels * trim_fraction)
-    if trim_count and valid_pixels - 2 * trim_count >= min_valid_pixels:
-        points_color = points_color[trim_count:-trim_count]
-
-    position = tuple(float(value) for value in np.median(points_color, axis=0))
-    center = (int(np.median(projected_u)), int(np.median(projected_v)))
-    return SparseProjectionEstimate(
-        position,
-        position[2],
-        center,
-        original_area,
-        valid_pixels,
-        float(valid_ratio),
+    return estimate_mask_3d_from_projected_depth(
+        projection,
+        color_mask,
+        trim_fraction=trim_fraction,
+        erosion_iterations=erosion_iterations,
+        min_valid_pixels=min_valid_pixels,
     )

@@ -1,0 +1,29 @@
+competition_manager_node:
+  ros__parameters:
+    pick_red_tag_ids:
+    - 0
+    - 1
+    pick_i2_tag_0_taught: true
+    pick_i2_tag_0_xyyaw:
+    - 0.806210719
+    - 0.018127014
+    - 3.109325721
+    pick_i2_tag_1_taught: true
+    pick_i2_tag_1_xyyaw:
+    - 0.806210719
+    - 0.018127014
+    - 3.109325721
+    pick_i2_tag_2_taught: true
+    pick_i2_tag_2_xyyaw:
+    - 0.806210719
+    - 0.018127014
+    - 3.109325721
+    pick_i2_tag_3_taught: true
+    pick_i2_tag_3_xyyaw:
+    - 0.806210719
+    - 0.018127014
+    - 3.109325721
+    pick_grasp_target_arm_base:
+    - 0.42
+    - 0.0
+    - 0.2

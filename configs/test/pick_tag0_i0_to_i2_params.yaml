@@ -1,0 +1,7 @@
+# Explicit opt-in for the supervised Tag 0 I0-to-I2 acceptance run.
+competition_manager_node:
+  ros__parameters:
+    route_mode: "segment"
+    segment_name: "pick_i0_to_i2"
+    enable_route_execution: true
+    pick_forced_tag_id: 0

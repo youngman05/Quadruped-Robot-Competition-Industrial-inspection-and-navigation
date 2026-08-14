@@ -17,6 +17,11 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <mutex>
+#include <thread>
 
 #pragma pack(push, 4)
 struct MotionSimpleCMD{
@@ -68,6 +73,7 @@ public:
         rclcpp::QoS best_effort_qos(1);
         best_effort_qos.best_effort();
         handle_pub_ = create_publisher<geometry_msgs::msg::Twist>("/handle_state", best_effort_qos);
+        handle_goal_vel_pub_ = create_publisher<geometry_msgs::msg::Twist>("/handle_goal_vel", best_effort_qos);
 
         recv_thread_ = std::thread(&MotionReceiver::RunRoutine, this);
 
@@ -244,6 +250,12 @@ public:
             handle_state_msg.linear.y = handle_state->left_axis_side;
             handle_state_msg.angular.z = - handle_state->right_axis_yaw;
             handle_pub_->publish(handle_state_msg);
+
+            geometry_msgs::msg::Twist goal_vel_msg;
+            goal_vel_msg.linear.x = handle_state->goal_vel_forward;
+            goal_vel_msg.linear.y = handle_state->goal_vel_side;
+            goal_vel_msg.angular.z = - handle_state->goal_vel_yaw;
+            handle_goal_vel_pub_->publish(goal_vel_msg);
         }
     }
 
@@ -293,6 +305,7 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_100_;
     rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_200_;    
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr handle_pub_;
+    rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr handle_goal_vel_pub_;
     rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr ultrasound_pub_;
     std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 };
@@ -308,6 +321,14 @@ public:
     ~MotionSender()
     {
         RCLCPP_INFO(get_logger(), "~MotionSender()");
+        if (send_timer_) {
+            send_timer_->cancel();
+        }
+        for (int i = 0; i < 12; ++i) {
+            SendSimple(0x21040001);
+            SendVelocityAxes(0.0, 0.0, 0.0);
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
         close(socked_fd_);
     }
 
@@ -334,6 +355,20 @@ private:
         remote_addr_.sin_port = htons(target_port);
         remote_addr_.sin_addr.s_addr = inet_addr(target_ip.c_str());
 
+        declare_parameter("send_rate_hz", 40.0);
+        declare_parameter("command_timeout_sec", 0.35);
+        declare_parameter("init_dog", true);
+        get_parameter("send_rate_hz", send_rate_hz_);
+        get_parameter("command_timeout_sec", command_timeout_sec_);
+        send_rate_hz_ = std::max(5.0, send_rate_hz_);
+        command_timeout_sec_ = std::max(0.1, command_timeout_sec_);
+
+        bool init_dog = true;
+        get_parameter("init_dog", init_dog);
+        if (init_dog) {
+            PrepareMotionMode();
+        }
+
         RCLCPP_INFO(get_logger(), "init sub");
         rclcpp::QoS best_effort_qos(1);
         best_effort_qos.best_effort();
@@ -349,72 +384,139 @@ private:
         complexcmd_sub = create_subscription<transfer_interfaces::msg::MotionComplexCMD>(
             "complex_cmd", 10,
             std::bind(&MotionSender::ComplexCMDCallback, this, std::placeholders::_1));
+        send_timer_ = create_wall_timer(
+            std::chrono::duration<double>(1.0 / send_rate_hz_),
+            std::bind(&MotionSender::SendHeldCommand, this));
+        RCLCPP_INFO(
+            get_logger(), "Lite3 ZOH output %.1f Hz, timeout %.2f s",
+            send_rate_hz_, command_timeout_sec_);
     };
 
     void CmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg){
-        RCLCPP_INFO(get_logger(),"recevied cmd_vel #############");
-        complex_cmd_.cmd_code = 320;
-        complex_cmd_.size = 8;
-        complex_cmd_.type = 1;
-        complex_cmd_.data = msg->linear.x;                  ///< linear velocity
-        ssize_t bytesSent = sendto(socked_fd_, &complex_cmd_, sizeof(complex_cmd_), 0, 
-                                (struct sockaddr*)&remote_addr_, sizeof(remote_addr_));
-        RCLCPP_INFO(get_logger(),"sender linear.x sucessful %d !!!",bytesSent);
-        RCLCPP_INFO(get_logger(),"sender linear.x:  %f !!!",msg->linear.x);
-
-        if (bytesSent == -1) {
-            perror("Error sending message");
-            RCLCPP_INFO(get_logger(),"sender linear.x error %d !!!",bytesSent);
-            std::exit(1);
-        }
-
-        complex_cmd_.cmd_code =325;
-        complex_cmd_.size = 8;
-        complex_cmd_.type = 1;
-        complex_cmd_.data = msg->linear.y;                 ///< Lateral velocity
-        ssize_t bytesSent_1 = sendto(socked_fd_, &complex_cmd_, sizeof(complex_cmd_), 0, 
-                                (struct sockaddr*)&remote_addr_, sizeof(remote_addr_));
-        if (bytesSent_1 == -1) {
-            perror("Error sending message");
-            RCLCPP_INFO(get_logger(),"sender linear.y error %d !!!",bytesSent_1);
-            std::exit(1);
-        }
-
-        complex_cmd_.cmd_code = 321;
-        complex_cmd_.size = 8;
-        complex_cmd_.type = 1;
-        complex_cmd_.data = -1 * msg->angular.z;               ///< angular velocity
-        ssize_t bytesSent_2 = sendto(socked_fd_, &complex_cmd_, sizeof(complex_cmd_), 0, 
-                                (struct sockaddr*)&remote_addr_, sizeof(remote_addr_));
-        if (bytesSent_2 == -1) {
-            perror("Error sending message");
-            RCLCPP_INFO(get_logger(),"sender angular.z error %d !!!",bytesSent_2);
-            std::exit(1);
+        const double vx = std::isfinite(msg->linear.x) ? std::max(-0.24, std::min(0.24, msg->linear.x)) : 0.0;
+        const double vy = std::isfinite(msg->linear.y) ? std::max(-0.05, std::min(0.05, msg->linear.y)) : 0.0;
+        const double wz = std::isfinite(msg->angular.z) ? std::max(-0.30, std::min(0.30, msg->angular.z)) : 0.0;
+        {
+            std::lock_guard<std::mutex> lock(command_mutex_);
+            held_vx_ = vx;
+            held_vy_ = vy;
+            held_wz_ = wz;
+            last_cmd_time_ = std::chrono::steady_clock::now();
+            has_seen_cmd_ = true;
         }
     };
 
-    void SimpleCMDCallback(transfer_interfaces::msg::MotionSimpleCMD::SharedPtr msg){
-        MotionSimpleCMD cmd;
-        cmd.cmd_code = msg->cmd_code;
-        cmd.size = msg->size;
-        cmd.type = msg->type;
-        int nbytes = sendto(socked_fd_, &cmd, sizeof(cmd), 0,
+    void PrepareMotionMode(){
+        for (int i = 0; i < 15; ++i) {
+            SendSimple(0x21040001);
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        SendSimple(0x21010C03);
+        HeartbeatFor(std::chrono::milliseconds(600));
+        SendSimple(0x21010D06);
+        HeartbeatFor(std::chrono::milliseconds(600));
+        for (int i = 0; i < 16; ++i) {
+            SendSimple(0x21040001);
+            SendVelocityAxes(0.0, 0.0, 0.0);
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        RCLCPP_INFO(get_logger(), "Lite3 auto/motion mode prepared on command socket");
+    }
+
+    void HeartbeatFor(std::chrono::milliseconds duration){
+        const auto deadline = std::chrono::steady_clock::now() + duration;
+        while (std::chrono::steady_clock::now() < deadline) {
+            SendSimple(0x21040001);
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
+
+    void SendHeldCommand(){
+        double vx = 0.0;
+        double vy = 0.0;
+        double wz = 0.0;
+        {
+            std::lock_guard<std::mutex> lock(command_mutex_);
+            const double age = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - last_cmd_time_).count();
+            if (has_seen_cmd_ && age <= command_timeout_sec_) {
+                vx = held_vx_;
+                vy = held_vy_;
+                wz = held_wz_;
+            }
+        }
+        SendSimple(0x21040001);
+        SendVelocityAxes(vx, vy, wz);
+    }
+
+    void SendSimple(int32_t code){
+        MotionSimpleCMD cmd{code, 0, 0};
+        std::lock_guard<std::mutex> lock(send_mutex_);
+        sendto(socked_fd_, &cmd, sizeof(cmd), 0,
             (struct sockaddr *)&remote_addr_, sizeof(remote_addr_));
+    }
+
+    void SendComplex(int32_t code, double data){
+        MotionComplexCMD cmd;
+        cmd.cmd_code = code;
+        cmd.size = 8;
+        cmd.type = 1;
+        cmd.data = data;
+        std::lock_guard<std::mutex> lock(send_mutex_);
+        sendto(socked_fd_, &cmd, sizeof(cmd), 0,
+            (struct sockaddr *)&remote_addr_, sizeof(remote_addr_));
+    }
+
+    void SendVelocityAxes(double vx, double vy, double wz){
+        if (std::abs(wz) > 0.005) {
+            RememberMotionCode(321);
+            SendComplex(321, -wz);
+        } else if (std::abs(vx) > 0.005) {
+            RememberMotionCode(320);
+            SendComplex(320, vx);
+        } else if (std::abs(vy) > 0.005) {
+            RememberMotionCode(325);
+            SendComplex(325, vy);
+        } else {
+            SendComplex(LastMotionCode(), 0.0);
+        }
+    }
+
+    void RememberMotionCode(int32_t code){
+        std::lock_guard<std::mutex> lock(command_mutex_);
+        last_motion_code_ = code;
+    }
+
+    int32_t LastMotionCode(){
+        std::lock_guard<std::mutex> lock(command_mutex_);
+        return last_motion_code_;
+    }
+
+    void SimpleCMDCallback(transfer_interfaces::msg::MotionSimpleCMD::SharedPtr msg){
+        SendSimple(msg->cmd_code);
     }
 
     void ComplexCMDCallback(transfer_interfaces::msg::MotionComplexCMD::SharedPtr msg){
-        MotionComplexCMD cmd;
-        cmd.cmd_code = msg->cmd_code;
-        cmd.size = msg->size;
-        cmd.type = msg->type;
-        cmd.data = msg->data;
-        int nbytes = sendto(socked_fd_, &cmd, sizeof(cmd), 0,
-            (struct sockaddr *)&remote_addr_, sizeof(remote_addr_));
+        if (std::abs(msg->data) > 0.005 &&
+            (msg->cmd_code == 320 || msg->cmd_code == 321 || msg->cmd_code == 325)) {
+            RememberMotionCode(msg->cmd_code);
+        }
+        SendComplex(msg->cmd_code, msg->data);
     }
 
     int socked_fd_;
-    MotionComplexCMD complex_cmd_;
     struct sockaddr_in remote_addr_;
+    double send_rate_hz_ = 40.0;
+    double command_timeout_sec_ = 0.35;
+    double held_vx_ = 0.0;
+    double held_vy_ = 0.0;
+    double held_wz_ = 0.0;
+    int32_t last_motion_code_ = 320;
+    bool has_seen_cmd_ = false;
+    std::chrono::steady_clock::time_point last_cmd_time_ = std::chrono::steady_clock::now();
+    std::mutex command_mutex_;
+    std::mutex send_mutex_;
+    rclcpp::TimerBase::SharedPtr send_timer_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_corrected_sub_;
     rclcpp::Subscription<transfer_interfaces::msg::MotionSimpleCMD>::SharedPtr simplecmd_sub;

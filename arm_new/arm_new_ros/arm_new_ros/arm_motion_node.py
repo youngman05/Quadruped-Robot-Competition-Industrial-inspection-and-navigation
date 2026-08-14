@@ -85,7 +85,9 @@ class ArmMotionNode(Node):
         self._grasp_z_max_m = float(self.get_parameter("grasp_z_max_m").value)
         self._grasp_include_home = bool(self.get_parameter("grasp_include_home").value)
         self._place_include_home = bool(self.get_parameter("place_include_home").value)
-        self._place_target_arm = tuple(self.get_parameter("place_target_arm").value)
+        self._place_reference_grasp_arm = tuple(
+            self.get_parameter("place_reference_grasp_arm").value
+        )
         self._require_tf_in_preflight = bool(
             self.get_parameter("require_tf_in_preflight").value
         )
@@ -100,6 +102,9 @@ class ArmMotionNode(Node):
         )
 
         planner_config = ArmGrabConfig(
+            grasp_open_gripper=int(
+                self.get_parameter("grasp_open_gripper_pulse").value
+            ),
             approach_steps=max(1, int(self.get_parameter("grasp_approach_steps").value)),
             approach_step_duration_ms=max(
                 1,
@@ -164,11 +169,12 @@ class ArmMotionNode(Node):
         self.declare_parameter("require_tf_in_preflight", True)
 
         self.declare_parameter("grasp_reference_configured", False)
-        self.declare_parameter("grasp_reference_arm_base", [0.45, 0.00])
+        self.declare_parameter("grasp_reference_arm_base", [0.42, 0.00])
         self.declare_parameter("grasp_reference_xy_tolerance_m", 0.02)
-        self.declare_parameter("grasp_z_min_m", 0.02)
-        self.declare_parameter("grasp_z_max_m", 0.12)
+        self.declare_parameter("grasp_z_min_m", 0.15)
+        self.declare_parameter("grasp_z_max_m", 0.25)
         self.declare_parameter("grasp_rotation_deg", 0.0)
+        self.declare_parameter("grasp_open_gripper_pulse", 0)
         self.declare_parameter("grasp_pre_distance", 0.05)
         self.declare_parameter("grasp_lift_height", 0.08)
         self.declare_parameter("grasp_duration_scale", 2.0)
@@ -177,8 +183,10 @@ class ArmMotionNode(Node):
         self.declare_parameter("grasp_approach_step_duration_ms", 180)
 
         self.declare_parameter("place_target_configured", False)
-        self.declare_parameter("place_target_arm", [0.0, 0.0, 0.0])
-        self.declare_parameter("place_duration_ms", 1200)
+        self.declare_parameter("place_reference_grasp_arm", [0.0, 0.0, 0.0])
+        self.declare_parameter("place_pose_1_duration_ms", 1200)
+        self.declare_parameter("place_descent_m", 0.02)
+        self.declare_parameter("place_descent_duration_ms", 800)
         self.declare_parameter("place_duration_scale", 1.0)
         self.declare_parameter("place_include_home", False)
 
@@ -280,21 +288,24 @@ class ArmMotionNode(Node):
     def _execute_place(self) -> Dict[str, Any]:
         if not self._place_target_configured:
             raise MotionServiceValidationError(
-                "place_target_configured is false; calibrate place_target_arm first"
+                "place_target_configured is false; configure place_reference_grasp_arm first"
             )
         if self._place_include_home:
             raise MotionServiceValidationError("place_include_home must remain false for fixed placement")
 
         target_api, steps = plan_fixed_place(
             self._planner,
-            self._place_target_arm,
-            duration_ms=int(self.get_parameter("place_duration_ms").value),
+            self._place_reference_grasp_arm,
+            grasp_lift_height_m=float(self.get_parameter("grasp_lift_height").value),
+            descent_m=float(self.get_parameter("place_descent_m").value),
+            pose1_duration_ms=int(self.get_parameter("place_pose_1_duration_ms").value),
+            descent_duration_ms=int(self.get_parameter("place_descent_duration_ms").value),
             duration_scale=float(self.get_parameter("place_duration_scale").value),
         )
         payload = self._action_payload(
             "place",
             steps,
-            target_arm_api=target_api,
+            reference_grasp_arm_api=target_api,
         )
         self._publish_json(self._place_actions_pub, payload)
         return self._execute_or_plan(payload, steps)
@@ -349,12 +360,15 @@ class ArmMotionNode(Node):
             if self._place_target_configured:
                 plan_fixed_place(
                     self._planner,
-                    self._place_target_arm,
-                    duration_ms=int(self.get_parameter("place_duration_ms").value),
+                    self._place_reference_grasp_arm,
+                    grasp_lift_height_m=float(self.get_parameter("grasp_lift_height").value),
+                    descent_m=float(self.get_parameter("place_descent_m").value),
+                    pose1_duration_ms=int(self.get_parameter("place_pose_1_duration_ms").value),
+                    descent_duration_ms=int(self.get_parameter("place_descent_duration_ms").value),
                     duration_scale=float(self.get_parameter("place_duration_scale").value),
                 )
             else:
-                issues.append("place_target_arm is not marked calibrated")
+                issues.append("place_reference_grasp_arm is not marked configured")
         except Exception as exc:
             issues.append("fixed placement plan failed: {}".format(exc))
 
@@ -414,6 +428,7 @@ class ArmMotionNode(Node):
         steps: Sequence[Any],
         target_arm_base: Point3 = None,
         target_arm_api: Point3 = None,
+        reference_grasp_arm_api: Point3 = None,
         pose: Dict[str, Any] = None,
     ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
@@ -429,6 +444,8 @@ class ArmMotionNode(Node):
             payload["target_arm_base_link"] = self._point_dict(target_arm_base)
         if target_arm_api is not None:
             payload["target_arm_api"] = self._point_dict(target_arm_api)
+        if reference_grasp_arm_api is not None:
+            payload["reference_grasp_arm_api"] = self._point_dict(reference_grasp_arm_api)
         if pose is not None:
             payload["pose"] = pose
         return payload

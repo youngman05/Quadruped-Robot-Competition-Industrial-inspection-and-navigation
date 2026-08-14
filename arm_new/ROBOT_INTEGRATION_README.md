@@ -45,7 +45,7 @@ arm = ArmService(
 在 `GRASP_BAR` 状态：
 
 ```python
-target_arm = (0.0, 0.45, 0.06)  # 单位 m，ArmPi 机械臂基座坐标系
+target_arm = (0.0, 0.42, 0.15)  # 单位 m，ArmPi 机械臂基座坐标系
 result = arm.grab_from_pose(target_arm, rotation_deg=0.0)
 
 if not result.ok:

@@ -1,0 +1,12 @@
+# AprilTag 识别脚本依赖
+# 安装：pip install -r requirements.txt
+
+# OpenCV：4.7 及以上版本的 opencv-python 主包自带 aruco 模块（无需 opencv-contrib-python）。
+# 如果只能用旧版 OpenCV（< 4.7），请改装 opencv-contrib-python（保持版本一致）。
+opencv-python>=4.7
+
+numpy>=1.20
+
+# 仅 --live 模式（直连 RealSense 相机）需要；只用静态图/自测/relay 模式可不装。
+# Windows 上 pip install pyrealsense2 即可；Linux 下如需 GPU 加速可改用 pyrealsense2==2.55.1.6486
+pyrealsense2>=2.50

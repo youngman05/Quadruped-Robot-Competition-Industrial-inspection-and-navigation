@@ -1,0 +1,75 @@
+# Flat competition route scaffold.  Hardware execution remains opt-in.
+competition_manager_node:
+  ros__parameters:
+    tick_rate: 10.0
+
+    # full: competition route; segment: one supervised cumulative test.
+    # Local Step 1 test: pick_i0_to_i2 (dog is already at coarse I0).
+    # Cumulative tests: pick_until_i0, pick_until_i2 (pick_align_only alias),
+    # and pick_one.
+    route_mode: "full"
+    segment_name: ""
+    segment_zone: ""
+
+    # Temporary adapter input until the inspection executor publishes its
+    # validated A/B/C/D result into the route context.
+    manual_abnormal_zones: []
+    manual_carrying_block: false
+    # Optional local test replay. Leave both blank in ordinary operation.
+    scenario_file: ""
+    scenario_name: ""
+
+    # Must be explicitly set true for a supervised route run.
+    enable_route_execution: false
+
+    # Host consumes only /yolo/detections emitted by yolo_udp_bridge. Docker
+    # remains the sole owner of D455 and YOLO inference.
+    yolo_topic: "/yolo/detections"
+    cmd_vel_topic: "/cmd_vel"
+    min_yolo_confidence: 0.50
+    min_depth_valid_ratio: 0.60
+    yolo_stale_timeout_s: 0.50
+    tag_detections_topic: "/apriltag/detections_base"
+    tag_stale_timeout_s: 0.50
+
+    # The D455 AprilTag I2 target is stored separately in
+    # configs/calibration/pick_i2_apriltag.yaml after teaching.
+    pick_initial_settle_s: 0.5
+    pick_qr_x_tolerance_m: 0.03
+    pick_qr_y_tolerance_m: 0.03
+    pick_qr_yaw_tolerance_rad: 0.17453
+    # 保留非零运动下限以克服底盘死区，同时让比例控制在上下限之间生效。
+    pick_qr_linear_speed_mps: 0.05
+    pick_qr_x_speed_mps: 0.15
+    pick_qr_y_speed_mps: 0.05
+    pick_qr_yaw_speed_rps: 0.15
+    pick_qr_linear_gain: 1.0
+    pick_qr_x_gain: 0.60
+    pick_qr_y_gain: 0.35
+    pick_qr_yaw_gain: 0.35
+    pick_qr_min_linear_speed_mps: 0.05
+    pick_qr_min_x_speed_mps: 0.15
+    pick_qr_min_y_speed_mps: 0.05
+    pick_qr_min_yaw_speed_rps: 0.15
+    pick_qr_pulse_min_s: 1.50
+    pick_qr_pulse_max_s: 1.50
+    pick_qr_pulse_settle_s: 0.50
+    pick_qr_stable_frames: 3
+    # 当前对齐阶段顺序为 yaw -> y -> x。
+    pick_qr_timeout_s: 80.0
+
+    pick_lifted_hold_s: 3.2
+
+    # J1 is a calibrated map->base_link pose, approached incrementally from J0.
+    place_settle_s: 1.0
+    place_align_timeout_s: 30.0
+    place_tolerance_m: 0.04
+    place_yaw_tolerance_rad: 0.0873
+    place_gain_xy: 0.5
+    place_gain_yaw: 0.8
+    place_max_speed_mps: 0.05
+    place_min_speed_mps: 0.025
+    place_max_yaw_rps: 0.20
+    place_pulse_min_s: 0.15
+    place_pulse_max_s: 0.40
+    place_pulse_settle_s: 0.70

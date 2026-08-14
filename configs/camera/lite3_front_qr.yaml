@@ -1,0 +1,21 @@
+lite3_qr_pose_publisher:
+  ros__parameters:
+    rtsp_url: "rtsp://192.168.1.120:8554/test"
+    prefer_hw_decode: false
+    process_rate_hz: 10.0
+    pose_topic: "/box/qr_pose"
+    camera_frame: "dog_camera_optical_frame"
+    base_frame: "base_link"
+    base_from_camera_translation_m: [0.50, 0.0, 0.0]
+    base_from_camera_orientation_xyzw: [0.5, -0.5, 0.5, -0.5]
+
+    qr_payload: "QRCOMP:BOX_CENTER:V1"
+    qr_side_m: 0.15
+
+    # Temporary nominal values only. Replace K/D and distortion_model with the
+    # output of scripts/calibration/lite3_front_camera_calibration.py before
+    # using QR pose for hardware alignment.
+    calibration_configured: true
+    camera_matrix: [298.436901, 0.0, 640.0, 0.0, 298.436901, 360.0, 0.0, 0.0, 1.0]
+    distortion_coefficients: [0.0, 0.0, 0.0, 0.0, 0.0]
+    distortion_model: "pinhole"

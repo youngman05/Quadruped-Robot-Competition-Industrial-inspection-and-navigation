@@ -53,8 +53,8 @@ dog_poses:
   grasp_i0:
     pose_map_m_rad: null
     status: conflict
-    purpose: coarse grasp alignment before visual I1 alignment
-    note: "navigation_client.py and src/navi/README.md currently disagree; remeasure x/y/yaw"
+    purpose: coarse Nav2 arrival pose before QR-precise I2 alignment
+    note: "Accuracy may be coarse, but select one map pose whose arrival keeps the full QR visible and inside the local controller convergence range. Existing candidates disagree."
 
   placement_A:
     pose_map_m_rad: [3.25, 5.40, 0.0]
@@ -80,12 +80,13 @@ manipulation:
   # I1 is a dynamic alignment condition, not a second map waypoint.
   grasp_i1:
     target_frame: arm_base_link
-    # Verified on the mounted arm with the standalone face-approach grasp:
-    # ArmPi API target [0.00, 0.45, z] maps to arm_base_link [0.45, 0.00, z].
-    fixed_xy_m: [0.45, 0.00]
+    # Current test reference. ArmPi API target [0.00, 0.42, z] maps to
+    # arm_base_link [0.42, 0.00, z]. Confirm it through the ROS service on
+    # hardware before marking this calibration as confirmed.
+    fixed_xy_m: [0.42, 0.00]
     z_mode: dynamic_service_request
-    z_valid_range_m: [0.02, 0.12]
-    status: confirmed_reference
+    z_valid_range_m: [0.15, 0.25]
+    status: provisional
 
   # First implementation uses one arm-relative release target for A/B/C/D;
   # the four map poses must be calibrated around this common motion.
@@ -95,4 +96,4 @@ manipulation:
     status: uncalibrated
 
 smoke_test:
-  grasp_z_m: 0.06
+  grasp_z_m: 0.15

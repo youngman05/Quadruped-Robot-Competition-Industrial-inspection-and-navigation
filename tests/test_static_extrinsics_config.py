@@ -35,8 +35,8 @@ class StaticExtrinsicsConfigTest(unittest.TestCase):
 
     def test_camera_and_arm_transforms_are_the_published_static_transforms(self) -> None:
         transforms = self.config["static_transforms"]
-        self.assertEqual(len(transforms), 2)
-        camera, arm = transforms
+        self.assertEqual(len(transforms), 3)
+        camera, arm, dog_camera = transforms
         self.assertTrue(camera["publish"])
         self.assertEqual(camera["parent_frame"], "base_link")
         self.assertEqual(camera["child_frame"], "camera_link")
@@ -45,12 +45,25 @@ class StaticExtrinsicsConfigTest(unittest.TestCase):
         self.assertTrue(arm["publish"])
         self.assertEqual(arm["parent_frame"], "base_link")
         self.assertEqual(arm["child_frame"], "arm_base_link")
-        self.assertEqual(arm["status"], "provisional")
+        self.assertEqual(arm["status"], "calibrated")
         np.testing.assert_allclose(arm["translation_m"], [0.24, 0.0, 0.41])
         np.testing.assert_allclose(arm["rotation_xyzw"], [0.0, 0.0, 0.0, 1.0])
-        self.assertIsNone(arm["measurement"]["calibrated_at"])
+        self.assertEqual(arm["measurement"]["calibrated_at"], "2026-08-11")
         self.assertIsNone(arm["measurement"]["translational_uncertainty_m"])
         self.assertIsNone(arm["measurement"]["rotational_uncertainty_deg"])
+
+        self.assertTrue(dog_camera["publish"])
+        self.assertEqual(dog_camera["child_frame"], "dog_camera_optical_frame")
+        self.assertEqual(dog_camera["status"], "provisional")
+        np.testing.assert_allclose(dog_camera["translation_m"], [0.50, 0.0, 0.0])
+        np.testing.assert_allclose(
+            dog_camera["rotation_xyzw"], [0.5, -0.5, 0.5, -0.5]
+        )
+
+        rotation = rotation_from_xyzw(dog_camera["rotation_xyzw"])
+        np.testing.assert_allclose(rotation @ [0.0, 0.0, 1.0], [1.0, 0.0, 0.0])
+        np.testing.assert_allclose(rotation @ [1.0, 0.0, 0.0], [0.0, -1.0, 0.0])
+        np.testing.assert_allclose(rotation @ [0.0, 1.0, 0.0], [0.0, 0.0, -1.0])
 
     def test_calibrated_camera_transform_is_a_proper_rigid_transform(self) -> None:
         transform = self.config["static_transforms"][0]

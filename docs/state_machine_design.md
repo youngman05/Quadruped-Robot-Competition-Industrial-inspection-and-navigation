@@ -36,7 +36,7 @@
 当选中物块在机械臂基座坐标系中的位置满足抓取参考条件时，认为机器狗到达 `I1`：
 
 ```text
-target_arm_base ~= (0.45, 0.00, z_final)
+target_arm_base ~= (0.42, 0.00, z_final)
 ```
 
 因此，不同红色物块对应的机器狗最终位置可能不同，但机械臂看到的目标相对位置应尽量相同。
@@ -311,7 +311,7 @@ job_index += 1
 机械臂参考抓取点为：
 
 ```text
-p_ref_arm = (0.45, 0.00, z_final)
+p_ref_arm = (0.42, 0.00, z_final)
 ```
 
 利用固定外参得到该点在 `base_link` 中的参考坐标：
@@ -428,7 +428,7 @@ response:
 实际请求目标使用：
 
 ```text
-x = 0.45
+x = 0.42
 y = 0.00
 z = 最终稳定帧的中位数，并经过可达范围检查
 ```
@@ -719,7 +719,7 @@ task_manager_node:
   ros__parameters:
     grasp_i0: [I0_X, I0_Y, I0_YAW]
 
-    grasp_reference_arm: [0.45, 0.00]
+    grasp_reference_arm: [0.42, 0.00]
     grasp_z_min: Z_MIN
     grasp_z_max: Z_MAX
 
@@ -841,10 +841,10 @@ task_manager_node:
 
 - `grasp_i0`：`map` 中固定的粗对齐狗位姿 `[x_m, y_m, yaw_rad]`；
 - `grasp_i1`：`arm_base_link` 中动态细对齐终止条件，当前固定 x/y 为
-  `[0.45, 0.00]`，z 由每趟最终稳定观测提供；
+  `[0.42, 0.00]`，z 由每趟最终稳定观测提供；
 - `placement_A/B/C/D`：四个 `map` 中的固定放置狗位姿；
 - `fixed_release`：ArmPi API 坐标系中的公共释放 TCP；
-- `smoke_test.grasp_z_m`：人工服务链路测试使用的 z，当前为 `0.06 m`。
+- `smoke_test.grasp_z_m`：人工服务链路测试使用的 z，当前为 `0.15 m`。
 
 I1 不是一个 `map` 航点，不能新增 `i1` 导航目标。它表示选中物块在
 `arm_base_link` 中已经进入机械臂抓取参考位置。

@@ -62,7 +62,9 @@ def generate_launch_description():
             package="arm_new_ros",
             executable="arm_motion_node",
             name="arm_motion_node",
-            parameters=[LaunchConfiguration("params_file")],
+            # Keep the production defaults when a small supervised-test
+            # parameter file overrides only motion authorization or placement.
+            parameters=[default_params, LaunchConfiguration("params_file")],
             output="screen",
         ),
     ])

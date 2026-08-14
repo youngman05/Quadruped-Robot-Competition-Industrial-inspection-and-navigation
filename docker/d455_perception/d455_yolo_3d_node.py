@@ -13,11 +13,12 @@ from pathlib import Path
 from typing import Deque, Optional
 
 import numpy as np
+import cv2
 import rclpy
 from cv_bridge import CvBridge
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
 from rclpy.duration import Duration
-from rclpy.executors import MultiThreadedExecutor
+from rclpy.executors import MultiThreadedExecutor, SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CameraInfo, Image
@@ -59,6 +60,7 @@ class D455Yolo3DNode(Node):
         self._output_frame = str(self.get_parameter("output_frame").value)
         self._max_pair_delta_ns = int(float(self.get_parameter("max_rgb_depth_delta_ms").value) * 1e6)
         self._heartbeat_hz = float(self.get_parameter("heartbeat_hz").value)
+        self._visualize = bool(self.get_parameter("visualize").value)
         if self._max_pair_delta_ns < 0 or self._heartbeat_hz <= 0:
             raise ValueError("max_rgb_depth_delta_ms and heartbeat_hz must be positive")
 
@@ -145,6 +147,7 @@ class D455Yolo3DNode(Node):
         self.declare_parameter("udp_host", "127.0.0.1")
         self.declare_parameter("udp_port", 19002)
         self.declare_parameter("heartbeat_hz", 1.0)
+        self.declare_parameter("visualize", False)
 
     def _on_color(self, message: Image) -> None:
         with self._lock:
@@ -230,6 +233,8 @@ class D455Yolo3DNode(Node):
             )
             inference_ms = (time.perf_counter() - start) * 1000.0
             self._last_processed_stamp = stamp_ns(color_message)
+            if self._visualize:
+                self._show_visualization(color, detections, inference_ms)
             self._send_packet(color_message, inference_ms, [item.packet_dict() for item in detections])
             self.get_logger().info(
                 f"infer={inference_ms:.1f}ms detections={len(detections)} rgb-depth={delta_ns / 1e6:.1f}ms",
@@ -237,6 +242,46 @@ class D455Yolo3DNode(Node):
             )
         except Exception as exc:
             self.get_logger().error(f"YOLO 3-D processing error: {exc}", throttle_duration_sec=2.0)
+
+    def _show_visualization(self, color: np.ndarray, detections, inference_ms: float) -> None:
+        """Render the exact inference result for an operator-only debug view."""
+
+        palette = {
+            "red": (0, 0, 255),
+            "green": (0, 255, 0),
+            "obstacle": (0, 165, 255),
+        }
+        annotated = color.copy()
+        overlay = annotated.copy()
+        for detection in detections:
+            color_bgr = palette.get(detection.class_name, (255, 255, 255))
+            if detection.mask.shape == annotated.shape[:2]:
+                overlay[detection.mask.astype(bool)] = color_bgr
+        cv2.addWeighted(overlay, 0.35, annotated, 0.65, 0.0, annotated)
+
+        for detection in detections:
+            color_bgr = palette.get(detection.class_name, (255, 255, 255))
+            x1, y1, x2, y2 = detection.bbox
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), color_bgr, 2)
+            state = (
+                f"z={detection.depth_m:.2f}m" if detection.position_valid and detection.depth_m is not None
+                else f"depth={detection.depth_valid_ratio:.2f} invalid"
+            )
+            label = f"{detection.class_name} {detection.confidence:.2f} {state}"
+            label_y = max(18, y1 - 6)
+            cv2.putText(annotated, label, (x1, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color_bgr, 2)
+
+        cv2.putText(
+            annotated,
+            f"YOLO 3D {inference_ms:.0f} ms | detections: {len(detections)}",
+            (10, 24),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 255),
+            2,
+        )
+        cv2.imshow("D455 YOLO 3D", annotated)
+        cv2.waitKey(1)
 
     def _heartbeat(self) -> None:
         if time.monotonic() - self._last_udp_send_at < 1.0 / self._heartbeat_hz:
@@ -267,13 +312,16 @@ class D455Yolo3DNode(Node):
 
     def destroy_node(self):
         self._socket.close()
+        if self._visualize:
+            cv2.destroyAllWindows()
         return super().destroy_node()
 
 
 def main(args=None) -> None:
     rclpy.init(args=args)
     node = D455Yolo3DNode()
-    executor = MultiThreadedExecutor(num_threads=2)
+    # OpenCV/Qt requires imshow to run on the process main thread.
+    executor = SingleThreadedExecutor() if node._visualize else MultiThreadedExecutor(num_threads=2)
     executor.add_node(node)
     try:
         executor.spin()

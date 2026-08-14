@@ -1,0 +1,18 @@
+{
+  "black_symbol_side_mm": 150.0,
+  "error_correction": "H",
+  "marker_id": "box_center_v1",
+  "module_size_mm": 5.172413793103448,
+  "payload": "QRCOMP:BOX_CENTER:V1",
+  "placement": {
+    "centered_on_box_face": true,
+    "keep_flat": true,
+    "surface": "box_front_face"
+  },
+  "pnp_object_square_side_m": 0.15,
+  "qr_version": 3,
+  "quiet_zone_modules_each_side": 4,
+  "schema_version": 1,
+  "symbol_modules": 29,
+  "total_printed_square_side_mm": 191.3793103448276
+}

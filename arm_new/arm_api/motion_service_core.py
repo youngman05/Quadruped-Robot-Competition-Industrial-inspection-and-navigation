@@ -117,12 +117,21 @@ def plan_face_approach_grasp(
 
 def plan_fixed_place(
     planner,
-    place_target_arm: Sequence[float],
-    duration_ms: int,
+    grasp_reference_arm: Sequence[float],
+    grasp_lift_height_m: float,
+    descent_m: float,
+    pose1_duration_ms: int,
+    descent_duration_ms: int,
     duration_scale: float = 1.0,
 ) -> Tuple[Point3, List[MotionStep]]:
-    """Reuse direct_place.py's direct-release planning sequence without its prompt."""
+    """Return to the grasp-end pose, descend with theta3 fixed, and release."""
 
-    target_api = as_point3(place_target_arm, "place_target_arm")
-    steps = planner.plan_place(target_api, duration_ms=max(1, int(duration_ms)), include_home=False)
-    return target_api, scale_steps(steps, duration_scale)
+    grasp_api = as_point3(grasp_reference_arm, "place_reference_grasp_arm")
+    steps = planner.plan_place_from_lift(
+        grasp_api,
+        lift_height_m=float(grasp_lift_height_m),
+        descent_m=float(descent_m),
+        pose1_duration_ms=max(1, int(pose1_duration_ms)),
+        descent_duration_ms=max(1, int(descent_duration_ms)),
+    )
+    return grasp_api, scale_steps(steps, duration_scale)

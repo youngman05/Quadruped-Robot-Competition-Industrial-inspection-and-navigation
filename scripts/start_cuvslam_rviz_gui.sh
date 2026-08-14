@@ -8,6 +8,8 @@ IMAGE="${IMAGE:-isaac_ros_cuvslam_runtime:humble-rs}"
 IMAGE_YOLO="${IMAGE_YOLO:-cuvslam_yolo:humble}"  # with YOLO deps pre-installed
 ISAAC_WS="${ISAAC_WS:-$HOME/workspaces/isaac_ros-dev}"
 PROJECT_DIR="${PROJECT_DIR:-$HOME/quadruped-robot-competition}"
+HOST_PYTHON_PATH="${HOST_PYTHON_PATH:-$HOME/.local/lib/python3.8/site-packages}"
+YOLO_MODEL_PATH="${YOLO_MODEL_PATH:-$PROJECT_DIR/src/cv/depth_detector/projects/combined/model/best.pt}"
 LOG_ROOT="${LOG_ROOT:-$HOME/cuvslam_lite3_logs}"
 INPUT_TEST_SECONDS="${INPUT_TEST_SECONDS:-2.0}"
 WAIT_SECONDS="${WAIT_SECONDS:-90}"
@@ -586,13 +588,15 @@ write_cuvslam_launch_runner() {
 import sys
 
 from launch import LaunchService
+from launch import LaunchContext
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 
 
 def main():
     source = PythonLaunchDescriptionSource('/logs/cuvslam_realsense_tuned.launch.py')
     launch_service = LaunchService()
-    launch_service.include_launch_description(source.get_launch_description())
+    context = LaunchContext()
+    launch_service.include_launch_description(source.get_launch_description(context))
     return launch_service.run()
 
 
@@ -607,6 +611,8 @@ need_cmd date
 [[ -n "${DISPLAY:-}" ]] || die "DISPLAY is empty. Run this from the Jetson desktop, VNC, or NoMachine terminal."
 [[ -d "$ISAAC_WS" ]] || die "Isaac ROS workspace not found: $ISAAC_WS"
 [[ -f "$ISAAC_WS/install/setup.bash" ]] || die "Missing install/setup.bash in $ISAAC_WS"
+[[ -d "$HOST_PYTHON_PATH" ]] || die "Host Python site-packages not found: $HOST_PYTHON_PATH"
+[[ -f "$YOLO_MODEL_PATH" ]] || die "YOLO model not found: $YOLO_MODEL_PATH"
 docker image inspect "$IMAGE" >/dev/null 2>&1 || die "Docker image not found: $IMAGE"
 
 if [[ "$SKIP_INPUT_TEST" -eq 0 ]]; then
@@ -722,6 +728,8 @@ docker run -d --name "$CONTAINER_NAME" \
   -v /tmp:/tmp \
   -v /usr/local/cuda-11.4:/usr/local/cuda-11.4:ro \
   -v /usr/lib/aarch64-linux-gnu/tegra:/usr/lib/aarch64-linux-gnu/tegra:ro \
+  -v "$HOST_PYTHON_PATH":/opt/host-python:ro \
+  -v "$YOLO_MODEL_PATH":/opt/quadruped/perception/models/red_green_obstacle.pt:ro \
   -v "$ISAAC_WS":/workspaces/isaac_ros-dev \
   -v "$LOG_DIR":/logs \
   -w /workspaces/isaac_ros-dev \

@@ -15,7 +15,8 @@ import numpy as np
 from d455_yolo_3d_core import (
     CameraIntrinsics,
     RigidTransform,
-    estimate_mask_3d_from_raw_depth,
+    estimate_mask_3d_from_projected_depth,
+    project_raw_depth_to_color,
 )
 
 
@@ -148,20 +149,24 @@ class Yolo3DPipeline:
 
         masks = result.masks.data.cpu().numpy().astype(bool)
         boxes = result.boxes
+        projected_depth = project_raw_depth_to_color(
+            raw_depth_mm,
+            color_bgr.shape[:2],
+            depth_intrinsics,
+            color_intrinsics,
+            depth_to_color,
+            min_depth_m=self._config.min_depth_m,
+            max_depth_m=self._config.max_depth_m,
+        )
         detections: List[Detection3D] = []
         for index, mask in enumerate(masks):
             mask = self._resize_mask(mask, color_bgr.shape[:2])
             class_id = int(boxes.cls[index])
             confidence = float(boxes.conf[index])
             bbox = [int(value) for value in boxes.xyxy[index].cpu().numpy()]
-            estimate = estimate_mask_3d_from_raw_depth(
-                raw_depth_mm,
+            estimate = estimate_mask_3d_from_projected_depth(
+                projected_depth,
                 mask,
-                depth_intrinsics,
-                color_intrinsics,
-                depth_to_color,
-                min_depth_m=self._config.min_depth_m,
-                max_depth_m=self._config.max_depth_m,
                 trim_fraction=self._config.trim_fraction,
                 erosion_iterations=self._config.mask_erosion_iterations,
                 min_valid_pixels=self._config.min_valid_pixels,

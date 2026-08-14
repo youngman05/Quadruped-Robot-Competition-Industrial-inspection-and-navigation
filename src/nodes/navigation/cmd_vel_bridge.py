@@ -22,6 +22,10 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 
+from nodes.navigation.cmd_vel_bridge_core import (
+    STOP_MOTION_COMMAND,
+    select_motion_command,
+)
 
 # ── 常量 (与 motion_controller.py / Jetson2Motion.cpp 一致) ──
 DOG_IP = "192.168.1.120"
@@ -30,10 +34,6 @@ DOG_PORT = 43893
 CMD_HEARTBEAT = 0x21040001
 CMD_AUTO_MODE = 0x21010C03
 CMD_MOTION    = 0x21010D06
-
-CODE_FWD = 320   # 前向速度 (m/s)
-CODE_YAW = 321   # 角速度 (rad/s, 取反)
-CODE_LAT = 325   # 横向速度 (m/s)
 
 # MotionComplexCMD 二进制格式: <3id = 3×int32 + 1×float64 = 20 bytes
 PACK_FMT = "<3id"
@@ -54,6 +54,8 @@ class CmdVelBridge(Node):
         dog_port = int(self.get_parameter("dog_port").value)
         init_dog = bool(self.get_parameter("init_dog").value)
         self._dog_addr = (dog_ip, dog_port)
+        # 零 Twist 不包含轴信息。记录最后一个实际运动轴，停车时给同一轴发送 0.0。
+        self._last_motion_code = STOP_MOTION_COMMAND[0]
 
         # ── UDP socket ────────────────────────────
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -83,16 +85,30 @@ class CmdVelBridge(Node):
     # ── 狗初始化 ─────────────────────────────────
 
     def _init_dog(self) -> None:
-        """发送初始化序列: 心跳 × 10 → auto mode → motion mode。"""
+        """Enter SDK motion mode and clear stale velocity channels before use."""
         self.get_logger().info("正在初始化狗...")
         for _ in range(10):
             self._send_simple(CMD_HEARTBEAT)
             time.sleep(0.1)
         self._send_simple(CMD_AUTO_MODE)
-        time.sleep(0.5)
+        self._heartbeat_for(0.6, 0.1)
         self._send_simple(CMD_MOTION)
-        time.sleep(0.3)
+        self._heartbeat_for(0.6, 0.1)
+        self._send_zero_velocity_for(0.8, 0.05)
         self.get_logger().info("狗初始化完成 (auto + motion mode)")
+
+    def _heartbeat_for(self, duration_s: float, period_s: float) -> None:
+        deadline = time.monotonic() + duration_s
+        while time.monotonic() < deadline:
+            self._send_simple(CMD_HEARTBEAT)
+            time.sleep(period_s)
+
+    def _send_zero_velocity_for(self, duration_s: float, period_s: float) -> None:
+        deadline = time.monotonic() + duration_s
+        while time.monotonic() < deadline:
+            self._send_simple(CMD_HEARTBEAT)
+            self._stop_motion()
+            time.sleep(period_s)
 
     # ── /cmd_vel 回调 ────────────────────────────
 
@@ -107,16 +123,13 @@ class CmdVelBridge(Node):
         # 心跳 (同 socket — 狗 SDK 要求心跳和运动同一来源)
         self._send_simple(CMD_HEARTBEAT)
 
-        # 优先级: 旋转 > 前向 > 横向 > 停止
-        # 每次只发一种 — 狗固件最后一个 MotionComplexCMD 覆盖前面的
-        if abs(az) > 0.005:
-            self._send_complex(CODE_YAW, float(-az))   # 取反! ROS左正 → 狗右正
-        elif abs(vx) > 0.005:
-            self._send_complex(CODE_FWD, float(vx))
-        elif abs(vy) > 0.005:
-            self._send_complex(CODE_LAT, float(vy))
+        # 每周期只发送一个运动轴，优先级保持 yaw、前进、横移。
+        motion_command = select_motion_command(vx, vy, az)
+        if motion_command != STOP_MOTION_COMMAND:
+            self._last_motion_code = motion_command[0]
+            self._send_complex(*motion_command)
         else:
-            self._send_complex(CODE_FWD, 0.0)          # 停止
+            self._stop_motion()
 
     # ── 看门狗 ───────────────────────────────────
 
@@ -127,7 +140,7 @@ class CmdVelBridge(Node):
     def _check_watchdog(self) -> None:
         """如果超过 0.6s 没收 /cmd_vel，主动停狗。"""
         if time.time() - self._last_cmd_time > 0.6:
-            self._send_complex(CODE_FWD, 0.0)
+            self._stop_motion()
 
     # ── 底层 UDP 发送 ────────────────────────────
 
@@ -149,11 +162,15 @@ class CmdVelBridge(Node):
         except OSError:
             pass
 
+    def _stop_motion(self) -> None:
+        """给最后一个实际运动轴发送零值，避免其他轴继续保持上一速度。"""
+        self._send_complex(self._last_motion_code, 0.0)
+
     # ── 清理 ─────────────────────────────────────
 
     def destroy_node(self) -> bool:
         self.get_logger().info("CmdVelBridge 关闭中，停狗...")
-        self._send_complex(CODE_FWD, 0.0)
+        self._stop_motion()
         time.sleep(0.1)
         if self._sock:
             self._sock.close()

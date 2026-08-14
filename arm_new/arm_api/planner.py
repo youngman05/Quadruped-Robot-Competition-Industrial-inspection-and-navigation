@@ -34,6 +34,7 @@ class ArmGrabConfig(object):
         approach_z=0.02,
         lift_z=0.045,
         open_gripper=75,
+        grasp_open_gripper=0,
         close_gripper=450,
         include_retreat=False,
         retreat_z=0.04,
@@ -75,6 +76,9 @@ class ArmGrabConfig(object):
         self.approach_z = float(approach_z)
         self.lift_z = float(lift_z)
         self.open_gripper = int(open_gripper)
+        # ID1 uses smaller pulses for a wider jaw opening.  Keep release at
+        # the established pulse, while grasp preparation can fully open it.
+        self.grasp_open_gripper = int(grasp_open_gripper)
         self.close_gripper = int(close_gripper)
         self.include_retreat = bool(include_retreat)
         self.retreat_z = float(retreat_z)
@@ -590,7 +594,7 @@ class ArmGrabPlanner(object):
                 "pre_grasp_open_and_rotate",
                 None,
                 500,
-                ((1, self.config.open_gripper), (2, wrist)),
+                ((1, self.config.grasp_open_gripper), (2, wrist)),
             ),
             MotionStep(
                 "safe_pose",
@@ -672,7 +676,7 @@ class ArmGrabPlanner(object):
                 "pre_grasp_open_and_rotate",
                 None,
                 500,
-                ((1, self.config.open_gripper), (2, wrist)),
+                ((1, self.config.grasp_open_gripper), (2, wrist)),
             ),
             MotionStep(
                 "approach",

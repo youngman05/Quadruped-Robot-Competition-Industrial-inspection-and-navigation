@@ -1,0 +1,14 @@
+{
+  "inner_corners": [
+    9,
+    6
+  ],
+  "squares": [
+    10,
+    7
+  ],
+  "target_printed_square_mm": 25.0,
+  "printer_scale": 0.96,
+  "pdf_square_mm": 26.041666666666668,
+  "expected_printed_reference_bar_mm": 100.0
+}

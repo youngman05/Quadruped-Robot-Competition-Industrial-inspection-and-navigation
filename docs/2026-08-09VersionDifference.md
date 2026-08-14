@@ -98,7 +98,7 @@ Nav2 与 I0->I1 细对齐都会控制底盘。合并前必须确定唯一 `/cmd_
 | 固定狗位姿 | `map` 中 `[x_m, y_m, yaw_rad]` |
 | Nav2 调用 | `NavigateToPose`，必须区分 accepted/running/succeeded/failed/canceled |
 | 检测输入 | 带 sequence、时间戳和明确 frame 的 3D 目标 |
-| I1 条件 | 目标在 `arm_base_link` 接近 `[0.45,0.00,z_final]` |
+| I1 条件 | 目标在 `arm_base_link` 接近 `[0.42,0.00,z_final]` |
 | 抓取服务 | `/arm/execute_grasp_fixed`，动作完成后才返回成功 |
 | 放置服务 | `/arm/execute_place_fixed`，动作完成后才返回成功 |
 | 静态 TF | 只允许一个 launch 发布项目静态外参 |
