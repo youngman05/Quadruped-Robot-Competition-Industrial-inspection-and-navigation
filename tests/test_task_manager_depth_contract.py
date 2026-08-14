@@ -6,6 +6,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 TASK_MANAGER = REPO_ROOT / "src" / "nodes" / "decision" / "task_manager.py"
 COMPETITION_LAUNCH = REPO_ROOT / "launch" / "competition.launch.py"
 COMPETITION_PARAMS = REPO_ROOT / "configs" / "ros" / "competition_params.yaml"
+START_COMPETITION = REPO_ROOT / "scripts" / "start_competition.sh"
 
 
 class TaskManagerDepthContractTests(unittest.TestCase):
@@ -48,6 +49,7 @@ class TaskManagerDepthContractTests(unittest.TestCase):
             "finish_after_inspection",
             "allow_placeholder_manipulation",
             "pass_obstacle_timeout_sec",
+            "pass_obstacle_waypoint_timeout_sec",
             "inspection_timeout_sec",
             "waypoint_file",
             "waypoint_route",
@@ -93,11 +95,39 @@ class TaskManagerDepthContractTests(unittest.TestCase):
             "if self._inspection_only or self._finish_after_inspection:",
             "elif not self._allow_placeholder_manipulation:",
             'self._abort("mechanical arm feedback is not implemented")',
-            'declare_parameter("pass_obstacle_timeout_sec", 120.0)',
+            'declare_parameter("pass_obstacle_timeout_sec", 180.0)',
+            'declare_parameter("pass_obstacle_waypoint_timeout_sec", 120.0)',
             'declare_parameter("inspection_timeout_sec", 300.0)',
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.source)
+
+    def test_pass_obstacle_uses_per_waypoint_and_aggregate_timeouts(self):
+        launch_source = COMPETITION_LAUNCH.read_text(encoding="utf-8")
+        start_source = START_COMPETITION.read_text(encoding="utf-8")
+        for token in (
+            'declare_parameter("pass_obstacle_timeout_sec", 180.0)',
+            'declare_parameter("pass_obstacle_waypoint_timeout_sec", 120.0)',
+            "self._pass_obstacle_waypoint_timeout.start()",
+            "self._pass_obstacle_waypoint_timeout.expired()",
+            "self._pass_obstacle_waypoint_timeout.reset()",
+        ):
+            with self.subTest(task_manager_token=token):
+                self.assertIn(token, self.source)
+        for token in (
+            '"pass_obstacle_timeout_sec", default_value="180.0"',
+            '"pass_obstacle_waypoint_timeout_sec", default_value="120.0"',
+        ):
+            with self.subTest(launch_token=token):
+                self.assertIn(token, launch_source)
+        for token in (
+            'TASK_PASS_OBSTACLE_TIMEOUT_SEC="${TASK_PASS_OBSTACLE_TIMEOUT_SEC:-180.0}"',
+            'TASK_PASS_OBSTACLE_WAYPOINT_TIMEOUT_SEC="${TASK_PASS_OBSTACLE_WAYPOINT_TIMEOUT_SEC:-120.0}"',
+            'snapshot_value "TASK_PASS_OBSTACLE_WAYPOINT_TIMEOUT_SEC"',
+            '"pass_obstacle_waypoint_timeout_sec:=$TASK_PASS_OBSTACLE_WAYPOINT_TIMEOUT_SEC"',
+        ):
+            with self.subTest(start_token=token):
+                self.assertIn(token, start_source)
 
     def test_slam_tracking_and_odom_readiness_are_separate(self):
         self.assertIn("self._slam_tracking_ok", self.source)

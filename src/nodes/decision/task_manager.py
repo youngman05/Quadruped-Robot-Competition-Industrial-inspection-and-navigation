@@ -40,6 +40,7 @@ from nodes.decision.inspection_workflow import (
     InspectionStage,
     InspectionWorkflow,
 )
+from nodes.decision.timeout_budget import ElapsedTimeoutBudget
 from nodes.navigation.navigation_client import (
     NavigationClient,
     WAYPOINTS,
@@ -138,7 +139,8 @@ class TaskManagerNode(Node):
             "find_red_bar", "grasp_bar", "place_to_abnormal_zone", "finish",
         ])
         self.declare_parameter("timeout_per_phase", 300.0)   # 每阶段超时 (秒), 含YOLO
-        self.declare_parameter("pass_obstacle_timeout_sec", 120.0)
+        self.declare_parameter("pass_obstacle_timeout_sec", 180.0)
+        self.declare_parameter("pass_obstacle_waypoint_timeout_sec", 120.0)
         self.declare_parameter("inspection_timeout_sec", 300.0)
         self.declare_parameter("tick_rate", 10.0)             # 状态机主循环频率 (Hz)
         self.declare_parameter("require_stable_gauge", True)  # 是否必须稳定检测
@@ -194,6 +196,9 @@ class TaskManagerNode(Node):
                 float(self.get_parameter("inspection_timeout_sec").value),
             ),
         }
+        self._pass_obstacle_waypoint_timeout = ElapsedTimeoutBudget(
+            self.get_parameter("pass_obstacle_waypoint_timeout_sec").value
+        )
         self._tick_rate = float(self.get_parameter("tick_rate").value)
         self._require_stable = bool(self.get_parameter("require_stable_gauge").value)
         self._auto_advance = bool(self.get_parameter("auto_advance").value)
@@ -442,6 +447,9 @@ class TaskManagerNode(Node):
         self.get_logger().info(
             f"Task Manager 启动完成 | tick_rate={self._tick_rate} Hz "
             f"| timeout={self._timeout_per_phase}s "
+            f"| pass_obstacle_timeout={self._phase_timeouts[Phase.PASS_OBSTACLE]}s "
+            f"| pass_obstacle_waypoint_timeout="
+            f"{self._pass_obstacle_waypoint_timeout.timeout_sec}s "
             f"| require_stable={self._require_stable} "
             f"| inspection_only={self._inspection_only} "
             f"| finish_after_inspection={self._finish_after_inspection} "
@@ -528,6 +536,17 @@ class TaskManagerNode(Node):
             self._obstacle_route_index = 0
         route = OBSTACLE_ROUTE
         waypoint = route[self._obstacle_route_index]
+        if self._pass_obstacle_waypoint_timeout.expired():
+            waypoint_elapsed = self._pass_obstacle_waypoint_timeout.elapsed() or 0.0
+            self._abort(
+                "%s 导航超时 (%.1fs > %.1fs)"
+                % (
+                    waypoint,
+                    waypoint_elapsed,
+                    self._pass_obstacle_waypoint_timeout.timeout_sec,
+                )
+            )
+            return
         retry_key = "pass_obstacle:%s" % waypoint
         if not self._navigation_retry_ready(retry_key):
             return
@@ -536,12 +555,16 @@ class TaskManagerNode(Node):
                 "[越障 %d/%d] 导航到 %s"
                 % (self._obstacle_route_index + 1, len(route), waypoint)
             )
-            self._nav.navigate_to_waypoint(waypoint)
+            if self._nav.navigate_to_waypoint(waypoint):
+                self._pass_obstacle_waypoint_timeout.start()
         if not self._nav.is_done():
             return
         if not self._nav.succeeded():
+            self._pass_obstacle_waypoint_timeout.reset()
             self._retry_navigation_or_abort(retry_key, waypoint)
             return
+
+        self._pass_obstacle_waypoint_timeout.reset()
 
         if waypoint == "obstacle_cross_target" and not self._obstacle_depth_transition_complete:
             if self._obstacle_depth_mode is None:
@@ -1096,6 +1119,7 @@ class TaskManagerNode(Node):
 
     def _enter_phase(self, phase: Phase) -> None:
         """进入新阶段，执行入口动作并发布状态。"""
+        self._pass_obstacle_waypoint_timeout.reset()
         if phase == Phase.ABORT:
             if self._nav.goal_sent:
                 self._nav.cancel()

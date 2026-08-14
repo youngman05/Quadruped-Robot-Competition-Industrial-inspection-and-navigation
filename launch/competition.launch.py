@@ -66,7 +66,10 @@ def generate_launch_description() -> LaunchDescription:
         "allow_placeholder_manipulation", default="false"
     )
     pass_obstacle_timeout_sec = LaunchConfiguration(
-        "pass_obstacle_timeout_sec", default="120.0"
+        "pass_obstacle_timeout_sec", default="180.0"
+    )
+    pass_obstacle_waypoint_timeout_sec = LaunchConfiguration(
+        "pass_obstacle_waypoint_timeout_sec", default="120.0"
     )
     inspection_timeout_sec = LaunchConfiguration(
         "inspection_timeout_sec", default="300.0"
@@ -193,8 +196,12 @@ def generate_launch_description() -> LaunchDescription:
         description="仅台架调试允许 1 秒抓放占位器自动推进",
     )
     declare_pass_obstacle_timeout_sec = DeclareLaunchArgument(
-        "pass_obstacle_timeout_sec", default_value="120.0",
-        description="越障阶段独立超时",
+        "pass_obstacle_timeout_sec", default_value="180.0",
+        description="三个越障前置航点共用的阶段总超时",
+    )
+    declare_pass_obstacle_waypoint_timeout_sec = DeclareLaunchArgument(
+        "pass_obstacle_waypoint_timeout_sec", default_value="120.0",
+        description="单个越障前置航点的独立导航超时",
     )
     declare_inspection_timeout_sec = DeclareLaunchArgument(
         "inspection_timeout_sec", default_value="300.0",
@@ -283,6 +290,9 @@ def generate_launch_description() -> LaunchDescription:
                 ),
                 "pass_obstacle_timeout_sec": ParameterValue(
                     pass_obstacle_timeout_sec, value_type=float
+                ),
+                "pass_obstacle_waypoint_timeout_sec": ParameterValue(
+                    pass_obstacle_waypoint_timeout_sec, value_type=float
                 ),
                 "inspection_timeout_sec": ParameterValue(
                     inspection_timeout_sec, value_type=float
@@ -463,6 +473,7 @@ def generate_launch_description() -> LaunchDescription:
         declare_finish_after_inspection,
         declare_allow_placeholder_manipulation,
         declare_pass_obstacle_timeout_sec,
+        declare_pass_obstacle_waypoint_timeout_sec,
         declare_inspection_timeout_sec,
         declare_waypoint_file,
         declare_waypoint_route,
