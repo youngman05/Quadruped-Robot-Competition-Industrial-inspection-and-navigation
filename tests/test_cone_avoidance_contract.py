@@ -45,11 +45,17 @@ class ConeAvoidanceContractTests(unittest.TestCase):
         source = (
             CONE_PLUGIN_PACKAGE / "src" / "cone_inflated_voxel_layer.cpp"
         ).read_text(encoding="utf-8")
+        package = (CONE_PLUGIN_PACKAGE / "package.xml").read_text(encoding="utf-8")
         self.assertIn(
             "cone_inflated_voxel_layer/ConeInflatedVoxelLayer",
             plugin_xml,
         )
         self.assertIn("NONPERSISTENT_VOXEL_LAYER_SOURCE_INCLUDE", cmake)
+        self.assertIn("find_package(PCL REQUIRED COMPONENTS filters common)", cmake)
+        self.assertIn("${PCL_INCLUDE_DIRS}", cmake)
+        self.assertIn("${PCL_LIBRARIES}", cmake)
+        self.assertIn("<depend>pcl_conversions</depend>", package)
+        self.assertIn("<depend>libpcl-all</depend>", package)
         self.assertIn("touchBounds(halo_bounds_", source)
         self.assertIn("completed_status_pending_ = true", source)
         self.assertIn('name_ + "/applied_status"', source)

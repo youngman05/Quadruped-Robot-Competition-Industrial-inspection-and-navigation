@@ -10,6 +10,8 @@
 
   <depend>nav2_costmap_2d</depend>
   <depend>nonpersistent_voxel_layer</depend>
+  <depend>pcl_conversions</depend>
+  <depend>libpcl-all</depend>
   <depend>pluginlib</depend>
   <depend>rclcpp</depend>
   <depend>rclcpp_lifecycle</depend>

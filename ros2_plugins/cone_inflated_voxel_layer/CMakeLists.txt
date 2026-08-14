@@ -12,11 +12,24 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(nav2_costmap_2d REQUIRED)
 find_package(nonpersistent_voxel_layer REQUIRED)
+find_package(pcl_conversions REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
 find_package(rcl_interfaces REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(PCL REQUIRED COMPONENTS filters common)
+
+if(NOT "${PCL_LIBRARIES}" STREQUAL "")
+  list(REMOVE_ITEM PCL_LIBRARIES
+    "vtkGUISupportQt"
+    "vtkGUISupportQtOpenGL"
+    "vtkGUISupportQtSQL"
+    "vtkGUISupportQtWebkit"
+    "vtkViewsQt"
+    "vtkRenderingQt"
+  )
+endif()
 
 set(
   NONPERSISTENT_VOXEL_LAYER_SOURCE_INCLUDE
@@ -37,10 +50,13 @@ target_include_directories(${PROJECT_NAME}_core PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<BUILD_INTERFACE:${NONPERSISTENT_VOXEL_LAYER_SOURCE_INCLUDE}>
   $<INSTALL_INTERFACE:include>
+  ${PCL_INCLUDE_DIRS}
 )
+target_link_libraries(${PROJECT_NAME}_core ${PCL_LIBRARIES})
 ament_target_dependencies(${PROJECT_NAME}_core
   nav2_costmap_2d
   nonpersistent_voxel_layer
+  pcl_conversions
   pluginlib
   rclcpp
   rclcpp_lifecycle
@@ -69,6 +85,7 @@ ament_export_libraries(${PROJECT_NAME}_core)
 ament_export_dependencies(
   nav2_costmap_2d
   nonpersistent_voxel_layer
+  pcl_conversions
   rclcpp
   rclcpp_lifecycle
   rcl_interfaces
