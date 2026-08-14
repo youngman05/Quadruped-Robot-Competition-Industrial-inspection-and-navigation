@@ -179,6 +179,7 @@ CONTROLLER_L2_PID=$!
 ros2 run nav2_planner planner_server --ros-args \
   --params-file "$REPO/configs/navigation/nav2_params.yaml" \
   --params-file "$REPO/configs/navigation/nav2_cone_obstacles.yaml" \
+  -r __node:=planner_server \
   > "$EVIDENCE/l2_planner_configure.log" 2>&1 &
 PLANNER_L2_PID=$!
 

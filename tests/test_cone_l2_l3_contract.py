@@ -227,6 +227,7 @@ class ConeL2L3ContractTests(unittest.TestCase):
         self.assertIn('source "$CONE_PLUGIN_WS/install/local_setup.bash"', l2_section)
         self.assertIn("--packages-select cone_inflated_voxel_layer", l2_section)
         self.assertIn('source "$REPO/install/local_setup.bash"', l2_section)
+        self.assertIn('-r __node:=planner_server', l2_section)
         self.assertNotIn(
             'source "$HOME/nav2_foxy_overlay_ws/install/setup.bash"',
             l2_section,
