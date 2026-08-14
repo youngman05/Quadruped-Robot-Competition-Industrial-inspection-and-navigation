@@ -911,6 +911,7 @@ PY
 need_cmd docker
 need_cmd date
 need_cmd python3
+need_cmd lsusb
 
 if [[ "$SKIP_RVIZ" -eq 0 ]]; then
   [[ -n "${DISPLAY:-}" ]] || die "DISPLAY is empty. Run this from the Jetson desktop, VNC, or NoMachine terminal, or pass --no-rviz."
@@ -952,7 +953,8 @@ if [[ "$SKIP_INPUT_TEST" -eq 0 ]]; then
   fi
 fi
 
-if ! lsusb | grep -Eiq '8086:0b5c|realsense'; then
+REALSENSE_USB_INVENTORY="$(lsusb)"
+if ! grep -Eiq '8086:0b5c|realsense' <<<"$REALSENSE_USB_INVENTORY"; then
   die "No Intel RealSense device found in lsusb."
 fi
 

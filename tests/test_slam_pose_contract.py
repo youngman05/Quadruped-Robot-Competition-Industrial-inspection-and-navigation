@@ -60,6 +60,17 @@ class SlamPoseContractTests(unittest.TestCase):
         self.assertNotIn("topic_list_cmd", source)
         self.assertIn("run_in_container \"ros2 topic list", source)
 
+    def test_realsense_usb_check_is_pipefail_safe(self):
+        source = (REPO_ROOT / "scripts" / "start_cuvslam_rviz_gui.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('REALSENSE_USB_INVENTORY="$(lsusb)"', source)
+        self.assertIn(
+            "grep -Eiq '8086:0b5c|realsense' <<<\"$REALSENSE_USB_INVENTORY\"",
+            source,
+        )
+        self.assertNotIn("lsusb | grep -Eiq", source)
+
 
 if __name__ == "__main__":
     unittest.main()
