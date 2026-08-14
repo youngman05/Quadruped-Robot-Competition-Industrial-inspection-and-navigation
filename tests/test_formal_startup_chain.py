@@ -162,6 +162,25 @@ class FormalStartupChainContractTests(unittest.TestCase):
         self.assertIn('"route_goal_count": len(route_goals)', self.script)
         self.assertIn('"unique_waypoint_count": len(waypoints)', self.script)
 
+    def test_empty_optional_waypoint_launch_arguments_are_omitted(self):
+        launch_block = self.script.split(
+            "COMPETITION_LAUNCH_ARGS=(", 1
+        )[1].split("COMP_PID=$!", 1)[0]
+        for variable, argument in (
+            ("TASK_WAYPOINT_FILE", "waypoint_file"),
+            ("TASK_EXPECTED_MAP_ID", "expected_map_id"),
+        ):
+            with self.subTest(argument=argument):
+                self.assertIn(f'[ -n "${variable}" ]', launch_block)
+                self.assertIn(
+                    f'COMPETITION_LAUNCH_ARGS+=("{argument}:=${variable}")',
+                    launch_block,
+                )
+        declared_args = launch_block.split(")", 1)[0]
+        self.assertNotIn('"waypoint_file:=$TASK_WAYPOINT_FILE"', declared_args)
+        self.assertNotIn('"expected_map_id:=$TASK_EXPECTED_MAP_ID"', declared_args)
+        self.assertIn('"${COMPETITION_LAUNCH_ARGS[@]}"', launch_block)
+
     def test_mode_control_clears_only_stale_request_and_status_after_cleanup(self):
         cleanup = self.script.index("bash scripts/stop_all.sh 2>&1 | tail -3")
         reset_guard = self.script.index("if $ENABLE_CONE_MODE_CONTROL; then", cleanup)

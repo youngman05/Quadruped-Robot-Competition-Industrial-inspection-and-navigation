@@ -588,27 +588,34 @@ echo '[5/6] 启动比赛...'
 YF=false; WF=false
 $ENABLE_YOLO && YF=true
 $ENABLE_WHZ  && WF=true
+COMPETITION_LAUNCH_ARGS=(
+  "enable_task_manager:=$ENABLE_TASK_MANAGER"
+  "enable_navigation:=true"
+  "enable_cmd_vel_bridge:=$ENABLE_CMD_VEL_BRIDGE"
+  "cmd_vel_bridge_init_dog:=$ENABLE_CMD_VEL_BRIDGE_INIT"
+  "enable_depth_publisher:=false"
+  "enable_depth_pipeline:=$ENABLE_DEPTH_PIPELINE"
+  "enable_cone_avoidance:=$ENABLE_CONE_AVOIDANCE"
+  "enable_cone_mode_control:=$ENABLE_CONE_MODE_CONTROL"
+  "verify_depth_disable_localization:=$VERIFY_DEPTH_DISABLE_LOCALIZATION"
+  "cone_params_file:=$CONE_NAV2_PARAMS_FILE"
+  "enable_yolo:=$YF"
+  "enable_whz:=$WF"
+  "max_nav_retries:=$TASK_MAX_NAV_RETRIES"
+  "max_inspection_retries:=$TASK_MAX_INSPECTION_RETRIES"
+  "finish_after_inspection:=$TASK_FINISH_AFTER_INSPECTION"
+  "allow_placeholder_manipulation:=$TASK_ALLOW_PLACEHOLDER_MANIPULATION"
+  "pass_obstacle_timeout_sec:=$TASK_PASS_OBSTACLE_TIMEOUT_SEC"
+  "inspection_timeout_sec:=$TASK_INSPECTION_TIMEOUT_SEC"
+  "waypoint_route:=$TASK_WAYPOINT_ROUTE"
+  "auto_advance:=$AUTO_ADVANCE"
+)
+[ -n "$TASK_WAYPOINT_FILE" ] \
+  && COMPETITION_LAUNCH_ARGS+=("waypoint_file:=$TASK_WAYPOINT_FILE")
+[ -n "$TASK_EXPECTED_MAP_ID" ] \
+  && COMPETITION_LAUNCH_ARGS+=("expected_map_id:=$TASK_EXPECTED_MAP_ID")
 ros2 launch quadruped_robot_competition competition.launch.py \
-  enable_task_manager:=$ENABLE_TASK_MANAGER enable_navigation:=true \
-  enable_cmd_vel_bridge:=$ENABLE_CMD_VEL_BRIDGE \
-  cmd_vel_bridge_init_dog:=$ENABLE_CMD_VEL_BRIDGE_INIT \
-  enable_depth_publisher:=false \
-  enable_depth_pipeline:=$ENABLE_DEPTH_PIPELINE \
-  enable_cone_avoidance:=$ENABLE_CONE_AVOIDANCE \
-  enable_cone_mode_control:=$ENABLE_CONE_MODE_CONTROL \
-  verify_depth_disable_localization:=$VERIFY_DEPTH_DISABLE_LOCALIZATION \
-  cone_params_file:="$CONE_NAV2_PARAMS_FILE" \
-  enable_yolo:=$YF enable_whz:=$WF \
-  max_nav_retries:=$TASK_MAX_NAV_RETRIES \
-  max_inspection_retries:=$TASK_MAX_INSPECTION_RETRIES \
-  finish_after_inspection:=$TASK_FINISH_AFTER_INSPECTION \
-  allow_placeholder_manipulation:=$TASK_ALLOW_PLACEHOLDER_MANIPULATION \
-  pass_obstacle_timeout_sec:=$TASK_PASS_OBSTACLE_TIMEOUT_SEC \
-  inspection_timeout_sec:=$TASK_INSPECTION_TIMEOUT_SEC \
-  waypoint_file:="$TASK_WAYPOINT_FILE" \
-  waypoint_route:="$TASK_WAYPOINT_ROUTE" \
-  expected_map_id:="$TASK_EXPECTED_MAP_ID" \
-  auto_advance:=$AUTO_ADVANCE > /tmp/competition.log 2>&1 &
+  "${COMPETITION_LAUNCH_ARGS[@]}" > /tmp/competition.log 2>&1 &
 COMP_PID=$!
 echo "  Launch PID=$COMP_PID YOLO=$YF WHZ=$WF TASK_MANAGER=$ENABLE_TASK_MANAGER AUTO_ADVANCE=$AUTO_ADVANCE"
 if $ENABLE_TASK_MANAGER; then
