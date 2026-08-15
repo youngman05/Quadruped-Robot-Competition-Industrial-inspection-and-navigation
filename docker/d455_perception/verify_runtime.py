@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+from importlib import metadata
 from pathlib import Path
 
 
@@ -19,6 +20,20 @@ EXPECTED_TORCH_VERSION = "2.0.0+nv23.5"
 EXPECTED_TORCHVISION_VERSION = "0.15.1"
 EXPECTED_ULTRALYTICS_VERSION = "8.2.103"
 MODEL_PATH = Path("/opt/quadruped/perception/models/gauge_ad_best.pt")
+
+
+def _check_distribution_versions() -> None:
+    expected_versions = {
+        "torch": EXPECTED_TORCH_VERSION,
+        "torchvision": EXPECTED_TORCHVISION_VERSION,
+        "ultralytics": EXPECTED_ULTRALYTICS_VERSION,
+    }
+    for distribution, expected in expected_versions.items():
+        actual = metadata.version(distribution)
+        if actual != expected:
+            raise RuntimeError(
+                f"unexpected {distribution} distribution version: {actual}"
+            )
 
 
 def _check_pip_dependencies() -> None:
@@ -52,12 +67,7 @@ def main() -> None:
     import ultralytics
 
     _check_pip_dependencies()
-    if str(torch.__version__) != EXPECTED_TORCH_VERSION:
-        raise RuntimeError(f"unexpected torch version: {torch.__version__}")
-    if str(torchvision.__version__) != EXPECTED_TORCHVISION_VERSION:
-        raise RuntimeError(f"unexpected torchvision version: {torchvision.__version__}")
-    if str(ultralytics.__version__) != EXPECTED_ULTRALYTICS_VERSION:
-        raise RuntimeError(f"unexpected ultralytics version: {ultralytics.__version__}")
+    _check_distribution_versions()
     if not hasattr(cv2, "aruco"):
         raise RuntimeError("OpenCV aruco module is unavailable")
 

@@ -1,6 +1,8 @@
 import hashlib
+import importlib.util
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -151,6 +153,8 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
         self.assertIn('EXPECTED_TORCH_VERSION = "2.0.0+nv23.5"', verify)
         self.assertIn('EXPECTED_TORCHVISION_VERSION = "0.15.1"', verify)
         self.assertIn('EXPECTED_ULTRALYTICS_VERSION = "8.2.103"', verify)
+        self.assertIn("_check_distribution_versions()", verify)
+        self.assertNotIn("str(torch.__version__) != EXPECTED_TORCH_VERSION", verify)
         self.assertIn("_check_pip_dependencies()", verify)
         self.assertIn("pipeline.warmup((360, 640, 3))", verify)
         self.assertIn("torchvision.ops.nms(boxes, scores, 0.5)", verify)
@@ -165,6 +169,35 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
             hashlib.sha256(model.read_bytes()).hexdigest(),
             "3ed76de727a87be8d64cc3b259bf2b0ec39daaaa3fac1f3f97af249824abc648",
         )
+
+    def test_runtime_verifier_checks_normalized_distribution_versions(self):
+        verifier_path = ROOT / "docker" / "d455_perception" / "verify_runtime.py"
+        spec = importlib.util.spec_from_file_location(
+            "pick_place_verify_runtime", verifier_path
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        verifier = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(verifier)
+
+        accepted = {
+            "torch": "2.0.0+nv23.5",
+            "torchvision": "0.15.1",
+            "ultralytics": "8.2.103",
+        }
+        with mock.patch.object(
+            verifier.metadata, "version", side_effect=lambda name: accepted[name]
+        ):
+            verifier._check_distribution_versions()
+
+        rejected = dict(accepted, torch="2.0.0")
+        with mock.patch.object(
+            verifier.metadata, "version", side_effect=lambda name: rejected[name]
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, "unexpected torch distribution version: 2.0.0"
+            ):
+                verifier._check_distribution_versions()
 
     def test_arm_defaults_do_not_claim_unaccepted_calibration(self):
         params = (ROOT / "arm_new" / "config" / "arm_motion_params.yaml").read_text(
