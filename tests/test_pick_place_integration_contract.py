@@ -1,6 +1,7 @@
 import hashlib
 import importlib.util
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
 from unittest import mock
 
@@ -139,6 +140,9 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
         dockerfile = (ROOT / "docker" / "Dockerfile.cuvslam-pick-place").read_text(
             encoding="utf-8"
         )
+        build_script = (
+            ROOT / "scripts" / "build_l6_pick_place_image.sh"
+        ).read_text(encoding="utf-8")
         verify = (ROOT / "docker" / "d455_perception" / "verify_runtime.py").read_text(
             encoding="utf-8"
         )
@@ -149,7 +153,8 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
         self.assertIn("pip._internal.models.wheel", dockerfile)
         self.assertNotIn("-o /tmp/torch.whl", dockerfile)
         self.assertNotIn("-o /tmp/torchvision.whl", dockerfile)
-        self.assertIn("YOLO_DEVICE=cpu", dockerfile)
+        self.assertNotIn("YOLO_DEVICE=cpu", dockerfile)
+        self.assertIn("verify_runtime.py --build-stage", dockerfile)
         self.assertIn('EXPECTED_TORCH_VERSION = "2.0.0+nv23.5"', verify)
         self.assertIn('EXPECTED_TORCHVISION_VERSION = "0.15.1"', verify)
         self.assertIn('EXPECTED_ULTRALYTICS_VERSION = "8.2.103"', verify)
@@ -165,6 +170,10 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
         self.assertIn("validate_source_packet", verify)
         self.assertIn("synthetic_udp=ok", verify)
         self.assertIn("--runtime nvidia", START)
+        self.assertIn("docker run --rm --runtime nvidia --network none", build_script)
+        self.assertIn("/opt/quadruped/perception/bin/verify_runtime.py", build_script)
+        self.assertNotIn("verify_runtime.py --build-stage", build_script)
+        self.assertNotIn("verify_runtime.py --build-stage", START)
         self.assertEqual(
             hashlib.sha256(model.read_bytes()).hexdigest(),
             "3ed76de727a87be8d64cc3b259bf2b0ec39daaaa3fac1f3f97af249824abc648",
@@ -198,6 +207,61 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
                 RuntimeError, "unexpected torch distribution version: 2.0.0"
             ):
                 verifier._check_distribution_versions()
+
+    def test_build_stage_verifier_does_not_import_inference_runtime(self):
+        verifier_path = ROOT / "docker" / "d455_perception" / "verify_runtime.py"
+        spec = importlib.util.spec_from_file_location(
+            "pick_place_build_stage_verify_runtime", verifier_path
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        verifier = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(verifier)
+
+        original_import = __import__
+
+        def guarded_import(name, *args, **kwargs):
+            if name.split(".", 1)[0] in {"torch", "torchvision", "ultralytics"}:
+                raise AssertionError(f"build-stage verifier imported {name}")
+            return original_import(name, *args, **kwargs)
+
+        accepted = {
+            "torch": "2.0.0+nv23.5",
+            "torchvision": "0.15.1",
+            "ultralytics": "8.2.103",
+        }
+        model_bytes = b"accepted-model"
+        model_path = mock.Mock()
+        model_path.read_bytes.return_value = model_bytes
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                mock.patch.object(
+                    verifier.subprocess,
+                    "run",
+                    return_value=mock.Mock(returncode=0, stdout=""),
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    verifier.metadata,
+                    "version",
+                    side_effect=lambda name: accepted[name],
+                )
+            )
+            stack.enter_context(mock.patch.dict("sys.modules", {"cv2": mock.Mock(aruco=object())}))
+            stack.enter_context(mock.patch.object(verifier, "MODEL_PATH", model_path))
+            stack.enter_context(
+                mock.patch.object(
+                    verifier,
+                    "EXPECTED_MODEL_SHA256",
+                    hashlib.sha256(model_bytes).hexdigest(),
+                )
+            )
+            stack.enter_context(
+                mock.patch("builtins.__import__", side_effect=guarded_import)
+            )
+            verifier.main(build_stage=True)
 
     def test_image_lock_covers_transitives_and_preserves_system_opencv_exception(self):
         dockerfile = (ROOT / "docker" / "Dockerfile.cuvslam-pick-place").read_text(

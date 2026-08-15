@@ -66,5 +66,5 @@ COPY InstanceSegmentation/projects/gauge/model/best.pt \
 RUN chmod +x \
       /opt/quadruped/perception/bin/run_apriltag_pose_node.sh \
       /opt/quadruped/perception/bin/run_yolo_3d_node.sh \
- && YOLO_DEVICE=cpu PYTHONPATH=/opt/quadruped/perception/bin \
-      python3 /opt/quadruped/perception/bin/verify_runtime.py
+ && PYTHONPATH=/opt/quadruped/perception/bin \
+      python3 /opt/quadruped/perception/bin/verify_runtime.py --build-stage

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
@@ -60,20 +61,34 @@ def _check_pip_dependencies() -> None:
         raise RuntimeError(f"pip dependency check failed:\n{details}")
 
 
-def main() -> None:
+def _check_opencv() -> None:
     import cv2
-    import torch
-    import torchvision
-    import ultralytics
 
-    _check_pip_dependencies()
-    _check_distribution_versions()
     if not hasattr(cv2, "aruco"):
         raise RuntimeError("OpenCV aruco module is unavailable")
 
+
+def _check_model_hash() -> None:
     actual_hash = hashlib.sha256(MODEL_PATH.read_bytes()).hexdigest()
     if actual_hash != EXPECTED_MODEL_SHA256:
         raise RuntimeError(f"model SHA-256 mismatch: {actual_hash}")
+
+
+def main(*, build_stage: bool = False) -> None:
+    _check_pip_dependencies()
+    _check_distribution_versions()
+    _check_opencv()
+    _check_model_hash()
+    if build_stage:
+        print(
+            "pick-place build stage verified: "
+            "pip=ok distributions=ok opencv=ok model_sha256=ok"
+        )
+        return
+
+    import torch
+    import torchvision
+    import ultralytics
 
     from d455_yolo_3d_pipeline import (
         Yolo3DConfig,
@@ -144,4 +159,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--build-stage",
+        action="store_true",
+        help="run checks that do not require NVIDIA runtime CUDA library mounts",
+    )
+    main(build_stage=parser.parse_args().build_stage)
