@@ -110,9 +110,9 @@ class PickConfig:
     min_x_speed_mps: Optional[float] = None
     min_y_speed_mps: Optional[float] = None
     min_yaw_speed_rps: float = 0.05
-    pulse_min_s: float = 1.50
-    pulse_max_s: float = 1.50
-    pulse_settle_s: float = 0.50
+    pulse_min_s: float = 0.50
+    pulse_max_s: float = 0.50
+    pulse_settle_s: float = 0.0
     stable_frames: int = 3
     timeout_s: float = 80.0
     lifted_hold_s: float = 3.2

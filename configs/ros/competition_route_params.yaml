@@ -51,9 +51,9 @@ competition_manager_node:
     pick_qr_min_x_speed_mps: 0.15
     pick_qr_min_y_speed_mps: 0.05
     pick_qr_min_yaw_speed_rps: 0.15
-    pick_qr_pulse_min_s: 1.50
-    pick_qr_pulse_max_s: 1.50
-    pick_qr_pulse_settle_s: 0.50
+    pick_qr_pulse_min_s: 0.50
+    pick_qr_pulse_max_s: 0.50
+    pick_qr_pulse_settle_s: 0.0
     pick_qr_stable_frames: 3
     # 当前对齐阶段顺序为 yaw -> y -> x。
     pick_qr_timeout_s: 80.0
