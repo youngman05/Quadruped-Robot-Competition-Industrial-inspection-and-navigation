@@ -6,6 +6,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 START_SCRIPT = REPO_ROOT / "scripts" / "start_competition.sh"
+CLEAN_L6_SCRIPT = REPO_ROOT / "scripts" / "start_l6.sh"
 ROSBAG_SCRIPT = REPO_ROOT / "scripts" / "record_formal_l6_rosbag.sh"
 HEALTH_PROBE = REPO_ROOT / "scripts" / "cone_startup_health_probe.py"
 BASE_PARAMS = REPO_ROOT / "configs" / "navigation" / "nav2_params.yaml"
@@ -155,6 +156,31 @@ class FormalStartupChainContractTests(unittest.TestCase):
         self.assertIn("exec ros2 bag record", wrapper)
         self.assertIn('--qos-profile-overrides-path "$QOS_OVERRIDE"', wrapper)
         self.assertNotIn("/cmd_vel_arbiter/mode", wrapper)
+
+    def test_clean_l6_entrypoint_has_no_recorder_or_supervisor(self):
+        entrypoint = CLEAN_L6_SCRIPT.read_text(encoding="utf-8")
+        for token in (
+            "TASK_EXPECTED_MAP_ID=competition_field_phase1",
+            "TASK_PASS_OBSTACLE_TIMEOUT_SEC=180.0",
+            "TASK_PASS_OBSTACLE_WAYPOINT_TIMEOUT_SEC=120.0",
+            "TASK_INSPECTION_TIMEOUT_SEC=300.0",
+            'exec bash "$PROJECT_ROOT/scripts/start_competition.sh"',
+            "--cone-to-whz-l6",
+            "--dog",
+            "--cmd-vel-bridge",
+            "--prepare-lite3-motion",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, entrypoint)
+        for forbidden in (
+            "ros2 bag",
+            "record_formal_l6_rosbag",
+            "supervisor",
+            "nohup",
+            "--qos-profile-overrides-path",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, entrypoint)
 
     def test_lifecycle_snapshot_retries_without_weakening_active_gate(self):
         for token in (

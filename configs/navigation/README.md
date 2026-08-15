@@ -189,6 +189,19 @@ The later supervised motion run requires the same map and waypoint file plus
 the separately authorized Lite3 arguments. A failed Nav2 goal or WHZ request
 ends the attempt; TaskManager does not submit it again.
 
+For the clean operator-run L6 path, with no rosbag or external supervisor:
+
+```bash
+bash scripts/start_l6.sh
+```
+
+This entrypoint fixes the formal map ID and timeout contract, then delegates to
+the existing fail-closed startup acceptance chain. Stop the runtime with:
+
+```bash
+bash scripts/stop_all.sh
+```
+
 ## Staged D455 depth pipeline
 
 The competition launch keeps the validated static-only Nav2 path when neither
