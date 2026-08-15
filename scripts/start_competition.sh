@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================
 #  四足机器人竞赛 — 鲁棒一键启动
-#  用法: bash scripts/start_competition.sh [--dog] [--cmd-vel-bridge] [--prepare-lite3-motion] [--yolo] [--whz] [--task-manager] [--cone-to-whz-l6] [--pick-place-l6] [--auto-advance] [--camera-relay] [--depth-relay] [--depth-pipeline] [--cone-avoidance] [--skip-depth-disable-health-check]
+#  用法: bash scripts/start_competition.sh [--dog] [--cmd-vel-bridge] [--prepare-lite3-motion] [--yolo] [--whz] [--task-manager] [--cone-to-whz-l6] [--pick-place-l6] [--pick-place-preflight-only] [--auto-advance] [--camera-relay] [--depth-relay] [--depth-pipeline] [--cone-avoidance] [--skip-depth-disable-health-check]
 # ==============================================
 # 注意: 不用 set -e，每个步骤自行容错
 
@@ -15,15 +15,31 @@ LOGFILE="$LOGDIR/competition_$STARTUP_TIMESTAMP.log"
 STARTUP_SNAPSHOT="${STARTUP_SNAPSHOT:-$LOGDIR/competition_startup_$STARTUP_TIMESTAMP.txt}"
 exec > >(tee -a "$LOGFILE") 2>&1
 echo "日志: $LOGFILE"
-trap 'echo ""; echo "Ctrl+C → 清理..."; bash scripts/stop_all.sh' INT TERM
 STARTUP_RUNTIME_TOUCHED=false
 RUNTIME_STARTED_CUVSLAM=false
 RUNTIME_CUVSLAM_CONTAINER=""
 RUNTIME_CUVSLAM_WRAPPER_PID=""
+PICK_PLACE_VERIFIER_CONTAINER=""
+
+cleanup_pick_place_verifier() {
+    [ -n "${PICK_PLACE_VERIFIER_CONTAINER:-}" ] || return 0
+    docker rm -f "$PICK_PLACE_VERIFIER_CONTAINER" >/dev/null 2>&1 || true
+    VERIFIER_CONTAINER_NAMES="$(docker ps -a --format '{{.Names}}' 2>/dev/null)" \
+        || return 1
+    if printf '%s\n' "$VERIFIER_CONTAINER_NAMES" \
+        | grep -Fxq "$PICK_PLACE_VERIFIER_CONTAINER"; then
+        return 1
+    fi
+    PICK_PLACE_VERIFIER_CONTAINER=""
+    return 0
+}
 
 startup_no_go() {
     echo "NO-GO: $*"
     echo " 启动快照: $STARTUP_SNAPSHOT"
+    if ! cleanup_pick_place_verifier; then
+        echo " WARNING: verifier container cleanup failed: $PICK_PLACE_VERIFIER_CONTAINER"
+    fi
     if ${STARTUP_RUNTIME_TOUCHED:-false}; then
         echo " 清理已启动的正式栈..."
         bash scripts/stop_all.sh >/dev/null 2>&1 || true
@@ -40,6 +56,19 @@ startup_no_go() {
     fi
     exit 1
 }
+
+handle_startup_signal() {
+    echo ""
+    if ! cleanup_pick_place_verifier; then
+        echo "WARNING: verifier container cleanup failed: $PICK_PLACE_VERIFIER_CONTAINER"
+    fi
+    if ${STARTUP_RUNTIME_TOUCHED:-false}; then
+        startup_no_go "startup interrupted"
+    fi
+    echo "Startup interrupted before competition runtime state was touched"
+    exit 130
+}
+trap handle_startup_signal INT TERM
 
 # Supervisors may watch this path before the ROS launch starts. Remove stale
 # motion/status lines from an earlier run before any long preflight work.
@@ -66,6 +95,7 @@ VERIFY_DEPTH_DISABLE_LOCALIZATION=true
 ENABLE_TASK_MANAGER=false; AUTO_ADVANCE=false; DO_STAND=false
 CONE_TO_WHZ_L6=false
 PICK_PLACE_L6=false
+PICK_PLACE_PREFLIGHT_ONLY=false
 PURE_L6_START="${PURE_L6_START:-false}"
 for arg in "$@"; do
     case $arg in
@@ -78,6 +108,7 @@ for arg in "$@"; do
         --task-manager|--mission) ENABLE_TASK_MANAGER=true ;;
         --cone-to-whz-l6) CONE_TO_WHZ_L6=true ;;
         --pick-place-l6) PICK_PLACE_L6=true; CONE_TO_WHZ_L6=true ;;
+        --pick-place-preflight-only) PICK_PLACE_L6=true; CONE_TO_WHZ_L6=true; PICK_PLACE_PREFLIGHT_ONLY=true ;;
         --auto-advance) ENABLE_TASK_MANAGER=true; AUTO_ADVANCE=true ;;
         --camera-relay) ENABLE_CAMERA_RELAY=true ;;
         --depth-relay) ENABLE_DEPTH_RELAY=true ;;
@@ -106,6 +137,9 @@ ARM_MOTION_PARAMS_FILE="${ARM_MOTION_PARAMS_FILE:-$PROJECT_ROOT/arm_new/config/a
 PICK_PLACE_CALIBRATION_APPROVED="${PICK_PLACE_CALIBRATION_APPROVED:-false}"
 APRILTAG_TAG_IDS="${APRILTAG_TAG_IDS:-}"
 APRILTAG_TAG_SIZE_M="${APRILTAG_TAG_SIZE_M:-}"
+PICK_PLACE_SOURCE_COMMIT="${PICK_PLACE_SOURCE_COMMIT:-}"
+PICK_PLACE_IMAGE_ID="${PICK_PLACE_IMAGE_ID:-}"
+PICK_PLACE_VERIFIER_TIMEOUT_SEC="${PICK_PLACE_VERIFIER_TIMEOUT_SEC:-180}"
 DEPTH_SHARED_DIR="${DEPTH_SHARED_DIR:-$HOME/workspaces/isaac_ros-dev/camera_frames}"
 
 if $CONE_TO_WHZ_L6; then
@@ -151,7 +185,7 @@ echo ''
 echo '==================================='
 echo ' 四足机器人竞赛系统 v2 — 鲁棒启动'
 echo '==================================='
-echo " DOG=$ENABLE_DOG  CMD_VEL_BRIDGE=$ENABLE_CMD_VEL_BRIDGE  BRIDGE_INIT_DOG=$ENABLE_CMD_VEL_BRIDGE_INIT  PREPARE_LITE3_MOTION=$PREPARE_LITE3_MOTION  YOLO=$ENABLE_YOLO  WHZ=$ENABLE_WHZ  CAMERA_RELAY=$ENABLE_CAMERA_RELAY  DEPTH_RELAY=$ENABLE_DEPTH_RELAY  DEPTH_PIPELINE=$ENABLE_DEPTH_PIPELINE  CONE_AVOIDANCE=$ENABLE_CONE_AVOIDANCE  CONE_MODE_CONTROL=$ENABLE_CONE_MODE_CONTROL  APRILTAG_BRIDGE=$ENABLE_APRILTAG_BRIDGE  YOLO_3D_BRIDGE=$ENABLE_YOLO_3D_BRIDGE  ARM_MOTION=$ENABLE_ARM_MOTION  MANIPULATION=$ENABLE_MANIPULATION  VERIFY_DEPTH_DISABLE_LOCALIZATION=$VERIFY_DEPTH_DISABLE_LOCALIZATION  TASK_MANAGER=$ENABLE_TASK_MANAGER  AUTO_ADVANCE=$AUTO_ADVANCE  CONE_TO_WHZ_L6=$CONE_TO_WHZ_L6  PICK_PLACE_L6=$PICK_PLACE_L6"
+echo " DOG=$ENABLE_DOG  CMD_VEL_BRIDGE=$ENABLE_CMD_VEL_BRIDGE  BRIDGE_INIT_DOG=$ENABLE_CMD_VEL_BRIDGE_INIT  PREPARE_LITE3_MOTION=$PREPARE_LITE3_MOTION  YOLO=$ENABLE_YOLO  WHZ=$ENABLE_WHZ  CAMERA_RELAY=$ENABLE_CAMERA_RELAY  DEPTH_RELAY=$ENABLE_DEPTH_RELAY  DEPTH_PIPELINE=$ENABLE_DEPTH_PIPELINE  CONE_AVOIDANCE=$ENABLE_CONE_AVOIDANCE  CONE_MODE_CONTROL=$ENABLE_CONE_MODE_CONTROL  APRILTAG_BRIDGE=$ENABLE_APRILTAG_BRIDGE  YOLO_3D_BRIDGE=$ENABLE_YOLO_3D_BRIDGE  ARM_MOTION=$ENABLE_ARM_MOTION  MANIPULATION=$ENABLE_MANIPULATION  VERIFY_DEPTH_DISABLE_LOCALIZATION=$VERIFY_DEPTH_DISABLE_LOCALIZATION  TASK_MANAGER=$ENABLE_TASK_MANAGER  AUTO_ADVANCE=$AUTO_ADVANCE  CONE_TO_WHZ_L6=$CONE_TO_WHZ_L6  PICK_PLACE_L6=$PICK_PLACE_L6  PICK_PLACE_PREFLIGHT_ONLY=$PICK_PLACE_PREFLIGHT_ONLY"
 
 export CUVSLAM_MOUNT_MODE="${CUVSLAM_MOUNT_MODE:-robot}"
 export CUVSLAM_PROFILE="${CUVSLAM_PROFILE:-custom}"
@@ -226,6 +260,7 @@ snapshot_value "CONE_AVOIDANCE" "$ENABLE_CONE_AVOIDANCE"
 snapshot_value "CONE_MODE_CONTROL" "$ENABLE_CONE_MODE_CONTROL"
 snapshot_value "CONE_TO_WHZ_L6" "$CONE_TO_WHZ_L6"
 snapshot_value "PICK_PLACE_L6" "$PICK_PLACE_L6"
+snapshot_value "PICK_PLACE_PREFLIGHT_ONLY" "$PICK_PLACE_PREFLIGHT_ONLY"
 snapshot_value "ENABLE_APRILTAG_BRIDGE" "$ENABLE_APRILTAG_BRIDGE"
 snapshot_value "ENABLE_YOLO_3D_BRIDGE" "$ENABLE_YOLO_3D_BRIDGE"
 snapshot_value "ENABLE_ARM_MOTION" "$ENABLE_ARM_MOTION"
@@ -255,6 +290,29 @@ snapshot_value "TASK_MANIPULATION_PARAMS_FILE" "$TASK_MANIPULATION_PARAMS_FILE"
 snapshot_value "ARM_MOTION_PARAMS_FILE" "$ARM_MOTION_PARAMS_FILE"
 snapshot_value "DEPTH_SHARED_DIR" "$DEPTH_SHARED_DIR"
 snapshot_value "IMAGE" "${IMAGE:-default}"
+snapshot_value "PICK_PLACE_SOURCE_COMMIT" "${PICK_PLACE_SOURCE_COMMIT:-unset}"
+snapshot_value "PICK_PLACE_IMAGE_ID" "${PICK_PLACE_IMAGE_ID:-unset}"
+snapshot_value "PICK_PLACE_VERIFIER_TIMEOUT_SEC" "$PICK_PLACE_VERIFIER_TIMEOUT_SEC"
+
+FORMAL_SOURCE_COMMIT="$(git rev-parse HEAD 2>/dev/null)" \
+    || startup_no_go "cannot resolve formal source commit"
+FORMAL_TRACKED_DIRTY="$(git status --porcelain --untracked-files=no 2>/dev/null)" \
+    || startup_no_go "cannot inspect formal source worktree"
+if $PICK_PLACE_L6 && [ -n "$FORMAL_TRACKED_DIRTY" ]; then
+    startup_no_go "formal source worktree has tracked modifications"
+fi
+snapshot_value "formal_source_commit" "$FORMAL_SOURCE_COMMIT"
+if [ -z "$FORMAL_TRACKED_DIRTY" ]; then
+    snapshot_value "formal_source_tracked_dirty" "false"
+else
+    snapshot_value "formal_source_tracked_dirty" "true"
+fi
+if $PICK_PLACE_L6; then
+    [ -n "$PICK_PLACE_SOURCE_COMMIT" ] \
+        || startup_no_go "PICK_PLACE_SOURCE_COMMIT must identify the approved formal source commit"
+    [ "$FORMAL_SOURCE_COMMIT" = "$PICK_PLACE_SOURCE_COMMIT" ] \
+        || startup_no_go "formal source commit is $FORMAL_SOURCE_COMMIT; expected $PICK_PLACE_SOURCE_COMMIT"
+fi
 
 [ -f "$FOXY_SETUP" ] || startup_no_go "Foxy setup is missing: $FOXY_SETUP"
 [ -f "$BASE_NAV2_PARAMS_FILE" ] || startup_no_go "base Nav2 params are missing: $BASE_NAV2_PARAMS_FILE"
@@ -320,6 +378,23 @@ if $PICK_PLACE_L6; then
         || startup_no_go "manipulation params are missing: $TASK_MANIPULATION_PARAMS_FILE"
     [ -f "$ARM_MOTION_PARAMS_FILE" ] \
         || startup_no_go "arm params are missing: $ARM_MOTION_PARAMS_FILE"
+    TASK_MANIPULATION_PARAMS_HASH_LINE="$(sha256sum -- "$TASK_MANIPULATION_PARAMS_FILE" 2>/dev/null)" \
+        || startup_no_go "cannot hash manipulation params"
+    TASK_MANIPULATION_PARAMS_SHA256="${TASK_MANIPULATION_PARAMS_HASH_LINE%% *}"
+    ARM_MOTION_PARAMS_HASH_LINE="$(sha256sum -- "$ARM_MOTION_PARAMS_FILE" 2>/dev/null)" \
+        || startup_no_go "cannot hash arm params"
+    ARM_MOTION_PARAMS_SHA256="${ARM_MOTION_PARAMS_HASH_LINE%% *}"
+    for calibration_sha256 in \
+        "$TASK_MANIPULATION_PARAMS_SHA256" \
+        "$ARM_MOTION_PARAMS_SHA256"; do
+        [ "${#calibration_sha256}" -eq 64 ] \
+            || startup_no_go "calibration SHA-256 has an invalid length"
+        case "$calibration_sha256" in
+            *[!0-9a-f]*) startup_no_go "calibration SHA-256 is not lowercase hexadecimal" ;;
+        esac
+    done
+    snapshot_value "task_manipulation_params_sha256" "$TASK_MANIPULATION_PARAMS_SHA256"
+    snapshot_value "arm_motion_params_sha256" "$ARM_MOTION_PARAMS_SHA256"
     PICK_PLACE_GATE_JSON="$(python3 scripts/pick_place_calibration_gate.py \
         --task-params "$TASK_MANIPULATION_PARAMS_FILE" \
         --arm-params "$ARM_MOTION_PARAMS_FILE" \
@@ -338,12 +413,34 @@ if $PICK_PLACE_L6; then
 
     docker image inspect "$IMAGE" >/dev/null 2>&1 \
         || startup_no_go "unified pick/place image is missing: $IMAGE"
+    [ -n "$PICK_PLACE_IMAGE_ID" ] \
+        || startup_no_go "PICK_PLACE_IMAGE_ID must identify the accepted immutable image"
+    ACTUAL_PICK_PLACE_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null)" \
+        || startup_no_go "cannot inspect unified pick/place image ID"
+    [ "$ACTUAL_PICK_PLACE_IMAGE_ID" = "$PICK_PLACE_IMAGE_ID" ] \
+        || startup_no_go "unified image ID is $ACTUAL_PICK_PLACE_IMAGE_ID; expected $PICK_PLACE_IMAGE_ID"
+    snapshot_value "actual_pick_place_image_id" "$ACTUAL_PICK_PLACE_IMAGE_ID"
     IMAGE_MODEL_SHA="$(docker image inspect --format '{{index .Config.Labels "org.quadruped.pick_place.model_sha256"}}' "$IMAGE" 2>/dev/null)"
     [ "$IMAGE_MODEL_SHA" = "$MODEL_SHA256" ] \
         || startup_no_go "unified image model label mismatch: ${IMAGE_MODEL_SHA:-missing}"
-    docker run --rm --runtime nvidia --network none -e YOLO_DEVICE=0 --entrypoint python3 "$IMAGE" \
-        /opt/quadruped/perception/bin/verify_runtime.py \
-        || startup_no_go "unified pick/place image runtime verification failed"
+    case "$PICK_PLACE_VERIFIER_TIMEOUT_SEC" in
+        ''|*[!0-9]*) startup_no_go "PICK_PLACE_VERIFIER_TIMEOUT_SEC must be a positive integer" ;;
+    esac
+    [ "$PICK_PLACE_VERIFIER_TIMEOUT_SEC" -gt 0 ] \
+        || startup_no_go "PICK_PLACE_VERIFIER_TIMEOUT_SEC must be positive"
+    PICK_PLACE_VERIFIER_CONTAINER="pick_place_verify_${STARTUP_TIMESTAMP}_$$"
+    snapshot_value "pick_place_verifier_container" "$PICK_PLACE_VERIFIER_CONTAINER"
+    timeout -k 10s "${PICK_PLACE_VERIFIER_TIMEOUT_SEC}s" \
+        docker run --rm --name "$PICK_PLACE_VERIFIER_CONTAINER" \
+        --runtime nvidia --network none -e YOLO_DEVICE=0 --entrypoint python3 "$IMAGE" \
+        /opt/quadruped/perception/bin/verify_runtime.py
+    PICK_PLACE_VERIFIER_STATUS=$?
+    if ! cleanup_pick_place_verifier; then
+        startup_no_go "unified pick/place verifier container could not be removed"
+    fi
+    snapshot_value "pick_place_verifier_cleanup" "ok"
+    [ "$PICK_PLACE_VERIFIER_STATUS" -eq 0 ] \
+        || startup_no_go "unified pick/place image runtime verification failed with status $PICK_PLACE_VERIFIER_STATUS"
 fi
 
 NAV2_BT_PREFIX="$(ros2 pkg prefix nav2_bt_navigator 2>/dev/null)" \
@@ -353,8 +450,10 @@ FORMAL_PACKAGE_PREFIX="$(ros2 pkg prefix quadruped_robot_competition 2>/dev/null
 if $PICK_PLACE_L6; then
     ARM_PACKAGE_PREFIX="$(ros2 pkg prefix arm_new_ros 2>/dev/null)" \
         || startup_no_go "arm_new_ros package is not resolvable"
-    ros2 pkg prefix arm_new_interfaces >/dev/null 2>&1 \
+    ARM_INTERFACES_PREFIX="$(ros2 pkg prefix arm_new_interfaces 2>/dev/null)" \
         || startup_no_go "arm_new_interfaces package is not resolvable"
+    WHZ_PACKAGE_PREFIX="$(ros2 pkg prefix whz 2>/dev/null)" \
+        || startup_no_go "whz package is not resolvable"
     ros2 pkg executables quadruped_robot_competition 2>/dev/null \
         | grep -Fq 'apriltag_udp_bridge' \
         || startup_no_go "installed AprilTag UDP bridge entry point is missing"
@@ -365,6 +464,8 @@ if $PICK_PLACE_L6; then
         | grep -Fq 'arm_motion_node' \
         || startup_no_go "installed arm motion entry point is missing"
     snapshot_value "arm_new_ros_prefix" "$ARM_PACKAGE_PREFIX"
+    snapshot_value "arm_new_interfaces_prefix" "$ARM_INTERFACES_PREFIX"
+    snapshot_value "whz_prefix" "$WHZ_PACKAGE_PREFIX"
     snapshot_value "resolved_manipulation_params_file" "$TASK_MANIPULATION_PARAMS_FILE"
     snapshot_value "resolved_arm_motion_params_file" "$ARM_MOTION_PARAMS_FILE"
 fi
@@ -378,6 +479,58 @@ case "$FORMAL_PACKAGE_PREFIX" in
     "$FORMAL_INSTALL_ROOT"/*) ;;
     *) startup_no_go "competition package resolved outside formal deploy install: $FORMAL_PACKAGE_PREFIX" ;;
 esac
+if $PICK_PLACE_L6; then
+    for package_prefix in "$ARM_PACKAGE_PREFIX" "$ARM_INTERFACES_PREFIX" "$WHZ_PACKAGE_PREFIX"; do
+        case "$package_prefix" in
+            "$FORMAL_INSTALL_ROOT"/*) ;;
+            *) startup_no_go "pick/place package resolved outside formal deploy install: $package_prefix" ;;
+        esac
+    done
+
+    INSTALLED_COMPETITION_LAUNCH="$FORMAL_PACKAGE_PREFIX/share/quadruped_robot_competition/launch/competition.launch.py"
+    INSTALLED_PICK_PLACE_DEFAULTS="$FORMAL_PACKAGE_PREFIX/share/quadruped_robot_competition/configs/manipulation/pick_place.yaml"
+    INSTALLED_ARM_DEFAULTS="$ARM_PACKAGE_PREFIX/share/arm_new_ros/config/arm_motion_params.yaml"
+    for installed_file in \
+        "$INSTALLED_COMPETITION_LAUNCH" \
+        "$INSTALLED_PICK_PLACE_DEFAULTS" \
+        "$INSTALLED_ARM_DEFAULTS"; do
+        [ -f "$installed_file" ] || startup_no_go "installed pick/place artifact is missing: $installed_file"
+    done
+    cmp -s "$PROJECT_ROOT/launch/competition.launch.py" "$INSTALLED_COMPETITION_LAUNCH" \
+        || startup_no_go "installed competition.launch.py differs from formal source"
+    cmp -s "$PROJECT_ROOT/configs/manipulation/pick_place.yaml" "$INSTALLED_PICK_PLACE_DEFAULTS" \
+        || startup_no_go "installed pick/place defaults differ from formal source"
+    cmp -s "$PROJECT_ROOT/arm_new/config/arm_motion_params.yaml" "$INSTALLED_ARM_DEFAULTS" \
+        || startup_no_go "installed arm defaults differ from formal source"
+    HOST_YOLO_PROTOCOL_EVIDENCE="$(python3 - \
+        "$PROJECT_ROOT/src/nodes/perception/yolo_udp_bridge_core.py" <<'PY'
+import inspect
+import sys
+from pathlib import Path
+
+from nodes.perception import yolo_udp_bridge_core as protocol
+
+expected_model_id = "gauge-ad-3ed76de7-v1"
+expected_schema = "competition-ad-yellow-red-green-v1"
+source_path = Path(sys.argv[1]).resolve()
+installed_path = Path(inspect.getsourcefile(protocol) or protocol.__file__).resolve()
+if protocol.MODEL_ID != expected_model_id:
+    raise SystemExit(f"unexpected Host model ID: {protocol.MODEL_ID}")
+if protocol.CLASS_SCHEMA != expected_schema:
+    raise SystemExit(f"unexpected Host class schema: {protocol.CLASS_SCHEMA}")
+if installed_path.read_bytes() != source_path.read_bytes():
+    raise SystemExit(f"installed Host protocol differs from formal source: {installed_path}")
+print(
+    f"file={installed_path} model_id={protocol.MODEL_ID} "
+    f"class_schema={protocol.CLASS_SCHEMA}"
+)
+PY
+    )" || startup_no_go "installed Host YOLO protocol failed provenance/schema validation"
+    snapshot_value "installed_competition_launch" "$INSTALLED_COMPETITION_LAUNCH"
+    snapshot_value "installed_pick_place_defaults" "$INSTALLED_PICK_PLACE_DEFAULTS"
+    snapshot_value "installed_arm_defaults" "$INSTALLED_ARM_DEFAULTS"
+    snapshot_value "installed_host_yolo_protocol" "$HOST_YOLO_PROTOCOL_EVIDENCE"
+fi
 snapshot_value "nav2_bt_navigator_prefix" "$NAV2_BT_PREFIX"
 snapshot_value "quadruped_robot_competition_prefix" "$FORMAL_PACKAGE_PREFIX"
 FORMAL_CONE_BEHAVIOR_TREE="$FORMAL_PACKAGE_PREFIX/share/quadruped_robot_competition/configs/navigation/navigate_cone_w_replanning_and_recovery.xml"
@@ -480,6 +633,15 @@ echo "  Competition: $FORMAL_PACKAGE_PREFIX"
 if $ENABLE_CONE_AVOIDANCE; then
     echo "  Cone plugin: $PLUGIN_PREFIX"
 fi
+if $PICK_PLACE_PREFLIGHT_ONLY; then
+    echo ''
+    echo '==================================='
+    echo ' GO: pick/place preflight passed; competition runtime was not touched'
+    echo ' Verifier container cleanup: ok'
+    echo " 启动快照: $STARTUP_SNAPSHOT"
+    echo '==================================='
+    exit 0
+fi
 
 # ═══════════════════════════════════════════
 # [0] 清理旧进程
@@ -529,15 +691,6 @@ if [ -z "$CN" ]; then
         || startup_no_go "cannot record the new cuVSLAM container identity"
     snapshot_value "runtime_cuvslam_container" "$RUNTIME_CUVSLAM_CONTAINER"
     echo " Docker 容器已启动，等待 cuVSLAM 初始化..."
-    # 等待视觉 SLAM 开始追踪
-    for i in $(seq 1 30); do
-        sleep 2
-        if docker exec $CN bash -c 'source /opt/ros/humble/setup.bash && ros2 topic echo /visual_slam/tracking/odometry --once 2>/dev/null' | grep -q stamp; then
-            echo " cuVSLAM 追踪中"
-            break
-        fi
-        echo -n "."
-    done
 else
     echo "  Docker 已在运行: $CN"
 fi
@@ -549,7 +702,28 @@ if $PICK_PLACE_L6; then
         || startup_no_go "cannot inspect the running cuVSLAM container image"
     [ "$RUNNING_CUVSLAM_IMAGE" = "$IMAGE" ] \
         || startup_no_go "running cuVSLAM container uses $RUNNING_CUVSLAM_IMAGE; pick/place requires $IMAGE"
+    RUNNING_CUVSLAM_IMAGE_ID="$(docker inspect --format '{{.Image}}' "$CN" 2>/dev/null)" \
+        || startup_no_go "cannot inspect the running cuVSLAM container image ID"
+    [ "$RUNNING_CUVSLAM_IMAGE_ID" = "$PICK_PLACE_IMAGE_ID" ] \
+        || startup_no_go "running cuVSLAM image ID is $RUNNING_CUVSLAM_IMAGE_ID; expected $PICK_PLACE_IMAGE_ID"
     snapshot_value "running_cuvslam_image" "$RUNNING_CUVSLAM_IMAGE"
+    snapshot_value "running_cuvslam_image_id" "$RUNNING_CUVSLAM_IMAGE_ID"
+fi
+if $RUNTIME_STARTED_CUVSLAM || $PICK_PLACE_L6; then
+    CUVSLAM_TRACKING_READY=false
+    for i in $(seq 1 30); do
+        sleep 2
+        if docker exec "$CN" bash -c 'source /opt/ros/humble/setup.bash && ros2 topic echo /visual_slam/tracking/odometry --once 2>/dev/null' | grep -q stamp; then
+            echo " cuVSLAM 追踪中"
+            CUVSLAM_TRACKING_READY=true
+            break
+        fi
+        echo -n "."
+    done
+    snapshot_value "cuvslam_tracking_ready" "$CUVSLAM_TRACKING_READY"
+    if $PICK_PLACE_L6 && ! $CUVSLAM_TRACKING_READY; then
+        startup_no_go "cuVSLAM tracking odometry did not become ready"
+    fi
 fi
 if $ENABLE_CONE_AVOIDANCE; then
     CONTAINER_ROS_DOMAIN_ID=$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$CN" 2>/dev/null | sed -n 's/^ROS_DOMAIN_ID=//p' | tail -1)
@@ -705,16 +879,21 @@ nohup python3 scripts/final_bridge.py \
   --planarize-output > /tmp/fb.log 2>&1 &
 BRIDGE_PID=$!
 # 等待第一个 odom 消息
+FINAL_BRIDGE_READY=false
 for i in $(seq 1 30); do
     sleep 1
     if grep -q 'bridged' /tmp/fb.log 2>/dev/null; then
         echo "  Bridge 就绪 (PID=$BRIDGE_PID)"
+        FINAL_BRIDGE_READY=true
         break
     fi
     if [ $i -eq 30 ]; then
         echo "  ⚠ Bridge 等待超时 (检查 cuVSLAM)"
     fi
 done
+if $PICK_PLACE_L6 && ! $FINAL_BRIDGE_READY; then
+    startup_no_go "Host cuVSLAM odometry bridge did not become ready"
+fi
 
 # ═══════════════════════════════════════════
 # [4] Dog init + transfer driver
@@ -724,6 +903,9 @@ if $ENABLE_DOG; then
     echo '[4/6] 狗初始化...'
     # 检查网络
     if ! ping -c 1 -W 1 192.168.1.120 > /dev/null 2>&1; then
+        if $PICK_PLACE_L6; then
+            startup_no_go "Lite3 network is unreachable at 192.168.1.120"
+        fi
         echo "  ⚠ 狗网络不通 (192.168.1.120) — 继续但狗不会动"
     else
         if $ENABLE_CMD_VEL_BRIDGE; then

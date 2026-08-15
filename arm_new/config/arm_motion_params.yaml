@@ -18,9 +18,9 @@ arm_motion_node:
     pause_s: 0.2
     scan_first: true
 
-    # Transitional runtime copy. The system-level source of truth is
-    # configs/calibration/competition_sites.yaml. Keep motion disabled if the
-    # two files disagree; remove this copy when the sites loader is integrated.
+    # Repository defaults remain fail closed. Field values live only in an
+    # explicitly accepted override selected by ARM_MOTION_PARAMS_FILE; startup
+    # records that exact file's SHA-256. There is no implicit site-config loader.
     # I1 reference uses arm_base_link axes: +X forward, +Y left, +Z up.
     grasp_reference_configured: false
     # Current hardware-test baseline at z=0.15 m. ArmPi API [0.00, 0.42, z]

@@ -16,6 +16,9 @@ TASK_MANAGER = (ROOT / "src" / "nodes" / "decision" / "task_manager.py").read_te
 CALIBRATION_GATE = (ROOT / "scripts" / "pick_place_calibration_gate.py").read_text(
     encoding="utf-8"
 )
+PREFLIGHT = (ROOT / "scripts" / "preflight_l6_pick_place.sh").read_text(
+    encoding="utf-8"
+)
 
 
 class PickPlaceIntegrationContractTests(unittest.TestCase):
@@ -37,6 +40,7 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
             "ARM_MOTION_PARAMS_FILE:?",
             "APRILTAG_TAG_IDS:?",
             "APRILTAG_TAG_SIZE_M:?",
+            "PICK_PLACE_SOURCE_COMMIT:?",
             "PICK_PLACE_CALIBRATION_APPROVED",
             "TASK_MANIPULATION_CALIBRATED",
             "PURE_L6_START=false",
@@ -51,10 +55,13 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
     def test_pick_place_preflight_finishes_before_runtime_cleanup(self):
         gate = START.index("pick/place calibration parameter gate failed")
         image = START.index("unified pick/place image runtime verification failed")
+        preflight_exit = START.index("if $PICK_PLACE_PREFLIGHT_ONLY; then")
         cleanup = START.index("echo '[0/6] 清理旧进程...'")
         self.assertLess(gate, cleanup)
         self.assertLess(image, cleanup)
+        self.assertLess(preflight_exit, cleanup)
         for token in (
+            "--pick-place-preflight-only",
             "I2 targets are duplicated",
             "place_target_distance_m is not calibrated",
             "arm parameter {key} must be true",
@@ -62,6 +69,65 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
         ):
             self.assertIn(token, START + CALIBRATION_GATE)
         self.assertIn("scripts/pick_place_calibration_gate.py", START)
+        for token in (
+            "PICK_PLACE_SOURCE_COMMIT:?",
+            "PICK_PLACE_IMAGE_ID",
+            "--pick-place-preflight-only",
+        ):
+            with self.subTest(preflight_token=token):
+                self.assertIn(token, PREFLIGHT)
+
+    def test_pick_place_preflight_locks_provenance_and_installed_artifacts(self):
+        for token in (
+            "PICK_PLACE_SOURCE_COMMIT must identify the approved formal source commit",
+            'snapshot_value "formal_source_commit"',
+            'snapshot_value "task_manipulation_params_sha256"',
+            'snapshot_value "arm_motion_params_sha256"',
+            "PICK_PLACE_IMAGE_ID must identify the accepted immutable image",
+            'snapshot_value "actual_pick_place_image_id"',
+            'ros2 pkg prefix arm_new_interfaces',
+            'ros2 pkg prefix whz',
+            "pick/place package resolved outside formal deploy install",
+            'cmp -s "$PROJECT_ROOT/launch/competition.launch.py"',
+            'cmp -s "$PROJECT_ROOT/configs/manipulation/pick_place.yaml"',
+            'cmp -s "$PROJECT_ROOT/arm_new/config/arm_motion_params.yaml"',
+            "installed Host YOLO protocol failed provenance/schema validation",
+            'expected_schema = "competition-ad-yellow-red-green-v1"',
+            'snapshot_value "installed_host_yolo_protocol"',
+        ):
+            with self.subTest(provenance_token=token):
+                self.assertIn(token, START)
+
+    def test_verifier_is_bounded_named_and_cleaned_on_every_exit_path(self):
+        for token in (
+            "cleanup_pick_place_verifier()",
+            'docker rm -f "$PICK_PLACE_VERIFIER_CONTAINER"',
+            "VERIFIER_CONTAINER_NAMES=",
+            'timeout -k 10s "${PICK_PLACE_VERIFIER_TIMEOUT_SEC}s"',
+            '--name "$PICK_PLACE_VERIFIER_CONTAINER"',
+            'snapshot_value "pick_place_verifier_cleanup" "ok"',
+        ):
+            with self.subTest(verifier_token=token):
+                self.assertIn(token, START)
+
+        signal_handler = START.split("handle_startup_signal() {", 1)[1].split(
+            "}\ntrap handle_startup_signal", 1
+        )[0]
+        self.assertIn("cleanup_pick_place_verifier", signal_handler)
+        self.assertNotIn("stop_all.sh", signal_handler)
+
+    def test_pick_place_runtime_health_checks_fail_closed_for_reused_container(self):
+        reused = START.index('echo "  Docker 已在运行: $CN"')
+        tracking = START.index("CUVSLAM_TRACKING_READY=false", reused)
+        self.assertLess(reused, tracking)
+        for token in (
+            "running cuVSLAM image ID is $RUNNING_CUVSLAM_IMAGE_ID; expected $PICK_PLACE_IMAGE_ID",
+            "cuVSLAM tracking odometry did not become ready",
+            "Host cuVSLAM odometry bridge did not become ready",
+            "Lite3 network is unreachable at 192.168.1.120",
+        ):
+            with self.subTest(runtime_gate=token):
+                self.assertIn(token, START)
 
     def test_single_container_perception_and_unique_udp_ports(self):
         for token in (
