@@ -1,0 +1,6 @@
+# The point is expressed in the ROS arm_base_link frame: +X forward, +Y left,
+# +Z up.  The arm_motion_node converts it to the ArmPi API frame internally.
+geometry_msgs/Point target_arm_base
+---
+bool success
+string message

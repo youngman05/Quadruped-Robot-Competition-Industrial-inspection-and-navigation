@@ -1,0 +1,13 @@
+ultralytics==8.2.103
+numpy==1.24.4
+PyYAML==6.0.2
+pillow==10.4.0
+requests==2.32.3
+scipy==1.10.1
+tqdm==4.66.5
+psutil==6.0.0
+py-cpuinfo==9.0.0
+pandas==2.0.3
+seaborn==0.13.2
+matplotlib==3.7.5
+ultralytics-thop==2.0.9

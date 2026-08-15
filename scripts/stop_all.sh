@@ -27,6 +27,7 @@ for name in task_manager initial_pose_publisher depth_publisher \
             static_transform_publisher test_logger cmd_vel_arbiter cmd_vel_bridge \
             depth_relay_publisher depth_safety_gate \
             cone_scan_udp_bridge cone_scan_safety_gate \
+            apriltag_udp_bridge yolo_udp_bridge arm_motion_node \
             map_server planner_server controller_server bt_navigator \
             recoveries_server lifecycle_manager; do
     pkill -9 -f "$name" 2>/dev/null
@@ -51,11 +52,16 @@ sleep 1
 echo "[5] 停止 Docker 中继..."
 CN=$(docker ps --format '{{.Names}}' 2>/dev/null | grep cuvslam | head -1)
 if [ -n "$CN" ]; then
-    docker exec $CN pkill -f camera_relay       2>/dev/null || true
-    docker exec $CN pkill -f depth_relay        2>/dev/null || true
-    docker exec $CN pkill -f '[c]uvslam_odometry_udp_exporter.py' 2>/dev/null || true
-    docker exec $CN pkill -f loop_metrics_recorder 2>/dev/null || true
+    docker exec "$CN" pkill -f camera_relay       2>/dev/null || true
+    docker exec "$CN" pkill -f depth_relay        2>/dev/null || true
+    docker exec "$CN" pkill -f '[d]455_apriltag_pose_node.py' 2>/dev/null || true
+    docker exec "$CN" pkill -f '[d]455_yolo_3d_node.py' 2>/dev/null || true
+    docker exec "$CN" pkill -f '[c]uvslam_odometry_udp_exporter.py' 2>/dev/null || true
+    docker exec "$CN" pkill -f loop_metrics_recorder 2>/dev/null || true
+    docker exec "$CN" rm -f /tmp/apriltag_pose.log /tmp/yolo_3d.log 2>/dev/null || true
 fi
+
+rm -f -- /tmp/apriltag_bridge_probe.txt /tmp/yolo_bridge_probe.txt 2>/dev/null || true
 
 echo ""
 echo "=== 剩余进程 (TOP5 CPU) ==="

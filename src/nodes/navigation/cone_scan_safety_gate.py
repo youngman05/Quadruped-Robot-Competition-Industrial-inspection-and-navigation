@@ -255,7 +255,7 @@ class ConeScanSafetyGate(Node):
                 and bool(self._active_request_id)
             ):
                 return
-            enabled = self._requested_mode.requires_depth
+            enabled = self._requested_mode == DepthMode.AVOIDANCE
             if not self._layer_tracker.begin_transition(enabled):
                 self._resource_reason = self._layer_tracker.last_reason
                 return
@@ -368,7 +368,7 @@ class ConeScanSafetyGate(Node):
                 and self._resource_ready
                 and bool(self._active_request_id)
             )
-            require_scan_health = self._requested_mode.requires_depth
+            require_scan_health = self._requested_mode == DepthMode.AVOIDANCE
         decision = self._tracker.evaluate(
             self._command,
             self._command_time,

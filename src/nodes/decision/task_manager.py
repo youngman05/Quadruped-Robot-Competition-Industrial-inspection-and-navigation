@@ -25,10 +25,12 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from types import SimpleNamespace
+from typing import Any, Dict, List, Optional, Tuple
 
 import rclpy
 from rclpy.node import Node
+from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
@@ -41,6 +43,20 @@ from nodes.decision.inspection_workflow import (
     InspectionWorkflow,
 )
 from nodes.decision.timeout_budget import ElapsedTimeoutBudget
+from nodes.decision.pick_alignment_core import (
+    FiducialDetectionFrame,
+    I2Target,
+    PickConfig,
+    PickOneExecutor,
+    parse_fiducial_frame,
+)
+from nodes.decision.placement_alignment_core import (
+    PlaceConfig,
+    PlaceOneExecutor,
+    PlacementObservationBuilder,
+    PlacementObservationConfig,
+    extract_letters_from_detections,
+)
 from nodes.navigation.navigation_client import (
     NavigationClient,
     WAYPOINTS,
@@ -55,6 +71,7 @@ from nodes.navigation.mission_route import (
     inspection_route_steps,
     observation_steps,
 )
+from nodes.perception.yolo_udp_bridge_core import CLASS_SCHEMA, MODEL_ID
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -113,6 +130,81 @@ class YoloDetection:
     green_bars: List[Dict[str, Any]] = field(default_factory=list)
 
 
+class _YoloLetterProvider:
+    def __init__(self, node: "TaskManagerNode") -> None:
+        self._node = node
+
+    def detect(self, _image) -> Any:
+        if not self._node._manipulation_packet_is_fresh(
+            self._node._latest_yolo_received_monotonic
+        ):
+            return SimpleNamespace(letters=[])
+        letters = extract_letters_from_detections(
+            self._node._latest_yolo_packet,
+            expected_model_id=self._node._manipulation_model_id,
+            expected_class_schema=self._node._manipulation_class_schema,
+        )
+        return SimpleNamespace(letters=letters)
+
+
+class _PickRuntimeAdapter:
+    def __init__(self, node: "TaskManagerNode") -> None:
+        self._node = node
+
+    @staticmethod
+    def now() -> float:
+        return time.monotonic()
+
+    def stop(self) -> None:
+        self._node._publish_precision_zero()
+
+    def command(self, axis: str, speed: float) -> None:
+        self._node._publish_precision_command(axis, speed)
+
+    def current_fiducial_frame(self) -> Optional[FiducialDetectionFrame]:
+        if not self._node._manipulation_packet_is_fresh(
+            self._node._latest_apriltag_received_monotonic
+        ):
+            return None
+        return self._node._latest_apriltag_frame
+
+    @staticmethod
+    def start_grasp() -> bool:
+        return False
+
+    @staticmethod
+    def grasp_result() -> Optional[bool]:
+        return None
+
+
+class _PlaceRuntimeAdapter:
+    def __init__(self, node: "TaskManagerNode") -> None:
+        self._node = node
+
+    @staticmethod
+    def now() -> float:
+        return time.monotonic()
+
+    def stop(self) -> None:
+        self._node._publish_precision_zero()
+
+    def command(self, axis: str, speed: float) -> None:
+        self._node._publish_precision_command(axis, speed)
+
+    def current_observation(self):
+        if self._node._placement_observer is None:
+            return None
+        return self._node._placement_observer.observe()
+
+    @staticmethod
+    def start_place() -> bool:
+        return False
+
+    @staticmethod
+    def place_result() -> Optional[bool]:
+        return None
+
+
 # ═══════════════════════════════════════════════════════════════════
 #  TaskManagerNode
 # ═══════════════════════════════════════════════════════════════════
@@ -168,6 +260,23 @@ class TaskManagerNode(Node):
         self.declare_parameter("inspection_only", False)
         self.declare_parameter("finish_after_inspection", False)
         self.declare_parameter("allow_placeholder_manipulation", False)
+        self.declare_parameter("enable_manipulation", False)
+        self.declare_parameter("manipulation_calibrated", False)
+        self.declare_parameter("apriltag_topic", "/apriltag/detections_base")
+        self.declare_parameter("precision_cmd_topic", "/cmd_vel_precision")
+        self.declare_parameter(
+            "manipulation_frames_dir",
+            str(Path.home() / "workspaces/isaac_ros-dev/camera_frames"),
+        )
+        self.declare_parameter("manipulation_model_id", MODEL_ID)
+        self.declare_parameter("manipulation_class_schema", CLASS_SCHEMA)
+        self.declare_parameter("pick_red_tag_ids", [0, 1])
+        self.declare_parameter("pick_i2_targets_json", "{}")
+        self.declare_parameter("grasp_target_arm_base", [])
+        self.declare_parameter("place_target_distance_m", 0.0)
+        self.declare_parameter("arm_service_timeout_sec", 30.0)
+        self.declare_parameter("precision_release_duration_sec", 0.6)
+        self.declare_parameter("manipulation_perception_timeout_sec", 0.5)
         self.declare_parameter("waypoint_file", "")
         self.declare_parameter("waypoint_route", "inspection_interleaved")
         self.declare_parameter("expected_map_id", "")
@@ -249,6 +358,40 @@ class TaskManagerNode(Node):
         self._allow_placeholder_manipulation = bool(
             self.get_parameter("allow_placeholder_manipulation").value
         )
+        self._enable_manipulation = bool(
+            self.get_parameter("enable_manipulation").value
+        )
+        self._manipulation_calibrated = bool(
+            self.get_parameter("manipulation_calibrated").value
+        )
+        self._manipulation_frames_dir = Path(
+            str(self.get_parameter("manipulation_frames_dir").value)
+        )
+        self._manipulation_model_id = str(
+            self.get_parameter("manipulation_model_id").value
+        )
+        self._manipulation_class_schema = str(
+            self.get_parameter("manipulation_class_schema").value
+        )
+        self._arm_service_timeout_sec = max(
+            0.1, float(self.get_parameter("arm_service_timeout_sec").value)
+        )
+        self._precision_release_duration_sec = max(
+            0.5,
+            float(self.get_parameter("precision_release_duration_sec").value),
+        )
+        self._manipulation_perception_timeout_sec = max(
+            0.05,
+            float(
+                self.get_parameter("manipulation_perception_timeout_sec").value
+            ),
+        )
+        (
+            self._pick_red_tag_ids,
+            self._pick_i2_targets,
+            self._grasp_target_arm_base,
+            self._place_target_distance_m,
+        ) = self._load_manipulation_calibration()
         inspection_start_index = int(
             self.get_parameter("inspection_start_index").value
         )
@@ -299,10 +442,29 @@ class TaskManagerNode(Node):
         self._phase_pub = self.create_publisher(String, phase_topic, 10)
         self._status_pub = self.create_publisher(String, status_topic, 10)
         self._speech_pub = self.create_publisher(String, "/speech/text", 10)
+        self._precision_pub = (
+            self.create_publisher(
+                Twist,
+                str(self.get_parameter("precision_cmd_topic").value),
+                10,
+            )
+            if self._enable_manipulation
+            else None
+        )
 
         # ── 订阅者 ────────────────────────────────
         self._yolo_sub = self.create_subscription(
             String, yolo_topic, self._on_yolo_detections, 10,
+        )
+        self._apriltag_sub = (
+            self.create_subscription(
+                String,
+                str(self.get_parameter("apriltag_topic").value),
+                self._on_apriltag_detections,
+                10,
+            )
+            if self._enable_manipulation
+            else None
         )
         from rclpy.qos import QoSProfile, ReliabilityPolicy
         _best_effort = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
@@ -320,6 +482,10 @@ class TaskManagerNode(Node):
             letter: GaugeInfo(letter=letter) for letter in "ABCD"
         }
         self._latest_yolo: Optional[YoloDetection] = None
+        self._latest_yolo_packet: Dict[str, Any] = {}
+        self._latest_yolo_received_monotonic = 0.0
+        self._latest_apriltag_frame: Optional[FiducialDetectionFrame] = None
+        self._latest_apriltag_received_monotonic = 0.0
         self._slam_tracking_ok: bool = False
         self._slam_status_time: float = 0.0
         self._last_odom_time: float = 0.0
@@ -332,6 +498,17 @@ class TaskManagerNode(Node):
         self._nav_retry_counts: Dict[str, int] = {}
         self._nav_retry_not_before: Dict[str, float] = {}
         self._placement_arrival_time: Optional[float] = None
+        self._pick_arrived = False
+        self._placement_arrived = False
+        self._place_alignment_complete = False
+        self._pick_executor: Optional[PickOneExecutor] = None
+        self._place_executor: Optional[PlaceOneExecutor] = None
+        self._placement_observer: Optional[PlacementObservationBuilder] = None
+        self._precision_zero_until = 0.0
+        self._grasp_future = None
+        self._place_future = None
+        self._grasp_request_started = 0.0
+        self._place_request_started = 0.0
         self._depth_policy = None
         self._depth_mode_client = None
         self._startup_depth_mode = None
@@ -363,6 +540,19 @@ class TaskManagerNode(Node):
             else None
         )
         self._whz_client = self.create_client(Trigger, whz_service)
+        self._grasp_service_type = None
+        self._grasp_client = None
+        self._place_client = None
+        if self._enable_manipulation:
+            from arm_new_interfaces.srv import ExecuteGraspFixed
+
+            self._grasp_service_type = ExecuteGraspFixed
+            self._grasp_client = self.create_client(
+                ExecuteGraspFixed, "/arm/execute_grasp_fixed"
+            )
+            self._place_client = self.create_client(
+                Trigger, "/arm/execute_place_fixed"
+            )
 
         # ── 导航客户端 (Nav2 NavigateToPose) ─────
         waypoint_file = str(self.get_parameter("waypoint_file").value).strip()
@@ -478,12 +668,115 @@ class TaskManagerNode(Node):
             f"| phase2_map_switch={self._enable_phase2_map_switch}"
         )
 
+    def _load_manipulation_calibration(
+        self,
+    ) -> Tuple[Tuple[int, ...], Dict[int, I2Target], Tuple[float, float, float], float]:
+        if not self._enable_manipulation:
+            return (), {}, (0.0, 0.0, 0.0), 0.0
+        if not self._manipulation_calibrated:
+            raise ValueError(
+                "enable_manipulation requires manipulation_calibrated:=true after field acceptance"
+            )
+        if (
+            self._manipulation_model_id != MODEL_ID
+            or self._manipulation_class_schema != CLASS_SCHEMA
+        ):
+            raise ValueError("manipulation model identity does not match the locked A-D model")
+
+        tag_ids = tuple(
+            int(value) for value in self.get_parameter("pick_red_tag_ids").value
+        )
+        if not tag_ids or len(set(tag_ids)) != len(tag_ids) or min(tag_ids) < 0:
+            raise ValueError("pick_red_tag_ids must contain unique non-negative IDs")
+        try:
+            raw_targets = json.loads(
+                str(self.get_parameter("pick_i2_targets_json").value)
+            )
+        except json.JSONDecodeError as exc:
+            raise ValueError("pick_i2_targets_json is invalid JSON") from exc
+        if not isinstance(raw_targets, dict):
+            raise ValueError("pick_i2_targets_json must be an object")
+        targets: Dict[int, I2Target] = {}
+        for tag_id in tag_ids:
+            values = raw_targets.get(str(tag_id))
+            if not isinstance(values, list) or len(values) != 3:
+                raise ValueError("missing calibrated I2 target for tag %d" % tag_id)
+            xyz = tuple(float(value) for value in values)
+            if not all(math.isfinite(value) for value in xyz):
+                raise ValueError("I2 target for tag %d must be finite" % tag_id)
+            targets[tag_id] = I2Target(*xyz)
+        unique_targets = {
+            (round(target.x, 6), round(target.y, 6), round(target.yaw, 6))
+            for target in targets.values()
+        }
+        if len(unique_targets) != len(targets):
+            raise ValueError("I2 targets must be independently calibrated, not duplicated")
+
+        grasp_values = list(self.get_parameter("grasp_target_arm_base").value)
+        if len(grasp_values) != 3:
+            raise ValueError("grasp_target_arm_base must contain x/y/z")
+        grasp_target = tuple(float(value) for value in grasp_values)
+        if not all(math.isfinite(value) for value in grasp_target) or grasp_target[2] <= 0.0:
+            raise ValueError("grasp_target_arm_base must be finite with positive z")
+        place_distance = float(self.get_parameter("place_target_distance_m").value)
+        if not math.isfinite(place_distance) or place_distance <= 0.0:
+            raise ValueError("place_target_distance_m must be field-calibrated")
+        return tag_ids, targets, grasp_target, place_distance
+
+    def _publish_precision_zero(self) -> None:
+        if self._precision_pub is not None:
+            self._precision_pub.publish(Twist())
+
+    def _manipulation_packet_is_fresh(self, received_monotonic: float) -> bool:
+        age = time.monotonic() - float(received_monotonic)
+        return 0.0 <= age <= self._manipulation_perception_timeout_sec
+
+    def _publish_precision_command(self, axis: str, speed: float) -> None:
+        if self._precision_pub is None:
+            raise RuntimeError("precision publisher is unavailable")
+        if not math.isfinite(speed):
+            raise ValueError("precision speed must be finite")
+        message = Twist()
+        if axis in ("x", "dist"):
+            message.linear.x = float(speed)
+        elif axis in ("y", "lat"):
+            message.linear.y = float(speed)
+        elif axis == "yaw":
+            message.angular.z = float(speed)
+        else:
+            raise ValueError("unsupported precision axis: %s" % axis)
+        self._precision_zero_until = 0.0
+        self._precision_pub.publish(message)
+
+    def _request_precision_release(self) -> None:
+        if not self._enable_manipulation:
+            return
+        self._precision_zero_until = max(
+            self._precision_zero_until,
+            time.monotonic() + self._precision_release_duration_sec,
+        )
+        self._publish_precision_zero()
+
+    def _cancel_manipulation(self, cancel_services: bool = False) -> None:
+        self._pick_executor = None
+        self._place_executor = None
+        self._placement_observer = None
+        if cancel_services:
+            for future in (self._grasp_future, self._place_future):
+                if future is not None and not future.done():
+                    future.cancel()
+            self._grasp_future = None
+            self._place_future = None
+        self._request_precision_release()
+
     # ═══════════════════════════════════════════════════════════
     #  状态机主循环
     # ═══════════════════════════════════════════════════════════
 
     def _state_machine_tick(self) -> None:
         """每个 tick 评估当前阶段退出条件，决定是否推进。"""
+        if time.monotonic() < self._precision_zero_until:
+            self._publish_precision_zero()
         elapsed = time.time() - self._phase_enter_time
 
         if self._phase == Phase.START:
@@ -653,8 +946,8 @@ class TaskManagerNode(Node):
             self._abnormal_handled = 0
             if self._inspection_only or self._finish_after_inspection:
                 self._enter_phase(Phase.FINISH)
-            elif not self._allow_placeholder_manipulation:
-                self._abort("mechanical arm feedback is not implemented")
+            elif not self._enable_manipulation:
+                self._abort("production manipulation is disabled")
             else:
                 self._advance_to_next_phase()
             return
@@ -885,7 +1178,7 @@ class TaskManagerNode(Node):
         info.status = reading.status
 
     def _tick_find_red_bar(self, elapsed: float) -> None:
-        """FIND_RED_BAR: 导航到抓取区，寻找并定位红色条。"""
+        """Navigate coarsely, then align one approved red-tag slot to I2."""
         if self._handle_timeout(elapsed):
             return
 
@@ -903,50 +1196,81 @@ class TaskManagerNode(Node):
                 return
             self._grab_depth_transition_complete = True
 
-        # 先导航到抓取区
-        if not self._navigation_retry_ready("find_red_bar:grab_area_approach"):
-            return
-        if not self._nav.goal_sent and not self._nav.is_done():
-            self._nav.navigate_to_waypoint("grab_area_approach")
-
-        if not self._nav.is_done():
-            return
-        if not self._nav.succeeded():
-            self._retry_navigation_or_abort("find_red_bar:grab_area_approach", "抓取区")
-            return
-        self._clear_navigation_retry("find_red_bar:grab_area_approach")
-
-        # 等待 YOLO 检测到红色条
-        if self._latest_yolo and len(self._latest_yolo.red_bars) > 0:
-            bar = self._latest_yolo.red_bars[0]
-            dist = bar.get("distance_m", "?")
-            self.get_logger().info(
-                f"检测到红色条 (距离={dist}m)，进入抓取阶段"
-            )
+        if not self._pick_arrived:
+            retry_key = "find_red_bar:grab_area_approach"
+            if not self._navigation_retry_ready(retry_key):
+                return
+            if not self._nav.goal_sent and not self._nav.is_done():
+                self._nav.navigate_to_waypoint("grab_area_approach")
+            if not self._nav.is_done():
+                return
+            if not self._nav.succeeded():
+                self._retry_navigation_or_abort(retry_key, "抓取区")
+                return
+            self._clear_navigation_retry(retry_key)
             self._nav.reset()
-            self._advance_to_next_phase()
+            self._pick_arrived = True
+            self._request_precision_release()
+
+        if self._pick_executor is None:
+            self._pick_executor = PickOneExecutor(
+                _PickRuntimeAdapter(self),
+                PickConfig(
+                    red_tag_ids=self._pick_red_tag_ids,
+                    i2_targets=self._pick_i2_targets,
+                    stop_after_stage="i2",
+                ),
+            )
+            self._pick_executor.start()
+        result = self._pick_executor.tick()
+        if result is None:
+            return
+        if not result.success or not result.alignment_success:
+            self._abort("pick I2 alignment failed: %s" % result.reason)
+            return
+        self.get_logger().info("抓取位 I2 对齐完成，等待机械臂明确反馈")
+        self._advance_to_next_phase()
 
     def _tick_grasp_bar(self, elapsed: float) -> None:
-        """GRASP_BAR: 等待抓取完成。"""
+        """Call the arm grasp service asynchronously and fail closed."""
         if self._handle_timeout(elapsed):
             return
-
-        if not self._allow_placeholder_manipulation:
-            self._abort("mechanical arm feedback is not implemented")
+        if self._grasp_client is None or self._grasp_service_type is None:
+            self._abort("grasp service client is unavailable")
             return
-
-        # Bench-only placeholder; production must use explicit arm feedback.
-        if elapsed > 1.0:
-            self.get_logger().info("抓取完成 (占位)，进入放置阶段")
-            self._advance_to_next_phase()
+        if self._grasp_request_started == 0.0:
+            self._grasp_request_started = time.monotonic()
+        if self._grasp_future is None:
+            if not self._grasp_client.service_is_ready():
+                if time.monotonic() - self._grasp_request_started > self._arm_service_timeout_sec:
+                    self._abort("grasp service did not become ready")
+                return
+            request = self._grasp_service_type.Request()
+            target = request.target_arm_base
+            target.x, target.y, target.z = self._grasp_target_arm_base
+            self._grasp_future = self._grasp_client.call_async(request)
+            self._grasp_request_started = time.monotonic()
+            return
+        if not self._grasp_future.done():
+            if time.monotonic() - self._grasp_request_started > self._arm_service_timeout_sec:
+                self._grasp_future.cancel()
+                self._abort("grasp service timed out")
+            return
+        try:
+            response = self._grasp_future.result()
+        except Exception as exc:  # noqa: BLE001
+            self._abort("grasp service failed: %s" % exc)
+            return
+        if response is None or not response.success:
+            message = "empty response" if response is None else response.message
+            self._abort("grasp rejected: %s" % message)
+            return
+        self.get_logger().info("机械臂抓取成功: %s" % response.message)
+        self._advance_to_next_phase()
 
     def _tick_place_to_abnormal_zone(self, elapsed: float) -> None:
-        """PLACE_TO_ABNORMAL_ZONE: 导航到当前异常区域放置纸箱。"""
+        """Navigate, align to the selected A-D face, then request arm place."""
         if self._handle_timeout(elapsed):
-            return
-
-        if not self._allow_placeholder_manipulation:
-            self._abort("mechanical arm feedback is not implemented")
             return
 
         if self._abnormal_handled >= len(self._abnormal_zones):
@@ -956,41 +1280,88 @@ class TaskManagerNode(Node):
 
         current_zone = self._abnormal_zones[self._abnormal_handled]
 
-        # 导航到对应放置区
-        retry_key = "placement:%s" % current_zone
-        if not self._navigation_retry_ready(retry_key):
-            return
-        if not self._nav.goal_sent and not self._nav.is_done():
-            target = f"placement_{current_zone}_approach"
-            self._nav.navigate_to_waypoint(target)
+        if not self._placement_arrived:
+            retry_key = "placement:%s" % current_zone
+            if not self._navigation_retry_ready(retry_key):
+                return
+            if not self._nav.goal_sent and not self._nav.is_done():
+                self._nav.navigate_to_waypoint(f"placement_{current_zone}_approach")
+            if not self._nav.is_done():
+                return
+            if not self._nav.succeeded():
+                self._retry_navigation_or_abort(retry_key, "%s放置区" % current_zone)
+                return
+            self._clear_navigation_retry(retry_key)
+            self._nav.reset()
+            self._placement_arrived = True
+            self._request_precision_release()
 
-        if not self._nav.is_done():
-            return
-        if not self._nav.succeeded():
-            self._retry_navigation_or_abort(
-                retry_key,
-                "%s放置区" % current_zone,
-            )
-            return
-        self._clear_navigation_retry(retry_key)
-        if self._placement_arrival_time is None:
-            self._placement_arrival_time = time.monotonic()
+        if not self._place_alignment_complete:
+            if self._place_executor is None:
+                self._placement_observer = PlacementObservationBuilder(
+                    PlacementObservationConfig(
+                        frames_dir=self._manipulation_frames_dir,
+                        target_letter=current_zone,
+                        max_frame_age_s=self._manipulation_perception_timeout_sec,
+                    ),
+                    _YoloLetterProvider(self),
+                )
+                self._place_executor = PlaceOneExecutor(
+                    _PlaceRuntimeAdapter(self),
+                    PlaceConfig(
+                        target_letter=current_zone,
+                        target_distance_m=self._place_target_distance_m,
+                        stop_after_stage="aligned",
+                    ),
+                )
+                self._place_executor.start()
+            result = self._place_executor.tick()
+            if result is None:
+                return
+            if not result.success or not result.alignment_success:
+                self._abort("place alignment failed: %s" % result.reason)
+                return
+            self._place_alignment_complete = True
+            self._place_executor = None
+            self._placement_observer = None
+            self._place_request_started = time.monotonic()
+            self._request_precision_release()
 
-        # Bench-only placeholder; production must use explicit arm feedback.
-        if time.monotonic() - self._placement_arrival_time > 1.0:
-            self._abnormal_handled += 1
-            remaining = len(self._abnormal_zones) - self._abnormal_handled
-            self.get_logger().info(
-                f"{current_zone}区放置完成 ({self._abnormal_handled}/{len(self._abnormal_zones)})"
-                + (f"，剩余 {remaining} 趟" if remaining > 0 else "，全部完成！")
-            )
-            self._placement_arrival_time = None
-            if remaining > 0:
-                # 折返：回到抓取区取下一个红色块
-                self._nav.reset()
-                self._enter_phase(Phase.FIND_RED_BAR)
-            else:
-                self._advance_to_next_phase()
+        if self._place_client is None:
+            self._abort("place service client is unavailable")
+            return
+        if self._place_future is None:
+            if not self._place_client.service_is_ready():
+                if time.monotonic() - self._place_request_started > self._arm_service_timeout_sec:
+                    self._abort("place service did not become ready")
+                return
+            self._place_future = self._place_client.call_async(Trigger.Request())
+            self._place_request_started = time.monotonic()
+            return
+        if not self._place_future.done():
+            if time.monotonic() - self._place_request_started > self._arm_service_timeout_sec:
+                self._place_future.cancel()
+                self._abort("place service timed out")
+            return
+        try:
+            response = self._place_future.result()
+        except Exception as exc:  # noqa: BLE001
+            self._abort("place service failed: %s" % exc)
+            return
+        if response is None or not response.success:
+            message = "empty response" if response is None else response.message
+            self._abort("place rejected: %s" % message)
+            return
+        self._abnormal_handled += 1
+        remaining = len(self._abnormal_zones) - self._abnormal_handled
+        self.get_logger().info(
+            f"{current_zone}区放置完成 ({self._abnormal_handled}/{len(self._abnormal_zones)})"
+            + (f"，剩余 {remaining} 趟" if remaining > 0 else "，全部完成！")
+        )
+        if remaining > 0:
+            self._enter_phase(Phase.FIND_RED_BAR)
+        else:
+            self._advance_to_next_phase()
 
     # ═══════════════════════════════════════════════════════════
     #  阶段推进
@@ -1177,12 +1548,25 @@ class TaskManagerNode(Node):
     def _enter_phase(self, phase: Phase) -> None:
         """进入新阶段，执行入口动作并发布状态。"""
         self._pass_obstacle_waypoint_timeout.reset()
+        self._cancel_manipulation(cancel_services=phase in (Phase.FINISH, Phase.ABORT))
         if phase == Phase.ABORT:
             if self._nav.goal_sent:
                 self._nav.cancel()
             self._inspection_future = None
+        if phase == Phase.FIND_RED_BAR:
+            self._pick_arrived = False
+            self._pick_executor = None
+            self._grasp_future = None
+            self._grasp_request_started = 0.0
+        if phase == Phase.GRASP_BAR:
+            self._grasp_future = None
+            self._grasp_request_started = 0.0
         if phase == Phase.PLACE_TO_ABNORMAL_ZONE:
             self._placement_arrival_time = None
+            self._placement_arrived = False
+            self._place_alignment_complete = False
+            self._place_future = None
+            self._place_request_started = 0.0
         self._phase = phase
         self._phase_enter_time = time.time()
 
@@ -1268,26 +1652,50 @@ class TaskManagerNode(Node):
             self.get_logger().warn(f"yolo/detections JSON 解析失败: {exc}")
             return
 
+        if self._enable_manipulation and (
+            data.get("model_id") != self._manipulation_model_id
+            or data.get("class_schema") != self._manipulation_class_schema
+        ):
+            self.get_logger().warn(
+                "Dropped YOLO packet with unexpected model identity",
+                throttle_duration_sec=2.0,
+            )
+            return
         detections = data.get("detections", [])
+        if not isinstance(detections, list):
+            self.get_logger().warn("yolo/detections must contain a detections array")
+            return
         detection = YoloDetection(
             timestamp=time.time(),
         )
 
         for d in detections:
+            if not isinstance(d, dict):
+                continue
             class_name = d.get("class_name", "")
-            class_id = d.get("class_id", -1)
 
-            if class_name == "gauge" or class_id == 0:
+            if class_name == "gauge":
                 detection.gauges.append(d)
-            elif class_name in ("A", "B", "C", "D") or class_id in (1, 2, 3, 4):
-                letter = class_name if class_name in "ABCD" else {1: "A", 2: "B", 3: "C", 4: "D"}.get(class_id, "?")
-                detection.letters.setdefault(letter, []).append(d)
-            elif class_name == "red_bar" or class_id == 5:
+            elif class_name in ("A", "B", "C", "D"):
+                detection.letters.setdefault(class_name, []).append(d)
+            elif class_name in ("red", "red_bar"):
                 detection.red_bars.append(d)
-            elif class_name == "green_bar" or class_id == 6:
+            elif class_name in ("green", "green_bar"):
                 detection.green_bars.append(d)
 
         self._latest_yolo = detection
+        self._latest_yolo_packet = data
+        self._latest_yolo_received_monotonic = time.monotonic()
+
+    def _on_apriltag_detections(self, msg: String) -> None:
+        try:
+            self._latest_apriltag_frame = parse_fiducial_frame(json.loads(msg.data))
+            self._latest_apriltag_received_monotonic = time.monotonic()
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            self.get_logger().warn(
+                "Dropped invalid AprilTag frame: %s" % exc,
+                throttle_duration_sec=2.0,
+            )
 
     def _on_slam_status(self, msg: String) -> None:
         """解析 /visual_slam/status，追踪定位状态。"""
@@ -1464,6 +1872,7 @@ class TaskManagerNode(Node):
 
     def destroy_node(self) -> bool:
         self.get_logger().info("Task Manager 关闭中...")
+        self._cancel_manipulation(cancel_services=True)
         if self._nav.goal_sent:
             self._nav.cancel()
         self._inspection_future = None

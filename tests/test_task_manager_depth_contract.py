@@ -140,19 +140,26 @@ class TaskManagerDepthContractTests(unittest.TestCase):
             self.source,
         )
 
-    def test_phase113_stops_after_inspection_and_rejects_placeholders(self):
+    def test_inspection_route_stays_compatible_and_manipulation_is_opt_in(self):
         for token in (
             'declare_parameter("finish_after_inspection", False)',
             'declare_parameter("allow_placeholder_manipulation", False)',
+            'declare_parameter("enable_manipulation", False)',
+            'declare_parameter("manipulation_calibrated", False)',
             "if self._inspection_only or self._finish_after_inspection:",
-            "elif not self._allow_placeholder_manipulation:",
-            'self._abort("mechanical arm feedback is not implemented")',
+            "elif not self._enable_manipulation:",
+            'self._abort("production manipulation is disabled")',
             'declare_parameter("pass_obstacle_timeout_sec", 180.0)',
             'declare_parameter("pass_obstacle_waypoint_timeout_sec", 120.0)',
             'declare_parameter("inspection_timeout_sec", 300.0)',
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.source)
+
+        self.assertNotIn(
+            'self._abort("mechanical arm feedback is not implemented")',
+            self.source,
+        )
 
     def test_pass_obstacle_uses_per_waypoint_and_aggregate_timeouts(self):
         launch_source = COMPETITION_LAUNCH.read_text(encoding="utf-8")

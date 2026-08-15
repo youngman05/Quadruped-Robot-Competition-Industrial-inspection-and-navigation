@@ -44,6 +44,7 @@ InstanceSegmentation/**/*.onnx
 InstanceSegmentation/**/*.engine
 InstanceSegmentation/**/*.trt
 InstanceSegmentation/**/*.weights
+!InstanceSegmentation/projects/gauge/model/best.pt
 
 # Media
 *.mp4

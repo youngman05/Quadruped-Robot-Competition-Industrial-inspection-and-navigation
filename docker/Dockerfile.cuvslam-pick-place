@@ -1,0 +1,51 @@
+ARG BASE_IMAGE=isaac_ros_cuvslam_runtime:humble-rs-cone
+FROM ${BASE_IMAGE}
+
+ARG TORCH_WHEEL_URL
+ARG TORCH_WHEEL_SHA256
+ARG TORCHVISION_WHEEL_URL
+ARG TORCHVISION_WHEEL_SHA256
+
+LABEL org.opencontainers.image.title="D455 cuVSLAM cone pick-place runtime" \
+      org.opencontainers.image.base.name="isaac_ros_cuvslam_runtime:humble-rs-cone" \
+      org.quadruped.pick_place.torch="2.0.0+nv23.5" \
+      org.quadruped.pick_place.torchvision="0.15.1" \
+      org.quadruped.pick_place.ultralytics="8.2.103" \
+      org.quadruped.pick_place.model_sha256="3ed76de727a87be8d64cc3b259bf2b0ec39daaaa3fac1f3f97af249824abc648"
+
+RUN test -n "${TORCH_WHEEL_URL}" \
+ && test -n "${TORCH_WHEEL_SHA256}" \
+ && test -n "${TORCHVISION_WHEEL_URL}" \
+ && test -n "${TORCHVISION_WHEEL_SHA256}" \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl python3-pip \
+ && rm -rf /var/lib/apt/lists/* \
+ && curl --fail --location --retry 3 "${TORCH_WHEEL_URL}" -o /tmp/torch.whl \
+ && curl --fail --location --retry 3 "${TORCHVISION_WHEEL_URL}" -o /tmp/torchvision.whl \
+ && echo "${TORCH_WHEEL_SHA256}  /tmp/torch.whl" | sha256sum --check --strict \
+ && echo "${TORCHVISION_WHEEL_SHA256}  /tmp/torchvision.whl" | sha256sum --check --strict \
+ && python3 -m pip uninstall -y torch torchvision ultralytics \
+ && python3 -m pip install --no-cache-dir /tmp/torch.whl /tmp/torchvision.whl \
+ && rm -f /tmp/torch.whl /tmp/torchvision.whl
+
+COPY docker/d455_perception/requirements.lock /tmp/pick_place_requirements.lock
+RUN python3 -m pip install --no-cache-dir --no-deps -r /tmp/pick_place_requirements.lock \
+ && if ! python3 -m pip check > /tmp/pick_place_pip_check.txt 2>&1; then \
+      if grep -v 'requires opencv-python' /tmp/pick_place_pip_check.txt | grep -q .; then \
+        cat /tmp/pick_place_pip_check.txt; exit 1; \
+      fi; \
+    fi \
+ && rm -f /tmp/pick_place_pip_check.txt \
+ && rm -f /tmp/pick_place_requirements.lock
+
+COPY docker/d455_perception/ /opt/quadruped/perception/bin/
+COPY src/nodes/perception/yolo_udp_bridge_core.py \
+     /opt/quadruped/perception/bin/yolo_udp_bridge_core.py
+COPY InstanceSegmentation/projects/gauge/model/best.pt \
+     /opt/quadruped/perception/models/gauge_ad_best.pt
+
+RUN chmod +x \
+      /opt/quadruped/perception/bin/run_apriltag_pose_node.sh \
+      /opt/quadruped/perception/bin/run_yolo_3d_node.sh \
+ && PYTHONPATH=/opt/quadruped/perception/bin \
+      python3 /opt/quadruped/perception/bin/verify_runtime.py

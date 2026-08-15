@@ -1,0 +1,19 @@
+task_manager_node:
+  ros__parameters:
+    # Fail closed until the field calibration and segmented acceptance are done.
+    enable_manipulation: false
+    manipulation_calibrated: false
+    manipulation_model_id: gauge-ad-3ed76de7-v1
+    manipulation_class_schema: competition-ad-red-green-v1
+
+    # Replace these values in an explicitly selected calibrated override file.
+    pick_red_tag_ids: [0, 1]
+    pick_i2_targets_json: "{}"
+    grasp_target_arm_base: []
+    place_target_distance_m: 0.0
+
+    apriltag_topic: /apriltag/detections_base
+    precision_cmd_topic: /cmd_vel_precision
+    arm_service_timeout_sec: 30.0
+    precision_release_duration_sec: 0.6
+    manipulation_perception_timeout_sec: 0.5

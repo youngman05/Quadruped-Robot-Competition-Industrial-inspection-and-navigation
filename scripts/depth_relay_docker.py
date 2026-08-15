@@ -100,7 +100,7 @@ class DepthRelayController(Node):
         self.pending_parameter_request = None
         self.pending_parameter_started_ns = 0
         self.pending_parameter_names = []
-        self.pending_parameter_enabled = False
+        self.pending_parameter_values = {}
         self.parameter_set_client = None
         self.parameter_get_client = None
         self.depth_enabled = False
@@ -274,21 +274,21 @@ class DepthRelayController(Node):
         ):
             self._fault("RealSense parameter service unavailable")
             return
-        enabled = desired.requires_depth
-        names = [self.args.enable_depth_parameter]
+        parameter_values = {
+            self.args.enable_depth_parameter: desired.requires_depth,
+        }
         if self.args.manage_cone_pipeline_parameters:
-            names.extend(
-                [
-                    self.args.pointcloud_enable_parameter,
-                    self.args.decimation_enable_parameter,
-                ]
-            )
+            cone_pipeline_enabled = desired == DepthMode.AVOIDANCE
+            parameter_values[self.args.pointcloud_enable_parameter] = cone_pipeline_enabled
+            parameter_values[self.args.decimation_enable_parameter] = cone_pipeline_enabled
+        names = list(parameter_values)
         parameters = [
-            Parameter(name, Parameter.Type.BOOL, enabled) for name in names
+            Parameter(name, Parameter.Type.BOOL, parameter_values[name])
+            for name in names
         ]
         self.pending_parameter_request = (desired, request["request_id"])
         self.pending_parameter_names = names
-        self.pending_parameter_enabled = enabled
+        self.pending_parameter_values = parameter_values
         set_request = SetParameters.Request()
         set_request.parameters = [
             parameter.to_parameter_msg() for parameter in parameters
@@ -315,6 +315,7 @@ class DepthRelayController(Node):
                 self.pending_parameter_request = None
                 self.pending_parameter_started_ns = 0
                 self.pending_parameter_names = []
+                self.pending_parameter_values = {}
                 self._fault("RealSense resource parameter transition timed out")
             return
         if set_future is not None:
@@ -338,6 +339,7 @@ class DepthRelayController(Node):
                 self.pending_parameter_request = None
                 self.pending_parameter_started_ns = 0
                 self.pending_parameter_names = []
+                self.pending_parameter_values = {}
                 self._fault("resource parameter transition failed: %s" % exc)
                 return
         desired, request_id = self.pending_parameter_request
@@ -350,7 +352,7 @@ class DepthRelayController(Node):
             mismatched = [
                 name
                 for name, value in zip(self.pending_parameter_names, values)
-                if bool(value.bool_value) != self.pending_parameter_enabled
+                if bool(value.bool_value) != self.pending_parameter_values[name]
             ]
             if mismatched:
                 raise RuntimeError(
@@ -360,11 +362,13 @@ class DepthRelayController(Node):
             self.pending_parameter_request = None
             self.pending_parameter_started_ns = 0
             self.pending_parameter_names = []
+            self.pending_parameter_values = {}
             self._fault("resource parameter verification failed: %s" % exc)
             return
         self.pending_parameter_request = None
         self.pending_parameter_started_ns = 0
         self.pending_parameter_names = []
+        self.pending_parameter_values = {}
         self.depth_enabled = desired.requires_depth
         if (
             desired == DepthMode.DISABLED

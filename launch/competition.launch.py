@@ -46,6 +46,19 @@ def generate_launch_description() -> LaunchDescription:
     enable_depth_pipeline = LaunchConfiguration("enable_depth_pipeline", default="false")
     enable_cone_avoidance = LaunchConfiguration("enable_cone_avoidance", default="false")
     enable_cone_mode_control = LaunchConfiguration("enable_cone_mode_control", default="false")
+    enable_apriltag_bridge = LaunchConfiguration(
+        "enable_apriltag_bridge", default="false"
+    )
+    enable_yolo_udp_bridge = LaunchConfiguration(
+        "enable_yolo_udp_bridge", default="false"
+    )
+    enable_arm_motion = LaunchConfiguration("enable_arm_motion", default="false")
+    enable_manipulation = LaunchConfiguration("enable_manipulation", default="false")
+    manipulation_calibrated = LaunchConfiguration(
+        "manipulation_calibrated", default="false"
+    )
+    manipulation_params_file = LaunchConfiguration("manipulation_params_file")
+    arm_motion_params_file = LaunchConfiguration("arm_motion_params_file")
     verify_depth_disable_localization = LaunchConfiguration(
         "verify_depth_disable_localization",
         default="true",
@@ -137,6 +150,45 @@ def generate_launch_description() -> LaunchDescription:
         "enable_cone_mode_control",
         default_value="false",
         description="越障后动态关闭 D455 depth、锥桶 costmap 与扫描安全门。",
+    )
+    declare_enable_apriltag_bridge = DeclareLaunchArgument(
+        "enable_apriltag_bridge",
+        default_value="false",
+        description="启动 Host AprilTag UDP bridge（Docker UDP 19003）。",
+    )
+    declare_enable_yolo_udp_bridge = DeclareLaunchArgument(
+        "enable_yolo_udp_bridge",
+        default_value="false",
+        description="启动 Host D455 YOLO UDP bridge（Docker UDP 19004）。",
+    )
+    declare_enable_arm_motion = DeclareLaunchArgument(
+        "enable_arm_motion",
+        default_value="false",
+        description="启动机械臂服务节点；运动授权仍由独立参数文件控制。",
+    )
+    declare_enable_manipulation = DeclareLaunchArgument(
+        "enable_manipulation",
+        default_value="false",
+        description="启用 TaskManager 抓取、放置和精对齐正式实现。",
+    )
+    declare_manipulation_calibrated = DeclareLaunchArgument(
+        "manipulation_calibrated",
+        default_value="false",
+        description="仅在 AprilTag/I2/抓取/放置标定和分段验收后设为 true。",
+    )
+    declare_manipulation_params_file = DeclareLaunchArgument(
+        "manipulation_params_file",
+        default_value=str(
+            PROJECT_ROOT / "configs" / "manipulation" / "pick_place.yaml"
+        ),
+        description="TaskManager 抓放标定参数文件。",
+    )
+    declare_arm_motion_params_file = DeclareLaunchArgument(
+        "arm_motion_params_file",
+        default_value=PathJoinSubstitution([
+            FindPackageShare("arm_new_ros"), "config", "arm_motion_params.yaml",
+        ]),
+        description="机械臂服务参数文件。",
     )
     declare_verify_depth_disable_localization = DeclareLaunchArgument(
         "verify_depth_disable_localization",
@@ -281,6 +333,7 @@ def generate_launch_description() -> LaunchDescription:
         name="task_manager_node",
         parameters=[
             str(PARAMS_FILE),
+            manipulation_params_file,
             {
                 "auto_advance": auto_advance,
                 "mission_start_armed": ParameterValue(
@@ -296,6 +349,13 @@ def generate_launch_description() -> LaunchDescription:
                 "allow_placeholder_manipulation": ParameterValue(
                     allow_placeholder_manipulation, value_type=bool
                 ),
+                "enable_manipulation": ParameterValue(
+                    enable_manipulation, value_type=bool
+                ),
+                "manipulation_calibrated": ParameterValue(
+                    manipulation_calibrated, value_type=bool
+                ),
+                "manipulation_frames_dir": depth_frames_dir,
                 "pass_obstacle_timeout_sec": ParameterValue(
                     pass_obstacle_timeout_sec, value_type=float
                 ),
@@ -393,8 +453,9 @@ def generate_launch_description() -> LaunchDescription:
         ],
         output="screen",
         condition=IfCondition(PythonExpression([
-            "'", enable_navigation, "' == 'true' and '",
-            enable_cone_avoidance, "' != 'true'",
+            "'", enable_navigation, "' == 'true' and ('",
+            enable_cone_avoidance, "' != 'true' or '",
+            enable_manipulation, "' == 'true')",
         ])),
     )
 
@@ -404,6 +465,31 @@ def generate_launch_description() -> LaunchDescription:
         name="d455_depth_publisher",
         output="screen",
         condition=IfCondition(enable_depth_publisher),
+    )
+
+    apriltag_bridge_node = Node(
+        package="quadruped_robot_competition",
+        executable="apriltag_udp_bridge",
+        name="apriltag_udp_bridge_node",
+        output="screen",
+        condition=IfCondition(enable_apriltag_bridge),
+    )
+
+    yolo_udp_bridge_node = Node(
+        package="quadruped_robot_competition",
+        executable="yolo_udp_bridge",
+        name="yolo_udp_bridge_node",
+        output="screen",
+        condition=IfCondition(enable_yolo_udp_bridge),
+    )
+
+    arm_motion_node = Node(
+        package="arm_new_ros",
+        executable="arm_motion_node",
+        name="arm_motion_node",
+        parameters=[arm_motion_params_file],
+        output="screen",
+        condition=IfCondition(enable_arm_motion),
     )
 
     # Optional fallback bridge. The preferred dog path remains Nav2 /cmd_vel
@@ -453,6 +539,10 @@ def generate_launch_description() -> LaunchDescription:
             "║ depth_publisher  : ", enable_depth_publisher, "  ║\n",
             "║ depth_pipeline   : ", enable_depth_pipeline, "  ║\n",
             "║ cone_avoidance   : ", enable_cone_avoidance, "  ║\n",
+            "║ AprilTag bridge  : ", enable_apriltag_bridge, "  ║\n",
+            "║ YOLO UDP bridge  : ", enable_yolo_udp_bridge, "  ║\n",
+            "║ arm motion       : ", enable_arm_motion, "  ║\n",
+            "║ manipulation     : ", enable_manipulation, "  ║\n",
             "║ whz_inspection   : ", enable_whz, "  ║\n",
             "╚════════════════════════════════════════╝\n",
         ]
@@ -471,6 +561,13 @@ def generate_launch_description() -> LaunchDescription:
         declare_depth_frames_dir,
         declare_enable_cone_avoidance,
         declare_enable_cone_mode_control,
+        declare_enable_apriltag_bridge,
+        declare_enable_yolo_udp_bridge,
+        declare_enable_arm_motion,
+        declare_enable_manipulation,
+        declare_manipulation_calibrated,
+        declare_manipulation_params_file,
+        declare_arm_motion_params_file,
         declare_verify_depth_disable_localization,
         declare_cone_params_file,
         declare_enable_whz,
@@ -503,6 +600,9 @@ def generate_launch_description() -> LaunchDescription:
         global_pose_node,
         base_to_camera_tf,
         depth_pub_node,
+        apriltag_bridge_node,
+        yolo_udp_bridge_node,
+        arm_motion_node,
         cmd_vel_bridge_node,
         navigation_launch,
     ])

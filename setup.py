@@ -18,6 +18,10 @@ setup(
             "share/" + package_name + "/configs/navigation",
             glob("configs/navigation/*.yaml") + glob("configs/navigation/*.xml"),
         ),
+        (
+            "share/" + package_name + "/configs/manipulation",
+            glob("configs/manipulation/*.yaml"),
+        ),
         ("share/" + package_name + "/configs/ros", glob("configs/ros/*")),
         ("share/" + package_name + "/navi/map", glob("navi/map/*.pgm") + glob("navi/map/*.yaml")),
     ],
@@ -29,6 +33,8 @@ setup(
             "yolo_detect_publisher = nodes.perception.yolo_detect_publisher:main",
             "color_image_publisher = nodes.perception.color_image_publisher:main",
             "yolo_image_server = nodes.perception.yolo_image_server:main",
+            "apriltag_udp_bridge = nodes.perception.apriltag_udp_bridge:main",
+            "yolo_udp_bridge = nodes.perception.yolo_udp_bridge:main",
             # ── 决策层 ──────────────────────────
             "task_manager = nodes.decision.task_manager:main",
             # "speech_publisher = nodes.decision.speech:main",

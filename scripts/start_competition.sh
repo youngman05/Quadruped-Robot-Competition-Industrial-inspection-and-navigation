@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================
 #  四足机器人竞赛 — 鲁棒一键启动
-#  用法: bash scripts/start_competition.sh [--dog] [--cmd-vel-bridge] [--prepare-lite3-motion] [--yolo] [--whz] [--task-manager] [--cone-to-whz-l6] [--auto-advance] [--camera-relay] [--depth-relay] [--depth-pipeline] [--cone-avoidance] [--skip-depth-disable-health-check]
+#  用法: bash scripts/start_competition.sh [--dog] [--cmd-vel-bridge] [--prepare-lite3-motion] [--yolo] [--whz] [--task-manager] [--cone-to-whz-l6] [--pick-place-l6] [--auto-advance] [--camera-relay] [--depth-relay] [--depth-pipeline] [--cone-avoidance] [--skip-depth-disable-health-check]
 # ==============================================
 # 注意: 不用 set -e，每个步骤自行容错
 
@@ -58,9 +58,14 @@ ENABLE_CAMERA_RELAY=false; ENABLE_DEPTH_RELAY=false
 ENABLE_DEPTH_PIPELINE=false
 ENABLE_CONE_AVOIDANCE=false
 ENABLE_CONE_MODE_CONTROL=false
+ENABLE_APRILTAG_BRIDGE=false
+ENABLE_YOLO_3D_BRIDGE=false
+ENABLE_ARM_MOTION=false
+ENABLE_MANIPULATION=false
 VERIFY_DEPTH_DISABLE_LOCALIZATION=true
 ENABLE_TASK_MANAGER=false; AUTO_ADVANCE=false; DO_STAND=false
 CONE_TO_WHZ_L6=false
+PICK_PLACE_L6=false
 PURE_L6_START="${PURE_L6_START:-false}"
 for arg in "$@"; do
     case $arg in
@@ -72,6 +77,7 @@ for arg in "$@"; do
         --prepare-lite3-motion) PREPARE_LITE3_MOTION=true ;;
         --task-manager|--mission) ENABLE_TASK_MANAGER=true ;;
         --cone-to-whz-l6) CONE_TO_WHZ_L6=true ;;
+        --pick-place-l6) PICK_PLACE_L6=true; CONE_TO_WHZ_L6=true ;;
         --auto-advance) ENABLE_TASK_MANAGER=true; AUTO_ADVANCE=true ;;
         --camera-relay) ENABLE_CAMERA_RELAY=true ;;
         --depth-relay) ENABLE_DEPTH_RELAY=true ;;
@@ -94,6 +100,13 @@ TASK_MISSION_START_ARMED="${TASK_MISSION_START_ARMED:-true}"
 TASK_WAYPOINT_FILE="${TASK_WAYPOINT_FILE:-}"
 TASK_WAYPOINT_ROUTE="${TASK_WAYPOINT_ROUTE:-inspection_interleaved}"
 TASK_EXPECTED_MAP_ID="${TASK_EXPECTED_MAP_ID:-}"
+TASK_MANIPULATION_CALIBRATED="${TASK_MANIPULATION_CALIBRATED:-false}"
+TASK_MANIPULATION_PARAMS_FILE="${TASK_MANIPULATION_PARAMS_FILE:-$PROJECT_ROOT/configs/manipulation/pick_place.yaml}"
+ARM_MOTION_PARAMS_FILE="${ARM_MOTION_PARAMS_FILE:-$PROJECT_ROOT/arm_new/config/arm_motion_params.yaml}"
+PICK_PLACE_CALIBRATION_APPROVED="${PICK_PLACE_CALIBRATION_APPROVED:-false}"
+APRILTAG_TAG_IDS="${APRILTAG_TAG_IDS:-}"
+APRILTAG_TAG_SIZE_M="${APRILTAG_TAG_SIZE_M:-}"
+DEPTH_SHARED_DIR="${DEPTH_SHARED_DIR:-$HOME/workspaces/isaac_ros-dev/camera_frames}"
 
 if $CONE_TO_WHZ_L6; then
     ENABLE_CONE_AVOIDANCE=true
@@ -101,7 +114,11 @@ if $CONE_TO_WHZ_L6; then
     ENABLE_WHZ=true
     TASK_MAX_NAV_RETRIES=0
     TASK_MAX_INSPECTION_RETRIES=0
-    TASK_FINISH_AFTER_INSPECTION=true
+    if $PICK_PLACE_L6; then
+        TASK_FINISH_AFTER_INSPECTION=false
+    else
+        TASK_FINISH_AFTER_INSPECTION=true
+    fi
     TASK_ALLOW_PLACEHOLDER_MANIPULATION=false
     if $PURE_L6_START; then
         TASK_MISSION_START_ARMED=true
@@ -109,6 +126,15 @@ if $CONE_TO_WHZ_L6; then
         TASK_MISSION_START_ARMED=false
     fi
     TASK_WAYPOINT_FILE="${TASK_WAYPOINT_FILE:-$PROJECT_ROOT/configs/navigation/waypoints_real.yaml}"
+fi
+
+if $PICK_PLACE_L6; then
+    ENABLE_CAMERA_RELAY=true
+    ENABLE_APRILTAG_BRIDGE=true
+    ENABLE_YOLO_3D_BRIDGE=true
+    ENABLE_ARM_MOTION=true
+    ENABLE_MANIPULATION=true
+    ENABLE_DEPTH_RELAY=true
 fi
 
 if $ENABLE_CONE_AVOIDANCE && $ENABLE_TASK_MANAGER; then
@@ -125,7 +151,7 @@ echo ''
 echo '==================================='
 echo ' 四足机器人竞赛系统 v2 — 鲁棒启动'
 echo '==================================='
-echo " DOG=$ENABLE_DOG  CMD_VEL_BRIDGE=$ENABLE_CMD_VEL_BRIDGE  BRIDGE_INIT_DOG=$ENABLE_CMD_VEL_BRIDGE_INIT  PREPARE_LITE3_MOTION=$PREPARE_LITE3_MOTION  YOLO=$ENABLE_YOLO  WHZ=$ENABLE_WHZ  CAMERA_RELAY=$ENABLE_CAMERA_RELAY  DEPTH_RELAY=$ENABLE_DEPTH_RELAY  DEPTH_PIPELINE=$ENABLE_DEPTH_PIPELINE  CONE_AVOIDANCE=$ENABLE_CONE_AVOIDANCE  CONE_MODE_CONTROL=$ENABLE_CONE_MODE_CONTROL  VERIFY_DEPTH_DISABLE_LOCALIZATION=$VERIFY_DEPTH_DISABLE_LOCALIZATION  TASK_MANAGER=$ENABLE_TASK_MANAGER  AUTO_ADVANCE=$AUTO_ADVANCE  CONE_TO_WHZ_L6=$CONE_TO_WHZ_L6"
+echo " DOG=$ENABLE_DOG  CMD_VEL_BRIDGE=$ENABLE_CMD_VEL_BRIDGE  BRIDGE_INIT_DOG=$ENABLE_CMD_VEL_BRIDGE_INIT  PREPARE_LITE3_MOTION=$PREPARE_LITE3_MOTION  YOLO=$ENABLE_YOLO  WHZ=$ENABLE_WHZ  CAMERA_RELAY=$ENABLE_CAMERA_RELAY  DEPTH_RELAY=$ENABLE_DEPTH_RELAY  DEPTH_PIPELINE=$ENABLE_DEPTH_PIPELINE  CONE_AVOIDANCE=$ENABLE_CONE_AVOIDANCE  CONE_MODE_CONTROL=$ENABLE_CONE_MODE_CONTROL  APRILTAG_BRIDGE=$ENABLE_APRILTAG_BRIDGE  YOLO_3D_BRIDGE=$ENABLE_YOLO_3D_BRIDGE  ARM_MOTION=$ENABLE_ARM_MOTION  MANIPULATION=$ENABLE_MANIPULATION  VERIFY_DEPTH_DISABLE_LOCALIZATION=$VERIFY_DEPTH_DISABLE_LOCALIZATION  TASK_MANAGER=$ENABLE_TASK_MANAGER  AUTO_ADVANCE=$AUTO_ADVANCE  CONE_TO_WHZ_L6=$CONE_TO_WHZ_L6  PICK_PLACE_L6=$PICK_PLACE_L6"
 
 export CUVSLAM_MOUNT_MODE="${CUVSLAM_MOUNT_MODE:-robot}"
 export CUVSLAM_PROFILE="${CUVSLAM_PROFILE:-custom}"
@@ -173,7 +199,10 @@ if $ENABLE_CONE_AVOIDANCE; then
     echo " Cone Nav2 profile: $CONE_NAV2_PROFILE"
 fi
 CUVSLAM_DOCKER_DOMAIN_ID="${CUVSLAM_DOCKER_DOMAIN_ID:-0}"
-if $ENABLE_CONE_AVOIDANCE; then
+if $PICK_PLACE_L6; then
+    CUVSLAM_DOCKER_DOMAIN_ID="${CONE_DOCKER_ROS_DOMAIN_ID:-42}"
+    export IMAGE="${IMAGE:-isaac_ros_cuvslam_runtime:humble-rs-cone-pick-place}"
+elif $ENABLE_CONE_AVOIDANCE; then
     CUVSLAM_DOCKER_DOMAIN_ID="${CONE_DOCKER_ROS_DOMAIN_ID:-42}"
     export IMAGE="${IMAGE:-isaac_ros_cuvslam_runtime:humble-rs-cone}"
 fi
@@ -196,6 +225,11 @@ snapshot_value "STARTUP_TIMESTAMP" "$STARTUP_TIMESTAMP"
 snapshot_value "CONE_AVOIDANCE" "$ENABLE_CONE_AVOIDANCE"
 snapshot_value "CONE_MODE_CONTROL" "$ENABLE_CONE_MODE_CONTROL"
 snapshot_value "CONE_TO_WHZ_L6" "$CONE_TO_WHZ_L6"
+snapshot_value "PICK_PLACE_L6" "$PICK_PLACE_L6"
+snapshot_value "ENABLE_APRILTAG_BRIDGE" "$ENABLE_APRILTAG_BRIDGE"
+snapshot_value "ENABLE_YOLO_3D_BRIDGE" "$ENABLE_YOLO_3D_BRIDGE"
+snapshot_value "ENABLE_ARM_MOTION" "$ENABLE_ARM_MOTION"
+snapshot_value "ENABLE_MANIPULATION" "$ENABLE_MANIPULATION"
 snapshot_value "VERIFY_DEPTH_DISABLE_LOCALIZATION" "$VERIFY_DEPTH_DISABLE_LOCALIZATION"
 snapshot_value "FOXY_SETUP" "$FOXY_SETUP"
 snapshot_value "CONE_PLUGIN_WS" "$CONE_PLUGIN_WS"
@@ -216,6 +250,11 @@ snapshot_value "TASK_MISSION_START_ARMED" "$TASK_MISSION_START_ARMED"
 snapshot_value "TASK_WAYPOINT_FILE" "$TASK_WAYPOINT_FILE"
 snapshot_value "TASK_WAYPOINT_ROUTE" "$TASK_WAYPOINT_ROUTE"
 snapshot_value "TASK_EXPECTED_MAP_ID" "$TASK_EXPECTED_MAP_ID"
+snapshot_value "TASK_MANIPULATION_CALIBRATED" "$TASK_MANIPULATION_CALIBRATED"
+snapshot_value "TASK_MANIPULATION_PARAMS_FILE" "$TASK_MANIPULATION_PARAMS_FILE"
+snapshot_value "ARM_MOTION_PARAMS_FILE" "$ARM_MOTION_PARAMS_FILE"
+snapshot_value "DEPTH_SHARED_DIR" "$DEPTH_SHARED_DIR"
+snapshot_value "IMAGE" "${IMAGE:-default}"
 
 [ -f "$FOXY_SETUP" ] || startup_no_go "Foxy setup is missing: $FOXY_SETUP"
 [ -f "$BASE_NAV2_PARAMS_FILE" ] || startup_no_go "base Nav2 params are missing: $BASE_NAV2_PARAMS_FILE"
@@ -264,10 +303,71 @@ source "$NAV2_BT_OVERLAY_SETUP" \
 source "$FORMAL_DEPLOY_SETUP" \
     || startup_no_go "failed to source formal deploy install: $FORMAL_DEPLOY_SETUP"
 
+if $PICK_PLACE_L6; then
+    [ "$PICK_PLACE_CALIBRATION_APPROVED" = "true" ] \
+        || startup_no_go "pick/place calibration is not approved; set PICK_PLACE_CALIBRATION_APPROVED=true only after segmented acceptance"
+    [ "$TASK_MANIPULATION_CALIBRATED" = "true" ] \
+        || startup_no_go "pick/place TaskManager calibration gate is closed"
+    [ -n "$APRILTAG_TAG_IDS" ] \
+        || startup_no_go "APRILTAG_TAG_IDS must be the accepted JSON ID list"
+    [ -n "$APRILTAG_TAG_SIZE_M" ] \
+        || startup_no_go "APRILTAG_TAG_SIZE_M must be the measured black-square side length"
+    TASK_MANIPULATION_PARAMS_FILE="$(readlink -f "$TASK_MANIPULATION_PARAMS_FILE")" \
+        || startup_no_go "cannot resolve manipulation params: $TASK_MANIPULATION_PARAMS_FILE"
+    ARM_MOTION_PARAMS_FILE="$(readlink -f "$ARM_MOTION_PARAMS_FILE")" \
+        || startup_no_go "cannot resolve arm params: $ARM_MOTION_PARAMS_FILE"
+    [ -f "$TASK_MANIPULATION_PARAMS_FILE" ] \
+        || startup_no_go "manipulation params are missing: $TASK_MANIPULATION_PARAMS_FILE"
+    [ -f "$ARM_MOTION_PARAMS_FILE" ] \
+        || startup_no_go "arm params are missing: $ARM_MOTION_PARAMS_FILE"
+    PICK_PLACE_GATE_JSON="$(python3 scripts/pick_place_calibration_gate.py \
+        --task-params "$TASK_MANIPULATION_PARAMS_FILE" \
+        --arm-params "$ARM_MOTION_PARAMS_FILE" \
+        --tag-ids "$APRILTAG_TAG_IDS" \
+        --tag-size-m "$APRILTAG_TAG_SIZE_M")" \
+        || startup_no_go "pick/place calibration parameter gate failed"
+    snapshot_value "pick_place_calibration_gate" "$PICK_PLACE_GATE_JSON"
+
+    MODEL_PATH="$PROJECT_ROOT/InstanceSegmentation/projects/gauge/model/best.pt"
+    [ -f "$MODEL_PATH" ] || startup_no_go "approved A-D model is missing: $MODEL_PATH"
+    MODEL_SHA256="$(sha256sum "$MODEL_PATH" | awk '{print $1}')" \
+        || startup_no_go "cannot hash approved A-D model"
+    [ "$MODEL_SHA256" = "3ed76de727a87be8d64cc3b259bf2b0ec39daaaa3fac1f3f97af249824abc648" ] \
+        || startup_no_go "approved A-D model SHA-256 mismatch: $MODEL_SHA256"
+    snapshot_value "pick_place_model_sha256" "$MODEL_SHA256"
+
+    docker image inspect "$IMAGE" >/dev/null 2>&1 \
+        || startup_no_go "unified pick/place image is missing: $IMAGE"
+    IMAGE_MODEL_SHA="$(docker image inspect --format '{{index .Config.Labels "org.quadruped.pick_place.model_sha256"}}' "$IMAGE" 2>/dev/null)"
+    [ "$IMAGE_MODEL_SHA" = "$MODEL_SHA256" ] \
+        || startup_no_go "unified image model label mismatch: ${IMAGE_MODEL_SHA:-missing}"
+    docker run --rm --runtime nvidia --network none --entrypoint python3 "$IMAGE" \
+        /opt/quadruped/perception/bin/verify_runtime.py \
+        || startup_no_go "unified pick/place image runtime verification failed"
+fi
+
 NAV2_BT_PREFIX="$(ros2 pkg prefix nav2_bt_navigator 2>/dev/null)" \
     || startup_no_go "nav2_bt_navigator package is not resolvable"
 FORMAL_PACKAGE_PREFIX="$(ros2 pkg prefix quadruped_robot_competition 2>/dev/null)" \
     || startup_no_go "quadruped_robot_competition package is not resolvable"
+if $PICK_PLACE_L6; then
+    ARM_PACKAGE_PREFIX="$(ros2 pkg prefix arm_new_ros 2>/dev/null)" \
+        || startup_no_go "arm_new_ros package is not resolvable"
+    ros2 pkg prefix arm_new_interfaces >/dev/null 2>&1 \
+        || startup_no_go "arm_new_interfaces package is not resolvable"
+    ros2 pkg executables quadruped_robot_competition 2>/dev/null \
+        | grep -Fq 'apriltag_udp_bridge' \
+        || startup_no_go "installed AprilTag UDP bridge entry point is missing"
+    ros2 pkg executables quadruped_robot_competition 2>/dev/null \
+        | grep -Fq 'yolo_udp_bridge' \
+        || startup_no_go "installed YOLO UDP bridge entry point is missing"
+    ros2 pkg executables arm_new_ros 2>/dev/null \
+        | grep -Fq 'arm_motion_node' \
+        || startup_no_go "installed arm motion entry point is missing"
+    snapshot_value "arm_new_ros_prefix" "$ARM_PACKAGE_PREFIX"
+    snapshot_value "resolved_manipulation_params_file" "$TASK_MANIPULATION_PARAMS_FILE"
+    snapshot_value "resolved_arm_motion_params_file" "$ARM_MOTION_PARAMS_FILE"
+fi
 NAV2_BT_INSTALL_ROOT="$(cd "$(dirname "$NAV2_BT_OVERLAY_SETUP")" && pwd -P)"
 FORMAL_INSTALL_ROOT="$(cd "$(dirname "$FORMAL_DEPLOY_SETUP")" && pwd -P)"
 case "$NAV2_BT_PREFIX" in
@@ -441,6 +541,16 @@ if [ -z "$CN" ]; then
 else
     echo "  Docker 已在运行: $CN"
 fi
+if $PICK_PLACE_L6; then
+    PICK_PLACE_CONTAINER_COUNT="$(printf '%s\n' "$CN" | sed '/^$/d' | wc -l)"
+    [ "$PICK_PLACE_CONTAINER_COUNT" -eq 1 ] \
+        || startup_no_go "pick/place requires exactly one running cuVSLAM container; found $PICK_PLACE_CONTAINER_COUNT"
+    RUNNING_CUVSLAM_IMAGE="$(docker inspect --format '{{.Config.Image}}' "$CN" 2>/dev/null)" \
+        || startup_no_go "cannot inspect the running cuVSLAM container image"
+    [ "$RUNNING_CUVSLAM_IMAGE" = "$IMAGE" ] \
+        || startup_no_go "running cuVSLAM container uses $RUNNING_CUVSLAM_IMAGE; pick/place requires $IMAGE"
+    snapshot_value "running_cuvslam_image" "$RUNNING_CUVSLAM_IMAGE"
+fi
 if $ENABLE_CONE_AVOIDANCE; then
     CONTAINER_ROS_DOMAIN_ID=$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$CN" 2>/dev/null | sed -n 's/^ROS_DOMAIN_ID=//p' | tail -1)
     if [ -z "$CONTAINER_ROS_DOMAIN_ID" ] || [ "$CONTAINER_ROS_DOMAIN_ID" = "0" ]; then
@@ -499,7 +609,11 @@ if $ENABLE_DEPTH_RELAY; then
     DEPTH_CONTROL_STRATEGY_VALUE="${DEPTH_CONTROL_STRATEGY:-consumer_only}"
     if $ENABLE_CONE_MODE_CONTROL; then
         DEPTH_CONTROL_STRATEGY_VALUE="parameter"
-        DEPTH_RELAY_EXTRA_ARGS="--no-write-frames --manage-cone-pipeline-parameters"
+        if $PICK_PLACE_L6; then
+            DEPTH_RELAY_EXTRA_ARGS="--manage-cone-pipeline-parameters"
+        else
+            DEPTH_RELAY_EXTRA_ARGS="--no-write-frames --manage-cone-pipeline-parameters"
+        fi
         if $VERIFY_DEPTH_DISABLE_LOCALIZATION; then
             DEPTH_RELAY_EXTRA_ARGS="$DEPTH_RELAY_EXTRA_ARGS --verify-localization-after-disable"
         fi
@@ -519,6 +633,56 @@ if $ENABLE_DEPTH_RELAY; then
     echo "  Depth:  $(docker exec $CN tail -1 /tmp/dep.log 2>/dev/null || echo 'OK')"
 else
     echo "  Depth relay: skipped"
+fi
+
+if $ENABLE_APRILTAG_BRIDGE || $ENABLE_YOLO_3D_BRIDGE; then
+    echo "  Docker manipulation perception..."
+    docker exec "$CN" pkill -f '[d]455_apriltag_pose_node.py' 2>/dev/null || true
+    docker exec "$CN" pkill -f '[d]455_yolo_3d_node.py' 2>/dev/null || true
+    docker exec "$CN" rm -f /tmp/apriltag_pose.log /tmp/yolo_3d.log 2>/dev/null || true
+fi
+
+if $ENABLE_APRILTAG_BRIDGE; then
+    docker exec "$CN" test -x /opt/quadruped/perception/bin/run_apriltag_pose_node.sh \
+        || startup_no_go "AprilTag runtime is missing from the unified image"
+    docker exec -d \
+        -e APRILTAG_TAG_IDS="$APRILTAG_TAG_IDS" \
+        -e APRILTAG_TAG_SIZE_M="$APRILTAG_TAG_SIZE_M" \
+        "$CN" bash -lc \
+        '/opt/quadruped/perception/bin/run_apriltag_pose_node.sh > /tmp/apriltag_pose.log 2>&1'
+    APRILTAG_READY=false
+    for _ in $(seq 1 20); do
+        if docker exec "$CN" pgrep -f '[d]455_apriltag_pose_node.py' >/dev/null \
+          && docker exec "$CN" grep -Fq 'AprilTag IDs' /tmp/apriltag_pose.log 2>/dev/null; then
+            APRILTAG_READY=true
+            break
+        fi
+        sleep 1
+    done
+    $APRILTAG_READY \
+        || startup_no_go "Docker AprilTag pose node did not become ready"
+    snapshot_value "apriltag_udp_port" "19003"
+fi
+
+if $ENABLE_YOLO_3D_BRIDGE; then
+    docker exec "$CN" test -x /opt/quadruped/perception/bin/run_yolo_3d_node.sh \
+        || startup_no_go "YOLO 3-D runtime is missing from the unified image"
+    docker exec -d \
+        -e YOLO_DEVICE="${YOLO_DEVICE:-0}" \
+        "$CN" bash -lc \
+        '/opt/quadruped/perception/bin/run_yolo_3d_node.sh > /tmp/yolo_3d.log 2>&1'
+    YOLO_3D_READY=false
+    for _ in $(seq 1 60); do
+        if docker exec "$CN" pgrep -f '[d]455_yolo_3d_node.py' >/dev/null \
+          && docker exec "$CN" grep -Fq 'YOLO model ready' /tmp/yolo_3d.log 2>/dev/null; then
+            YOLO_3D_READY=true
+            break
+        fi
+        sleep 1
+    done
+    $YOLO_3D_READY \
+        || startup_no_go "Docker YOLO 3-D node did not become ready"
+    snapshot_value "yolo_udp_port" "19004"
 fi
 
 # ═══════════════════════════════════════════
@@ -614,6 +778,14 @@ COMPETITION_LAUNCH_ARGS=(
   "enable_depth_pipeline:=$ENABLE_DEPTH_PIPELINE"
   "enable_cone_avoidance:=$ENABLE_CONE_AVOIDANCE"
   "enable_cone_mode_control:=$ENABLE_CONE_MODE_CONTROL"
+  "enable_apriltag_bridge:=$ENABLE_APRILTAG_BRIDGE"
+  "enable_yolo_udp_bridge:=$ENABLE_YOLO_3D_BRIDGE"
+  "enable_arm_motion:=$ENABLE_ARM_MOTION"
+  "enable_manipulation:=$ENABLE_MANIPULATION"
+  "manipulation_calibrated:=$TASK_MANIPULATION_CALIBRATED"
+  "manipulation_params_file:=$TASK_MANIPULATION_PARAMS_FILE"
+  "arm_motion_params_file:=$ARM_MOTION_PARAMS_FILE"
+  "depth_frames_dir:=$DEPTH_SHARED_DIR"
   "verify_depth_disable_localization:=$VERIFY_DEPTH_DISABLE_LOCALIZATION"
   "cone_params_file:=$CONE_NAV2_PARAMS_FILE"
   "enable_yolo:=$YF"
@@ -636,7 +808,7 @@ COMPETITION_LAUNCH_ARGS=(
 ros2 launch quadruped_robot_competition competition.launch.py \
   "${COMPETITION_LAUNCH_ARGS[@]}" > /tmp/competition.log 2>&1 &
 COMP_PID=$!
-echo "  Launch PID=$COMP_PID YOLO=$YF WHZ=$WF TASK_MANAGER=$ENABLE_TASK_MANAGER AUTO_ADVANCE=$AUTO_ADVANCE"
+echo "  Launch PID=$COMP_PID YOLO=$YF WHZ=$WF TASK_MANAGER=$ENABLE_TASK_MANAGER MANIPULATION=$ENABLE_MANIPULATION AUTO_ADVANCE=$AUTO_ADVANCE"
 if $CONE_TO_WHZ_L6 && $PURE_L6_START; then
     echo ''
     echo '==================================='
@@ -655,6 +827,25 @@ if $ENABLE_TASK_MANAGER; then
             break
         fi
     done
+fi
+if $PICK_PLACE_L6; then
+    for node_name in apriltag_udp_bridge_node yolo_udp_bridge_node arm_motion_node; do
+        NODE_READY=false
+        for _ in $(seq 1 20); do
+            if ros2 node list 2>/dev/null | grep -Fxq "/$node_name"; then
+                NODE_READY=true
+                break
+            fi
+            sleep 1
+        done
+        $NODE_READY || startup_no_go "pick/place node did not become ready: /$node_name"
+    done
+    timeout 10 ros2 topic echo /apriltag/detections_base --once >/tmp/apriltag_bridge_probe.txt 2>&1 \
+        || startup_no_go "AprilTag UDP bridge did not publish a fresh packet"
+    timeout 20 ros2 topic echo /yolo/detections --once >/tmp/yolo_bridge_probe.txt 2>&1 \
+        || startup_no_go "YOLO UDP bridge did not publish a fresh packet"
+    snapshot_value "apriltag_bridge_probe" "fresh"
+    snapshot_value "yolo_bridge_probe" "fresh"
 fi
 
 # ═══════════════════════════════════════════
@@ -912,7 +1103,13 @@ fi
 if $CONE_TO_WHZ_L6; then
     require_exact_parameter /task_manager_node max_nav_retries 0
     require_exact_parameter /task_manager_node max_inspection_retries 0
-    require_exact_parameter /task_manager_node finish_after_inspection true
+    if $PICK_PLACE_L6; then
+        require_exact_parameter /task_manager_node finish_after_inspection false
+        require_exact_parameter /task_manager_node enable_manipulation true
+        require_exact_parameter /task_manager_node manipulation_calibrated true
+    else
+        require_exact_parameter /task_manager_node finish_after_inspection true
+    fi
     require_exact_parameter /task_manager_node allow_placeholder_manipulation false
     require_exact_parameter /task_manager_node waypoint_file "$TASK_WAYPOINT_FILE"
     require_exact_parameter /task_manager_node waypoint_route "$TASK_WAYPOINT_ROUTE"
@@ -921,6 +1118,20 @@ if $CONE_TO_WHZ_L6; then
     require_exact_parameter /task_manager_node require_cone_layer_startup_ready true
     require_exact_parameter /task_manager_node cone_behavior_tree "$FORMAL_CONE_BEHAVIOR_TREE"
     require_exact_parameter /task_manager_node mission_start_armed false
+fi
+
+if $PICK_PLACE_L6; then
+    docker exec "$CN" pgrep -f '[d]455_apriltag_pose_node.py' >/dev/null \
+        || startup_no_go "Docker AprilTag pose node exited during startup acceptance"
+    docker exec "$CN" pgrep -f '[d]455_yolo_3d_node.py' >/dev/null \
+        || startup_no_go "Docker YOLO 3-D node exited during startup acceptance"
+    ARM_PREFLIGHT_RESULT="$(timeout "$STARTUP_CLI_TIMEOUT_SEC" \
+        ros2 service call /arm/preflight std_srvs/srv/Trigger '{}' 2>&1)" \
+        || startup_no_go "arm preflight service call failed: $ARM_PREFLIGHT_RESULT"
+    printf '%s\n' "$ARM_PREFLIGHT_RESULT" \
+        | grep -Eq 'success(:|=)[[:space:]]*[Tt]rue' \
+        || startup_no_go "arm preflight rejected the full route: $ARM_PREFLIGHT_RESULT"
+    snapshot_value "arm_preflight_result" "$ARM_PREFLIGHT_RESULT"
 fi
 
 kill -0 "$COMP_PID" 2>/dev/null \
