@@ -144,10 +144,20 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
         self.assertIn("BASE_IMAGE=isaac_ros_cuvslam_runtime:humble-rs-cone", dockerfile)
         self.assertIn("TORCH_WHEEL_SHA256", dockerfile)
         self.assertIn("TORCHVISION_WHEEL_SHA256", dockerfile)
-        self.assertIn('torch.__version__.startswith("2.0.0+nv23.5")', verify)
+        self.assertIn("pip._internal.models.wheel", dockerfile)
+        self.assertNotIn("-o /tmp/torch.whl", dockerfile)
+        self.assertNotIn("-o /tmp/torchvision.whl", dockerfile)
+        self.assertIn("YOLO_DEVICE=cpu", dockerfile)
+        self.assertIn('EXPECTED_TORCH_VERSION = "2.0.0+nv23.5"', verify)
+        self.assertIn('EXPECTED_TORCHVISION_VERSION = "0.15.1"', verify)
+        self.assertIn('EXPECTED_ULTRALYTICS_VERSION = "8.2.103"', verify)
+        self.assertIn("_check_pip_dependencies()", verify)
         self.assertIn("pipeline.warmup((360, 640, 3))", verify)
         self.assertIn("torchvision.ops.nms(boxes, scores, 0.5)", verify)
         self.assertIn("keep.device != boxes.device", verify)
+        self.assertIn("PRODUCER_MODEL_ID", verify)
+        self.assertIn('"class_name": "A"', verify)
+        self.assertIn('"position_valid": True', verify)
         self.assertIn("validate_source_packet", verify)
         self.assertIn("synthetic_udp=ok", verify)
         self.assertIn("--runtime nvidia", START)
@@ -169,6 +179,14 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
         self.assertIn("place_target_configured: false", params)
         self.assertNotIn("static_transform", arm_launch)
         self.assertNotIn("frame_transforms.yaml", arm_launch)
+
+    def test_pick_place_python_packages_declare_build_tools(self):
+        arm_package = (
+            ROOT / "arm_new" / "arm_new_ros" / "package.xml"
+        ).read_text(encoding="utf-8")
+        whz_package = (ROOT / "whz" / "package.xml").read_text(encoding="utf-8")
+        self.assertIn("<buildtool_depend>ament_python</buildtool_depend>", arm_package)
+        self.assertIn("<buildtool_depend>ament_python</buildtool_depend>", whz_package)
 
 
 if __name__ == "__main__":

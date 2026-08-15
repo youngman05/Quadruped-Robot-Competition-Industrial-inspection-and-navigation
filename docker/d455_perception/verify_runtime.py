@@ -6,6 +6,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 
@@ -13,17 +15,49 @@ EXPECTED_MODEL_SHA256 = (
     "3ed76de727a87be8d64cc3b259bf2b0ec39daaaa3fac1f3f97af249824abc648"
 )
 EXPECTED_CLASSES = {"A", "B", "C", "D", "green", "red"}
+EXPECTED_TORCH_VERSION = "2.0.0+nv23.5"
+EXPECTED_TORCHVISION_VERSION = "0.15.1"
+EXPECTED_ULTRALYTICS_VERSION = "8.2.103"
 MODEL_PATH = Path("/opt/quadruped/perception/models/gauge_ad_best.pt")
+
+
+def _check_pip_dependencies() -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "check"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        return
+    unexpected = []
+    for line in result.stdout.splitlines():
+        allowed_opencv_gap = (
+            line.startswith("ultralytics ")
+            and " requires opencv-python" in line
+            and line.endswith("which is not installed.")
+        )
+        if line and not allowed_opencv_gap:
+            unexpected.append(line)
+    if unexpected or not result.stdout.strip():
+        details = "\n".join(unexpected) or "pip check failed without output"
+        raise RuntimeError(f"pip dependency check failed:\n{details}")
 
 
 def main() -> None:
     import cv2
     import torch
     import torchvision
-    if not torch.__version__.startswith("2.0.0+nv23.5"):
+    import ultralytics
+
+    _check_pip_dependencies()
+    if str(torch.__version__) != EXPECTED_TORCH_VERSION:
         raise RuntimeError(f"unexpected torch version: {torch.__version__}")
-    if not torchvision.__version__.startswith("0.15.1"):
+    if str(torchvision.__version__) != EXPECTED_TORCHVISION_VERSION:
         raise RuntimeError(f"unexpected torchvision version: {torchvision.__version__}")
+    if str(ultralytics.__version__) != EXPECTED_ULTRALYTICS_VERSION:
+        raise RuntimeError(f"unexpected ultralytics version: {ultralytics.__version__}")
     if not hasattr(cv2, "aruco"):
         raise RuntimeError("OpenCV aruco module is unavailable")
 
@@ -36,7 +70,17 @@ def main() -> None:
         Yolo3DPipeline,
         install_torchvision_nms_fallback,
     )
+    from d455_yolo_3d_node import (
+        CLASS_SCHEMA as PRODUCER_CLASS_SCHEMA,
+        MODEL_CLASS_NAMES as PRODUCER_CLASS_NAMES,
+        MODEL_ID as PRODUCER_MODEL_ID,
+    )
     from yolo_udp_bridge_core import CLASS_SCHEMA, MODEL_ID, validate_source_packet
+
+    if PRODUCER_MODEL_ID != MODEL_ID or PRODUCER_CLASS_SCHEMA != CLASS_SCHEMA:
+        raise RuntimeError("YOLO producer and Host validator protocol identities differ")
+    if set(PRODUCER_CLASS_NAMES) != EXPECTED_CLASSES:
+        raise RuntimeError("YOLO producer class set differs from the accepted model")
 
     device = os.environ.get("YOLO_DEVICE", "0")
     if device != "cpu" and not torch.cuda.is_available():
@@ -59,19 +103,33 @@ def main() -> None:
 
     synthetic_packet = {
         "schema_version": 1,
-        "model_id": MODEL_ID,
-        "class_schema": CLASS_SCHEMA,
+        "model_id": PRODUCER_MODEL_ID,
+        "class_schema": PRODUCER_CLASS_SCHEMA,
         "sequence": 1,
         "stamp": {"sec": 1, "nanosec": 0},
         "frame_id": "camera_link",
-        "inference_ms": 0.0,
-        "detections": [],
+        "inference_ms": 1.25,
+        "detections": [
+            {
+                "class_id": 0,
+                "class_name": "A",
+                "confidence": 0.9,
+                "bbox": [10, 20, 30, 40],
+                "center_px": [20, 30],
+                "mask_area_px": 200,
+                "depth_m": 1.25,
+                "depth_valid_ratio": 0.95,
+                "position_valid": True,
+                "position_m": [0.1, 0.2, 1.25],
+            }
+        ],
     }
     validate_source_packet(json.loads(json.dumps(synthetic_packet)))
     print(
         "pick-place runtime verified: "
         f"torch={torch.__version__} torchvision={torchvision.__version__} "
-        f"classes={sorted(class_names)} nms=ok warmup=ok synthetic_udp=ok"
+        f"ultralytics={ultralytics.__version__} classes={sorted(class_names)} "
+        "pip=ok nms=ok warmup=ok synthetic_udp=ok"
     )
 
 

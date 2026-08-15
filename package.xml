@@ -33,6 +33,7 @@
   <exec_depend>python3-yaml</exec_depend>
   <exec_depend>arm_new_interfaces</exec_depend>
   <exec_depend>arm_new_ros</exec_depend>
+  <exec_depend>whz</exec_depend>
 
   <export>
     <build_type>ament_python</build_type>

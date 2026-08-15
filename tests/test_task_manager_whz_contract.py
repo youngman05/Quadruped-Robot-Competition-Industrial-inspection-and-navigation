@@ -69,11 +69,10 @@ class TaskManagerWhzContractTests(unittest.TestCase):
             SETUP.read_text(encoding="utf-8"),
         )
 
-    def test_main_package_declares_std_srvs(self):
-        self.assertIn(
-            "<exec_depend>std_srvs</exec_depend>",
-            PACKAGE_XML.read_text(encoding="utf-8"),
-        )
+    def test_main_package_declares_whz_and_std_srvs(self):
+        package = PACKAGE_XML.read_text(encoding="utf-8")
+        self.assertIn("<exec_depend>std_srvs</exec_depend>", package)
+        self.assertIn("<exec_depend>whz</exec_depend>", package)
 
 
 if __name__ == "__main__":

@@ -20,18 +20,29 @@ RUN test -n "${TORCH_WHEEL_URL}" \
  && apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl python3-pip \
  && rm -rf /var/lib/apt/lists/* \
- && curl --fail --location --retry 3 "${TORCH_WHEEL_URL}" -o /tmp/torch.whl \
- && curl --fail --location --retry 3 "${TORCHVISION_WHEEL_URL}" -o /tmp/torchvision.whl \
- && echo "${TORCH_WHEEL_SHA256}  /tmp/torch.whl" | sha256sum --check --strict \
- && echo "${TORCHVISION_WHEEL_SHA256}  /tmp/torchvision.whl" | sha256sum --check --strict \
+ && torch_wheel_name="${TORCH_WHEEL_URL%%\?*}" \
+ && torch_wheel_name="${torch_wheel_name##*/}" \
+ && torchvision_wheel_name="${TORCHVISION_WHEEL_URL%%\?*}" \
+ && torchvision_wheel_name="${torchvision_wheel_name##*/}" \
+ && case "$torch_wheel_name" in *.whl) ;; *) echo "invalid torch wheel URL basename: $torch_wheel_name" >&2; exit 1 ;; esac \
+ && case "$torchvision_wheel_name" in *.whl) ;; *) echo "invalid torchvision wheel URL basename: $torchvision_wheel_name" >&2; exit 1 ;; esac \
+ && test "$torch_wheel_name" != "$torchvision_wheel_name" \
+ && python3 -c 'from pip._internal.models.wheel import Wheel; import sys; [Wheel(name) for name in sys.argv[1:]]' \
+      "$torch_wheel_name" "$torchvision_wheel_name" \
+ && torch_wheel="/tmp/$torch_wheel_name" \
+ && torchvision_wheel="/tmp/$torchvision_wheel_name" \
+ && curl --fail --location --retry 3 "${TORCH_WHEEL_URL}" -o "$torch_wheel" \
+ && curl --fail --location --retry 3 "${TORCHVISION_WHEEL_URL}" -o "$torchvision_wheel" \
+ && echo "${TORCH_WHEEL_SHA256}  $torch_wheel" | sha256sum --check --strict \
+ && echo "${TORCHVISION_WHEEL_SHA256}  $torchvision_wheel" | sha256sum --check --strict \
  && python3 -m pip uninstall -y torch torchvision ultralytics \
- && python3 -m pip install --no-cache-dir /tmp/torch.whl /tmp/torchvision.whl \
- && rm -f /tmp/torch.whl /tmp/torchvision.whl
+ && python3 -m pip install --no-cache-dir "$torch_wheel" "$torchvision_wheel" \
+ && rm -f "$torch_wheel" "$torchvision_wheel"
 
 COPY docker/d455_perception/requirements.lock /tmp/pick_place_requirements.lock
 RUN python3 -m pip install --no-cache-dir --no-deps -r /tmp/pick_place_requirements.lock \
  && if ! python3 -m pip check > /tmp/pick_place_pip_check.txt 2>&1; then \
-      if grep -v 'requires opencv-python' /tmp/pick_place_pip_check.txt | grep -q .; then \
+      if grep -Ev '^ultralytics [^ ]+ requires opencv-python.*which is not installed\.$' /tmp/pick_place_pip_check.txt | grep -q .; then \
         cat /tmp/pick_place_pip_check.txt; exit 1; \
       fi; \
     fi \
@@ -47,5 +58,5 @@ COPY InstanceSegmentation/projects/gauge/model/best.pt \
 RUN chmod +x \
       /opt/quadruped/perception/bin/run_apriltag_pose_node.sh \
       /opt/quadruped/perception/bin/run_yolo_3d_node.sh \
- && PYTHONPATH=/opt/quadruped/perception/bin \
+ && YOLO_DEVICE=cpu PYTHONPATH=/opt/quadruped/perception/bin \
       python3 /opt/quadruped/perception/bin/verify_runtime.py
