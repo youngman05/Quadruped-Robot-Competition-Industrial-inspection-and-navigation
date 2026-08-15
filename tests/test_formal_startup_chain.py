@@ -164,6 +164,7 @@ class FormalStartupChainContractTests(unittest.TestCase):
             "TASK_PASS_OBSTACLE_TIMEOUT_SEC=180.0",
             "TASK_PASS_OBSTACLE_WAYPOINT_TIMEOUT_SEC=120.0",
             "TASK_INSPECTION_TIMEOUT_SEC=300.0",
+            "PURE_L6_START=true",
             'exec bash "$PROJECT_ROOT/scripts/start_competition.sh"',
             "--cone-to-whz-l6",
             "--dog",
@@ -181,6 +182,22 @@ class FormalStartupChainContractTests(unittest.TestCase):
         ):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, entrypoint)
+
+    def test_clean_l6_pure_start_skips_post_launch_acceptance(self):
+        pure_start = self.script.index(
+            "if $CONE_TO_WHZ_L6 && $PURE_L6_START; then"
+        )
+        task_manager_wait = self.script.index(
+            "if $ENABLE_TASK_MANAGER; then", pure_start
+        )
+        pure_block = self.script[pure_start:task_manager_wait]
+
+        self.assertIn('PURE_L6_START="${PURE_L6_START:-false}"', self.script)
+        self.assertIn("TASK_MISSION_START_ARMED=true", self.script)
+        self.assertIn("L6 栈已启动（纯启动模式）", pure_block)
+        self.assertIn("exit 0", pure_block)
+        self.assertLess(pure_start, task_manager_wait)
+        self.assertLess(task_manager_wait, self.script.index("echo '[6/6] 验证...'"))
 
     def test_lifecycle_snapshot_retries_without_weakening_active_gate(self):
         for token in (

@@ -10,6 +10,7 @@ export TASK_EXPECTED_MAP_ID=competition_field_phase1
 export TASK_PASS_OBSTACLE_TIMEOUT_SEC=180.0
 export TASK_PASS_OBSTACLE_WAYPOINT_TIMEOUT_SEC=120.0
 export TASK_INSPECTION_TIMEOUT_SEC=300.0
+export PURE_L6_START=true
 
 exec bash "$PROJECT_ROOT/scripts/start_competition.sh" \
     --cone-to-whz-l6 \

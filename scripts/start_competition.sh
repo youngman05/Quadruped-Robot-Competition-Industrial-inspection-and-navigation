@@ -61,6 +61,7 @@ ENABLE_CONE_MODE_CONTROL=false
 VERIFY_DEPTH_DISABLE_LOCALIZATION=true
 ENABLE_TASK_MANAGER=false; AUTO_ADVANCE=false; DO_STAND=false
 CONE_TO_WHZ_L6=false
+PURE_L6_START="${PURE_L6_START:-false}"
 for arg in "$@"; do
     case $arg in
         --yolo)  ENABLE_YOLO=true ;;
@@ -102,7 +103,11 @@ if $CONE_TO_WHZ_L6; then
     TASK_MAX_INSPECTION_RETRIES=0
     TASK_FINISH_AFTER_INSPECTION=true
     TASK_ALLOW_PLACEHOLDER_MANIPULATION=false
-    TASK_MISSION_START_ARMED=false
+    if $PURE_L6_START; then
+        TASK_MISSION_START_ARMED=true
+    else
+        TASK_MISSION_START_ARMED=false
+    fi
     TASK_WAYPOINT_FILE="${TASK_WAYPOINT_FILE:-$PROJECT_ROOT/configs/navigation/waypoints_real.yaml}"
 fi
 
@@ -632,6 +637,15 @@ ros2 launch quadruped_robot_competition competition.launch.py \
   "${COMPETITION_LAUNCH_ARGS[@]}" > /tmp/competition.log 2>&1 &
 COMP_PID=$!
 echo "  Launch PID=$COMP_PID YOLO=$YF WHZ=$WF TASK_MANAGER=$ENABLE_TASK_MANAGER AUTO_ADVANCE=$AUTO_ADVANCE"
+if $CONE_TO_WHZ_L6 && $PURE_L6_START; then
+    echo ''
+    echo '==================================='
+    echo ' L6 栈已启动（纯启动模式）'
+    echo " 日志: $LOGFILE"
+    echo ' 停止: bash scripts/stop_all.sh'
+    echo '==================================='
+    exit 0
+fi
 if $ENABLE_TASK_MANAGER; then
     # 等待 task_manager 节点出现
     for i in $(seq 1 15); do
