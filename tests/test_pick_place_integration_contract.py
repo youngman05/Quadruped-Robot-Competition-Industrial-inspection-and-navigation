@@ -199,6 +199,32 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
             ):
                 verifier._check_distribution_versions()
 
+    def test_image_lock_covers_transitives_and_preserves_system_opencv_exception(self):
+        dockerfile = (ROOT / "docker" / "Dockerfile.cuvslam-pick-place").read_text(
+            encoding="utf-8"
+        )
+        lock_path = ROOT / "docker" / "d455_perception" / "requirements.lock"
+        locked = {
+            line.strip().split("==", 1)[0]
+            for line in lock_path.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
+        for package in (
+            "charset-normalizer",
+            "contourpy",
+            "cycler",
+            "fonttools",
+            "importlib-resources",
+            "kiwisolver",
+            "rospkg",
+            "testresources",
+        ):
+            with self.subTest(package=package):
+                self.assertIn(package, locked)
+        self.assertNotIn("opencv-python", locked)
+        self.assertIn("--no-deps -r /tmp/pick_place_requirements.lock", dockerfile)
+        self.assertIn("requires opencv-python", dockerfile)
+
     def test_arm_defaults_do_not_claim_unaccepted_calibration(self):
         params = (ROOT / "arm_new" / "config" / "arm_motion_params.yaml").read_text(
             encoding="utf-8"
