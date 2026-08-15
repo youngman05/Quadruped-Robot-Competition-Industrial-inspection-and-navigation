@@ -17,8 +17,16 @@ RUN test -n "${TORCH_WHEEL_URL}" \
  && test -n "${TORCH_WHEEL_SHA256}" \
  && test -n "${TORCHVISION_WHEEL_URL}" \
  && test -n "${TORCHVISION_WHEEL_SHA256}" \
- && apt-get update \
+ && grep -E '^deb http://ports\.ubuntu\.com/ubuntu-ports/' /etc/apt/sources.list \
+      > /tmp/pick_place_ubuntu_sources.list \
+ && test -s /tmp/pick_place_ubuntu_sources.list \
+ && rm -rf /var/lib/apt/lists/* \
+ && apt-get \
+      -o Dir::Etc::sourcelist="/tmp/pick_place_ubuntu_sources.list" \
+      -o Dir::Etc::sourceparts="-" \
+      update \
  && apt-get install -y --no-install-recommends ca-certificates curl python3-pip \
+ && rm -f /tmp/pick_place_ubuntu_sources.list \
  && rm -rf /var/lib/apt/lists/* \
  && torch_wheel_name="${TORCH_WHEEL_URL%%\?*}" \
  && torch_wheel_name="${torch_wheel_name##*/}" \
