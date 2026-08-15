@@ -16,7 +16,7 @@ from pathlib import Path
 EXPECTED_MODEL_SHA256 = (
     "3ed76de727a87be8d64cc3b259bf2b0ec39daaaa3fac1f3f97af249824abc648"
 )
-EXPECTED_CLASSES = {"A", "B", "C", "D", "green", "red"}
+EXPECTED_CLASSES = {"A", "B", "C", "D", "green", "red", "yellow"}
 EXPECTED_TORCH_VERSION = "2.0.0+nv23.5"
 EXPECTED_TORCHVISION_VERSION = "0.15.1"
 EXPECTED_ULTRALYTICS_VERSION = "8.2.103"
@@ -95,8 +95,9 @@ def main(*, build_stage: bool = False) -> None:
         Yolo3DPipeline,
         install_torchvision_nms_fallback,
     )
-    from d455_yolo_3d_node import (
+    from d455_yolo_protocol import (
         CLASS_SCHEMA as PRODUCER_CLASS_SCHEMA,
+        MODEL_CLASS_MAP as PRODUCER_CLASS_MAP,
         MODEL_CLASS_NAMES as PRODUCER_CLASS_NAMES,
         MODEL_ID as PRODUCER_MODEL_ID,
     )
@@ -122,6 +123,10 @@ def main(*, build_stage: bool = False) -> None:
         raise RuntimeError(f"NMS fallback failed: device={keep.device} keep={keep.tolist()}")
     pipeline = Yolo3DPipeline(str(MODEL_PATH), Yolo3DConfig(device=device))
     pipeline.warmup((360, 640, 3))
+    if pipeline.class_names != PRODUCER_CLASS_MAP:
+        raise RuntimeError(
+            f"unexpected model class mapping: {pipeline.class_names}"
+        )
     class_names = set(pipeline.class_names.values())
     if class_names != EXPECTED_CLASSES:
         raise RuntimeError(f"unexpected model classes: {sorted(class_names)}")

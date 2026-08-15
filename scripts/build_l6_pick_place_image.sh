@@ -24,6 +24,7 @@ docker build \
   .
 
 docker run --rm --runtime nvidia --network none \
+  -e YOLO_DEVICE=0 \
   --entrypoint python3 \
   "$IMAGE" \
   /opt/quadruped/perception/bin/verify_runtime.py

@@ -27,12 +27,12 @@ from tf2_ros import Buffer, TransformListener
 
 from d455_yolo_3d_core import CameraIntrinsics, RigidTransform
 from d455_yolo_3d_pipeline import Yolo3DConfig, Yolo3DPipeline
-
-
-MODEL_ID = "gauge-ad-3ed76de7-v1"
-CLASS_SCHEMA = "competition-ad-red-green-v1"
-MODEL_SHA256 = "3ed76de727a87be8d64cc3b259bf2b0ec39daaaa3fac1f3f97af249824abc648"
-MODEL_CLASS_NAMES = frozenset({"A", "B", "C", "D", "red", "green"})
+from d455_yolo_protocol import (
+    CLASS_SCHEMA,
+    MODEL_CLASS_MAP,
+    MODEL_ID,
+    MODEL_SHA256,
+)
 
 
 def stamp_ns(message: Image) -> int:
@@ -94,11 +94,10 @@ class D455Yolo3DNode(Node):
             )
         self.get_logger().info(f"Loading YOLO model: {model_path}")
         self._pipeline = Yolo3DPipeline(model_path, config)
-        model_names = frozenset(self._pipeline.class_names.values())
-        if model_names != MODEL_CLASS_NAMES:
+        if self._pipeline.class_names != MODEL_CLASS_MAP:
             raise ValueError(
-                f"YOLO class schema mismatch: expected {sorted(MODEL_CLASS_NAMES)}, "
-                f"got {sorted(model_names)}"
+                f"YOLO class schema mismatch: expected {MODEL_CLASS_MAP}, "
+                f"got {self._pipeline.class_names}"
             )
         self.get_logger().info(f"YOLO model ready: {self._pipeline.class_names}")
 
@@ -275,6 +274,7 @@ class D455Yolo3DNode(Node):
         palette = {
             "red": (0, 0, 255),
             "green": (0, 255, 0),
+            "yellow": (0, 255, 255),
             "obstacle": (0, 165, 255),
         }
         annotated = color.copy()

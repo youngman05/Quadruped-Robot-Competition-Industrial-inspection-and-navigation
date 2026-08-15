@@ -146,6 +146,9 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
         verify = (ROOT / "docker" / "d455_perception" / "verify_runtime.py").read_text(
             encoding="utf-8"
         )
+        protocol = (
+            ROOT / "docker" / "d455_perception" / "d455_yolo_protocol.py"
+        ).read_text(encoding="utf-8")
         model = ROOT / "InstanceSegmentation" / "projects" / "gauge" / "model" / "best.pt"
         self.assertIn("BASE_IMAGE=isaac_ros_cuvslam_runtime:humble-rs-cone", dockerfile)
         self.assertIn("TORCH_WHEEL_SHA256", dockerfile)
@@ -155,6 +158,17 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
         self.assertNotIn("-o /tmp/torchvision.whl", dockerfile)
         self.assertNotIn("YOLO_DEVICE=cpu", dockerfile)
         self.assertIn("verify_runtime.py --build-stage", dockerfile)
+        for cuda_package, cuda_sha256 in (
+            ("libcurand-11-4_10.2.5.297-1_arm64.deb", "d4e0025162c0c68d"),
+            ("libcufft-11-4_10.6.0.202-1_arm64.deb", "87f2161d58e3766f"),
+            ("libcusparse-11-4_11.6.0.299-1_arm64.deb", "b1fedfac989075df"),
+            ("libcusolver-11-4_11.2.0.297-1_arm64.deb", "f2e39c718793bfbe"),
+            ("cuda-nvtx-11-4_11.4.300-1_arm64.deb", "921de34da9edfbea"),
+        ):
+            with self.subTest(cuda_package=cuda_package):
+                self.assertIn(cuda_package, dockerfile)
+                self.assertIn(cuda_sha256, dockerfile)
+        self.assertIn("dpkg -i ./*.deb", dockerfile)
         self.assertIn('EXPECTED_TORCH_VERSION = "2.0.0+nv23.5"', verify)
         self.assertIn('EXPECTED_TORCHVISION_VERSION = "0.15.1"', verify)
         self.assertIn('EXPECTED_ULTRALYTICS_VERSION = "8.2.103"', verify)
@@ -165,12 +179,20 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
         self.assertIn("torchvision.ops.nms(boxes, scores, 0.5)", verify)
         self.assertIn("keep.device != boxes.device", verify)
         self.assertIn("PRODUCER_MODEL_ID", verify)
+        self.assertIn("from d455_yolo_protocol import", verify)
+        self.assertNotIn("from d455_yolo_3d_node import", verify)
+        self.assertIn('MODEL_ID = "gauge-ad-3ed76de7-v1"', protocol)
+        self.assertIn('CLASS_SCHEMA = "competition-ad-yellow-red-green-v1"', protocol)
+        self.assertIn('6: "yellow"', protocol)
+        self.assertIn("pipeline.class_names != PRODUCER_CLASS_MAP", verify)
         self.assertIn('"class_name": "A"', verify)
         self.assertIn('"position_valid": True', verify)
         self.assertIn("validate_source_packet", verify)
         self.assertIn("synthetic_udp=ok", verify)
         self.assertIn("--runtime nvidia", START)
         self.assertIn("docker run --rm --runtime nvidia --network none", build_script)
+        self.assertIn("-e YOLO_DEVICE=0", build_script)
+        self.assertIn("-e YOLO_DEVICE=0", START)
         self.assertIn("/opt/quadruped/perception/bin/verify_runtime.py", build_script)
         self.assertNotIn("verify_runtime.py --build-stage", build_script)
         self.assertNotIn("verify_runtime.py --build-stage", START)

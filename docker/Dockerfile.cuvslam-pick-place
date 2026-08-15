@@ -47,6 +47,54 @@ RUN test -n "${TORCH_WHEEL_URL}" \
  && python3 -m pip install --no-cache-dir "$torch_wheel" "$torchvision_wheel" \
  && rm -f "$torch_wheel" "$torchvision_wheel"
 
+RUN cuda_deb_dir=/tmp/pick_place_cuda_debs \
+ && mkdir -p "$cuda_deb_dir" \
+ && curl --fail --location --retry 3 \
+      https://repo.download.nvidia.com/jetson/common/pool/main/libc/libcurand/libcurand-11-4_10.2.5.297-1_arm64.deb \
+      -o "$cuda_deb_dir/libcurand-11-4_10.2.5.297-1_arm64.deb" \
+ && curl --fail --location --retry 3 \
+      https://repo.download.nvidia.com/jetson/common/pool/main/libc/libcufft/libcufft-11-4_10.6.0.202-1_arm64.deb \
+      -o "$cuda_deb_dir/libcufft-11-4_10.6.0.202-1_arm64.deb" \
+ && curl --fail --location --retry 3 \
+      https://repo.download.nvidia.com/jetson/common/pool/main/libc/libcusparse/libcusparse-11-4_11.6.0.299-1_arm64.deb \
+      -o "$cuda_deb_dir/libcusparse-11-4_11.6.0.299-1_arm64.deb" \
+ && curl --fail --location --retry 3 \
+      https://repo.download.nvidia.com/jetson/common/pool/main/libc/libcusolver/libcusolver-11-4_11.2.0.297-1_arm64.deb \
+      -o "$cuda_deb_dir/libcusolver-11-4_11.2.0.297-1_arm64.deb" \
+ && curl --fail --location --retry 3 \
+      https://repo.download.nvidia.com/jetson/common/pool/main/c/cuda-nvtx/cuda-nvtx-11-4_11.4.300-1_arm64.deb \
+      -o "$cuda_deb_dir/cuda-nvtx-11-4_11.4.300-1_arm64.deb" \
+ && cd "$cuda_deb_dir" \
+ && printf '%s\n' \
+      'd4e0025162c0c68d792b373f50843328234918e450258873f6325630580af692  libcurand-11-4_10.2.5.297-1_arm64.deb' \
+      '87f2161d58e3766f4d1ac695dae673ad6bad0e0e8a5f9866506dccae6c72219f  libcufft-11-4_10.6.0.202-1_arm64.deb' \
+      'b1fedfac989075df9dfa3c36977df61fd3f3f1969bef10c451d03b3801dda04a  libcusparse-11-4_11.6.0.299-1_arm64.deb' \
+      'f2e39c718793bfbe6dd99bac3ccf8029b7f869bb92160fce5b281e32b4535c6e  libcusolver-11-4_11.2.0.297-1_arm64.deb' \
+      '921de34da9edfbea002e48c817fc6f178da922384ef7db16c13233263d905812  cuda-nvtx-11-4_11.4.300-1_arm64.deb' \
+      | sha256sum --check --strict \
+ && test "$(dpkg-deb -f libcurand-11-4_10.2.5.297-1_arm64.deb Package)" = libcurand-11-4 \
+ && test "$(dpkg-deb -f libcufft-11-4_10.6.0.202-1_arm64.deb Package)" = libcufft-11-4 \
+ && test "$(dpkg-deb -f libcusparse-11-4_11.6.0.299-1_arm64.deb Package)" = libcusparse-11-4 \
+ && test "$(dpkg-deb -f libcusolver-11-4_11.2.0.297-1_arm64.deb Package)" = libcusolver-11-4 \
+ && test "$(dpkg-deb -f cuda-nvtx-11-4_11.4.300-1_arm64.deb Package)" = cuda-nvtx-11-4 \
+ && test "$(dpkg-deb -f libcurand-11-4_10.2.5.297-1_arm64.deb Architecture)" = arm64 \
+ && test "$(dpkg-deb -f libcufft-11-4_10.6.0.202-1_arm64.deb Architecture)" = arm64 \
+ && test "$(dpkg-deb -f libcusparse-11-4_11.6.0.299-1_arm64.deb Architecture)" = arm64 \
+ && test "$(dpkg-deb -f libcusolver-11-4_11.2.0.297-1_arm64.deb Architecture)" = arm64 \
+ && test "$(dpkg-deb -f cuda-nvtx-11-4_11.4.300-1_arm64.deb Architecture)" = arm64 \
+ && dpkg -i ./*.deb \
+ && test "$(dpkg-query -W -f='${Version}' libcurand-11-4)" = 10.2.5.297-1 \
+ && test "$(dpkg-query -W -f='${Version}' libcufft-11-4)" = 10.6.0.202-1 \
+ && test "$(dpkg-query -W -f='${Version}' libcusparse-11-4)" = 11.6.0.299-1 \
+ && test "$(dpkg-query -W -f='${Version}' libcusolver-11-4)" = 11.2.0.297-1 \
+ && test "$(dpkg-query -W -f='${Version}' cuda-nvtx-11-4)" = 11.4.300-1 \
+ && test -e /usr/local/cuda-11.4/targets/aarch64-linux/lib/libcurand.so.10 \
+ && test -e /usr/local/cuda-11.4/targets/aarch64-linux/lib/libcufft.so.10 \
+ && test -e /usr/local/cuda-11.4/targets/aarch64-linux/lib/libcusparse.so.11 \
+ && test -e /usr/local/cuda-11.4/targets/aarch64-linux/lib/libcusolver.so.11 \
+ && test -e /usr/local/cuda-11.4/targets/aarch64-linux/lib/libnvToolsExt.so.1 \
+ && rm -rf "$cuda_deb_dir"
+
 COPY docker/d455_perception/requirements.lock /tmp/pick_place_requirements.lock
 RUN python3 -m pip install --no-cache-dir --no-deps -r /tmp/pick_place_requirements.lock \
  && if ! python3 -m pip check > /tmp/pick_place_pip_check.txt 2>&1; then \

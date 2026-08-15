@@ -4,7 +4,7 @@ task_manager_node:
     enable_manipulation: false
     manipulation_calibrated: false
     manipulation_model_id: gauge-ad-3ed76de7-v1
-    manipulation_class_schema: competition-ad-red-green-v1
+    manipulation_class_schema: competition-ad-yellow-red-green-v1
 
     # Replace these values in an explicitly selected calibrated override file.
     pick_red_tag_ids: [0, 1]

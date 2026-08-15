@@ -341,7 +341,7 @@ if $PICK_PLACE_L6; then
     IMAGE_MODEL_SHA="$(docker image inspect --format '{{index .Config.Labels "org.quadruped.pick_place.model_sha256"}}' "$IMAGE" 2>/dev/null)"
     [ "$IMAGE_MODEL_SHA" = "$MODEL_SHA256" ] \
         || startup_no_go "unified image model label mismatch: ${IMAGE_MODEL_SHA:-missing}"
-    docker run --rm --runtime nvidia --network none --entrypoint python3 "$IMAGE" \
+    docker run --rm --runtime nvidia --network none -e YOLO_DEVICE=0 --entrypoint python3 "$IMAGE" \
         /opt/quadruped/perception/bin/verify_runtime.py \
         || startup_no_go "unified pick/place image runtime verification failed"
 fi

@@ -361,7 +361,7 @@ class LetterExtractionTests(unittest.TestCase):
     def test_model_identity_is_enforced_when_requested(self):
         payload = {
             "model_id": "wrong",
-            "class_schema": "competition-ad-red-green-v1",
+            "class_schema": "competition-ad-yellow-red-green-v1",
             "detections": [
                 {"class_id": 0, "class_name": "A", "confidence": 0.9, "bbox": [1, 2, 3, 4]},
             ],
@@ -370,7 +370,7 @@ class LetterExtractionTests(unittest.TestCase):
             extract_letters_from_detections(
                 payload,
                 expected_model_id="gauge-ad-3ed76de7-v1",
-                expected_class_schema="competition-ad-red-green-v1",
+                expected_class_schema="competition-ad-yellow-red-green-v1",
             ),
             [],
         )

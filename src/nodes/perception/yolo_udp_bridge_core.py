@@ -15,8 +15,8 @@ DETECTION_KEYS = {
     "depth_m", "depth_valid_ratio", "position_valid", "position_m",
 }
 MODEL_ID = "gauge-ad-3ed76de7-v1"
-CLASS_SCHEMA = "competition-ad-red-green-v1"
-CLASS_NAMES = frozenset({"A", "B", "C", "D", "red", "green"})
+CLASS_SCHEMA = "competition-ad-yellow-red-green-v1"
+CLASS_NAMES = frozenset({"A", "B", "C", "D", "red", "green", "yellow"})
 
 
 class PacketValidationError(ValueError):

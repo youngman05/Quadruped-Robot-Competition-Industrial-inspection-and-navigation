@@ -58,6 +58,12 @@ class YoloUdpBridgeCoreTest(unittest.TestCase):
         packet["detections"][0]["class_id"] = 99
         self.assertIs(CORE.validate_source_packet(packet), packet)
 
+    def test_accepts_locked_yellow_class(self) -> None:
+        packet = valid_packet()
+        packet["detections"][0]["class_id"] = 6
+        packet["detections"][0]["class_name"] = "yellow"
+        self.assertIs(CORE.validate_source_packet(packet), packet)
+
     def test_rejects_wrong_model_identity(self) -> None:
         packet = valid_packet()
         packet["model_id"] = "different-model"
