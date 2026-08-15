@@ -126,6 +126,25 @@ class PickAlignmentCoreTest(unittest.TestCase):
         executor.start(); executor.tick(); executor.tick()
         self.assertEqual(executor.target_tag_id, 1)
 
+    def test_two_rounds_select_different_visible_tags(self):
+        runtime = FakeRuntime()
+        runtime.frame = frame(
+            1,
+            pose(0, 1, 0.30, 0.00, 0.0),
+            pose(1, 1, 0.50, 0.00, 0.0),
+        )
+        first = PickOneExecutor(runtime, configured())
+        first.start()
+        first.tick()
+        first.tick()
+        self.assertEqual(first.target_tag_id, 0)
+
+        second = PickOneExecutor(runtime, configured(excluded_tag_ids=(0,)))
+        second.start()
+        second.tick()
+        second.tick()
+        self.assertEqual(second.target_tag_id, 1)
+
     def test_alignment_starts_yaw_then_y_then_x(self):
         runtime = FakeRuntime()
         executor = PickOneExecutor(runtime, configured(stable_frames=1))

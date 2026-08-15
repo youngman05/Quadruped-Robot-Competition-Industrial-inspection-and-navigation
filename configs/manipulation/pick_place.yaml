@@ -1,16 +1,31 @@
 task_manager_node:
   ros__parameters:
-    # Fail closed until the field calibration and segmented acceptance are done.
+    # Repository defaults remain fail closed. A competition override must select
+    # the fixed competition_v1 preset and provide its tested grasp target.
     enable_manipulation: false
-    manipulation_calibrated: false
+    manipulation_preset: unconfigured
     manipulation_model_id: gauge-ad-3ed76de7-v1
     manipulation_class_schema: competition-ad-yellow-red-green-v1
+    abnormal_zone_fallback_order: [A, B, C, D]
 
-    # Replace these values in an explicitly selected calibrated override file.
-    pick_red_tag_ids: [0, 1]
+    # Optional J1 enhancements. Disabled or failed alignment falls back to the
+    # coarse waypoint plus fixed arm preset.
+    enable_pick_i2_alignment: false
+    enable_place_vision_alignment: false
+    # The competition override must provide exactly two actual pickup Tag IDs.
+    # They remain configured even when I2 alignment is temporarily disabled.
+    pick_red_tag_ids: []
     pick_i2_targets_json: "{}"
+    apriltag_tag_size_m: 0.0
     grasp_target_arm_base: []
     place_target_distance_m: 0.0
+
+    # Lightweight J1 placement profile. These are consulted only when visual
+    # placement alignment is enabled; otherwise J0 fixed placement is used.
+    placement_color_width_px: 640
+    placement_color_height_px: 360
+    placement_camera_pitch_deg: 30.0
+    placement_box_width_m: 0.50
 
     apriltag_topic: /apriltag/detections_base
     precision_cmd_topic: /cmd_vel_precision

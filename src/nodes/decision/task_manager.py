@@ -42,6 +42,11 @@ from nodes.decision.inspection_workflow import (
     InspectionStage,
     InspectionWorkflow,
 )
+from nodes.decision.competition_task_core import (
+    ZoneAssessment,
+    freeze_two_zone_tasks,
+    normalize_zone_order,
+)
 from nodes.decision.timeout_budget import ElapsedTimeoutBudget
 from nodes.decision.pick_alignment_core import (
     FiducialDetectionFrame,
@@ -118,6 +123,7 @@ class GaugeInfo:
     level: Optional[str] = None
     status: Optional[str] = None    # normal / high / low
     angle: Optional[float] = None
+    confidence: float = 0.0
 
 
 @dataclass
@@ -261,7 +267,9 @@ class TaskManagerNode(Node):
         self.declare_parameter("finish_after_inspection", False)
         self.declare_parameter("allow_placeholder_manipulation", False)
         self.declare_parameter("enable_manipulation", False)
-        self.declare_parameter("manipulation_calibrated", False)
+        self.declare_parameter("manipulation_preset", "unconfigured")
+        self.declare_parameter("enable_pick_i2_alignment", False)
+        self.declare_parameter("enable_place_vision_alignment", False)
         self.declare_parameter("apriltag_topic", "/apriltag/detections_base")
         self.declare_parameter("precision_cmd_topic", "/cmd_vel_precision")
         self.declare_parameter(
@@ -270,11 +278,17 @@ class TaskManagerNode(Node):
         )
         self.declare_parameter("manipulation_model_id", MODEL_ID)
         self.declare_parameter("manipulation_class_schema", CLASS_SCHEMA)
-        self.declare_parameter("pick_red_tag_ids", [0, 1])
+        self.declare_parameter("abnormal_zone_fallback_order", ["A", "B", "C", "D"])
+        self.declare_parameter("pick_red_tag_ids", [])
         self.declare_parameter("pick_i2_targets_json", "{}")
         self.declare_parameter("grasp_target_arm_base", [])
         self.declare_parameter("place_target_distance_m", 0.0)
+        self.declare_parameter("placement_color_width_px", 640)
+        self.declare_parameter("placement_color_height_px", 360)
+        self.declare_parameter("placement_camera_pitch_deg", 30.0)
+        self.declare_parameter("placement_box_width_m", 0.50)
         self.declare_parameter("arm_service_timeout_sec", 30.0)
+        self.declare_parameter("arm_max_sequence_sec", 20.0)
         self.declare_parameter("precision_release_duration_sec", 0.6)
         self.declare_parameter("manipulation_perception_timeout_sec", 0.5)
         self.declare_parameter("waypoint_file", "")
@@ -361,8 +375,14 @@ class TaskManagerNode(Node):
         self._enable_manipulation = bool(
             self.get_parameter("enable_manipulation").value
         )
-        self._manipulation_calibrated = bool(
-            self.get_parameter("manipulation_calibrated").value
+        self._manipulation_preset = str(
+            self.get_parameter("manipulation_preset").value
+        ).strip()
+        self._enable_pick_i2_alignment = bool(
+            self.get_parameter("enable_pick_i2_alignment").value
+        )
+        self._enable_place_vision_alignment = bool(
+            self.get_parameter("enable_place_vision_alignment").value
         )
         self._manipulation_frames_dir = Path(
             str(self.get_parameter("manipulation_frames_dir").value)
@@ -373,9 +393,19 @@ class TaskManagerNode(Node):
         self._manipulation_class_schema = str(
             self.get_parameter("manipulation_class_schema").value
         )
+        self._abnormal_zone_fallback_order = normalize_zone_order(
+            self.get_parameter("abnormal_zone_fallback_order").value
+        )
         self._arm_service_timeout_sec = max(
             0.1, float(self.get_parameter("arm_service_timeout_sec").value)
         )
+        self._arm_max_sequence_sec = max(
+            0.1, float(self.get_parameter("arm_max_sequence_sec").value)
+        )
+        if self._arm_service_timeout_sec < self._arm_max_sequence_sec:
+            raise ValueError(
+                "arm_service_timeout_sec must be >= arm_max_sequence_sec"
+            )
         self._precision_release_duration_sec = max(
             0.5,
             float(self.get_parameter("precision_release_duration_sec").value),
@@ -391,6 +421,7 @@ class TaskManagerNode(Node):
             self._pick_i2_targets,
             self._grasp_target_arm_base,
             self._place_target_distance_m,
+            self._placement_observation_kwargs,
         ) = self._load_manipulation_calibration()
         inspection_start_index = int(
             self.get_parameter("inspection_start_index").value
@@ -491,8 +522,13 @@ class TaskManagerNode(Node):
         self._last_odom_time: float = 0.0
         self._last_odom_linear_speed: float = float("inf")
         self._last_odom_angular_speed: float = float("inf")
-        self._abnormal_zones: List[str] = []           # 所有异常区域字母 (可能有1~4个)
-        self._abnormal_handled: int = 0                # 已完成抓取放置的异常数
+        self._abnormal_zones: Tuple[str, ...] = ()     # 第四次巡检后冻结的两个不同任务
+        self._task_queue_frozen = False
+        self._abnormal_attempted: int = 0              # 已消费的放置尝试数
+        self._abnormal_handled: int = 0                # 明确完成动作序列的放置数
+        self._manipulation_outcomes: List[Dict[str, str]] = []
+        self._current_grasp_outcome = "not_attempted"
+        self._used_pick_tag_ids: List[int] = []
         self._phase_seq_idx: int = 0                  # 在 PHASE_SEQUENCE 中的位置
         self._abort_reason: str = ""
         self._nav_retry_counts: Dict[str, int] = {}
@@ -509,6 +545,10 @@ class TaskManagerNode(Node):
         self._place_future = None
         self._grasp_request_started = 0.0
         self._place_request_started = 0.0
+        self._arm_motion_guard_until = 0.0
+        self._grasp_uncertain_reason = ""
+        self._place_uncertain_reason = ""
+        self._place_sequence_completed_pending = False
         self._depth_policy = None
         self._depth_mode_client = None
         self._startup_depth_mode = None
@@ -670,12 +710,18 @@ class TaskManagerNode(Node):
 
     def _load_manipulation_calibration(
         self,
-    ) -> Tuple[Tuple[int, ...], Dict[int, I2Target], Tuple[float, float, float], float]:
+    ) -> Tuple[
+        Tuple[int, ...],
+        Dict[int, I2Target],
+        Tuple[float, float, float],
+        float,
+        Dict[str, Any],
+    ]:
         if not self._enable_manipulation:
-            return (), {}, (0.0, 0.0, 0.0), 0.0
-        if not self._manipulation_calibrated:
+            return (), {}, (0.0, 0.0, 0.0), 0.0, {}
+        if self._manipulation_preset != "competition_v1":
             raise ValueError(
-                "enable_manipulation requires manipulation_calibrated:=true after field acceptance"
+                "enable_manipulation requires manipulation_preset=competition_v1"
             )
         if (
             self._manipulation_model_id != MODEL_ID
@@ -686,8 +732,12 @@ class TaskManagerNode(Node):
         tag_ids = tuple(
             int(value) for value in self.get_parameter("pick_red_tag_ids").value
         )
-        if not tag_ids or len(set(tag_ids)) != len(tag_ids) or min(tag_ids) < 0:
-            raise ValueError("pick_red_tag_ids must contain unique non-negative IDs")
+        if (
+            len(tag_ids) != 2
+            or len(set(tag_ids)) != 2
+            or min(tag_ids) < 0
+        ):
+            raise ValueError("pick_red_tag_ids must contain exactly two unique non-negative IDs")
         try:
             raw_targets = json.loads(
                 str(self.get_parameter("pick_i2_targets_json").value)
@@ -696,21 +746,32 @@ class TaskManagerNode(Node):
             raise ValueError("pick_i2_targets_json is invalid JSON") from exc
         if not isinstance(raw_targets, dict):
             raise ValueError("pick_i2_targets_json must be an object")
+        try:
+            raw_target_ids = {
+                int(key)
+                for key in raw_targets
+                if isinstance(key, str) and key.isdigit() and str(int(key)) == key
+            }
+        except (TypeError, ValueError) as exc:
+            raise ValueError("pick_i2_targets_json keys must be canonical tag IDs") from exc
+        if len(raw_target_ids) != len(raw_targets):
+            raise ValueError("pick_i2_targets_json keys must be canonical tag IDs")
+        if self._enable_pick_i2_alignment:
+            if raw_target_ids != set(tag_ids):
+                raise ValueError("I2 target keys must exactly match pick_red_tag_ids")
+        elif raw_targets:
+            raise ValueError("disabled I2 alignment must not retain active I2 targets")
         targets: Dict[int, I2Target] = {}
-        for tag_id in tag_ids:
+        for tag_id in raw_target_ids:
             values = raw_targets.get(str(tag_id))
             if not isinstance(values, list) or len(values) != 3:
                 raise ValueError("missing calibrated I2 target for tag %d" % tag_id)
             xyz = tuple(float(value) for value in values)
             if not all(math.isfinite(value) for value in xyz):
                 raise ValueError("I2 target for tag %d must be finite" % tag_id)
+            if not -math.pi <= xyz[2] <= math.pi:
+                raise ValueError("I2 target for tag %d yaw must be within [-pi, pi]" % tag_id)
             targets[tag_id] = I2Target(*xyz)
-        unique_targets = {
-            (round(target.x, 6), round(target.y, 6), round(target.yaw, 6))
-            for target in targets.values()
-        }
-        if len(unique_targets) != len(targets):
-            raise ValueError("I2 targets must be independently calibrated, not duplicated")
 
         grasp_values = list(self.get_parameter("grasp_target_arm_base").value)
         if len(grasp_values) != 3:
@@ -719,9 +780,34 @@ class TaskManagerNode(Node):
         if not all(math.isfinite(value) for value in grasp_target) or grasp_target[2] <= 0.0:
             raise ValueError("grasp_target_arm_base must be finite with positive z")
         place_distance = float(self.get_parameter("place_target_distance_m").value)
-        if not math.isfinite(place_distance) or place_distance <= 0.0:
-            raise ValueError("place_target_distance_m must be field-calibrated")
-        return tag_ids, targets, grasp_target, place_distance
+        if not math.isfinite(place_distance):
+            raise ValueError("place_target_distance_m must be finite")
+
+        placement_kwargs: Dict[str, Any] = {}
+        if self._enable_place_vision_alignment:
+            if place_distance <= 0.0:
+                raise ValueError(
+                    "place_target_distance_m must be positive for visual alignment"
+                )
+            color_width = int(self.get_parameter("placement_color_width_px").value)
+            color_height = int(self.get_parameter("placement_color_height_px").value)
+            camera_pitch_deg = float(
+                self.get_parameter("placement_camera_pitch_deg").value
+            )
+            box_width = float(self.get_parameter("placement_box_width_m").value)
+            if color_width <= 0 or color_height <= 0:
+                raise ValueError("placement color dimensions must be positive")
+            if not math.isfinite(camera_pitch_deg):
+                raise ValueError("placement_camera_pitch_deg must be finite")
+            if not math.isfinite(box_width) or box_width <= 0.0:
+                raise ValueError("placement_box_width_m must be positive")
+            placement_kwargs = {
+                "color_width": color_width,
+                "color_height": color_height,
+                "camera_pitch_rad": math.radians(camera_pitch_deg),
+                "box_width_m": box_width,
+            }
+        return tag_ids, targets, grasp_target, place_distance, placement_kwargs
 
     def _publish_precision_zero(self) -> None:
         if self._precision_pub is not None:
@@ -769,6 +855,15 @@ class TaskManagerNode(Node):
             self._place_future = None
         self._request_precision_release()
 
+    def _start_arm_motion_guard(self) -> None:
+        self._arm_motion_guard_until = max(
+            self._arm_motion_guard_until,
+            time.monotonic() + self._arm_max_sequence_sec,
+        )
+
+    def _arm_motion_guard_elapsed(self) -> bool:
+        return time.monotonic() >= self._arm_motion_guard_until
+
     # ═══════════════════════════════════════════════════════════
     #  状态机主循环
     # ═══════════════════════════════════════════════════════════
@@ -777,7 +872,11 @@ class TaskManagerNode(Node):
         """每个 tick 评估当前阶段退出条件，决定是否推进。"""
         if time.monotonic() < self._precision_zero_until:
             self._publish_precision_zero()
+        if not self._arm_motion_guard_elapsed():
+            self._publish_precision_zero()
         elapsed = time.time() - self._phase_enter_time
+        if not self._runtime_base_safety_ok():
+            return
 
         if self._phase == Phase.START:
             self._tick_start(elapsed)
@@ -923,27 +1022,38 @@ class TaskManagerNode(Node):
             return
 
         if workflow.stage == InspectionStage.COMPLETE:
-            if self._inspection_requires_abcd:
-                workflow.require_complete_abcd()
-                if workflow.stage == InspectionStage.ABORTED:
-                    self._abort(workflow.abort_reason)
-                    return
-            abnormal = [
-                info for info in self._gauge_info.values()
-                if info.status and info.status != "normal"
-            ]
-            if abnormal:
-                self._abnormal_zones = [g.letter for g in abnormal]
-                zones = ", ".join(
-                    f"{g.letter}区({g.color}/{g.status})" for g in abnormal
+            assessments = tuple(
+                ZoneAssessment(
+                    letter=info.letter,
+                    abnormal=bool(info.status and info.status != "normal"),
+                    confidence=info.confidence,
                 )
-                self.get_logger().info(
-                    f"巡检完成 — 异常: {zones}  "
-                    f"(共{len(self._abnormal_zones)}处，需{len(self._abnormal_zones)}趟往返)"
+                for info in self._gauge_info.values()
+            )
+            self._abnormal_zones = freeze_two_zone_tasks(
+                assessments,
+                self._abnormal_zone_fallback_order,
+            )
+            self._task_queue_frozen = True
+            detected_abnormal = [item for item in assessments if item.abnormal]
+            detected_text = ", ".join(
+                "%s(%.3f)" % (item.letter, item.confidence)
+                for item in detected_abnormal
+            ) or "none"
+            self.get_logger().info(
+                "第四次巡检完成，已冻结两轮任务: %s -> %s "
+                "(detected_abnormal=%s, uncertain_inspections=%d)"
+                % (
+                    self._abnormal_zones[0],
+                    self._abnormal_zones[1],
+                    detected_text,
+                    len(workflow.uncertain_attempts),
                 )
-            else:
-                self.get_logger().info("巡检完成 — 未发现异常")
+            )
+            self._abnormal_attempted = 0
             self._abnormal_handled = 0
+            self._manipulation_outcomes = []
+            self._used_pick_tag_ids = []
             if self._inspection_only or self._finish_after_inspection:
                 self._enter_phase(Phase.FINISH)
             elif not self._enable_manipulation:
@@ -1068,7 +1178,8 @@ class TaskManagerNode(Node):
             if now - self._inspection_service_wait_started < self._inspection_service_wait_sec:
                 return
             self._inspection_service_wait_started = None
-            if workflow.inspection_failed("service_unavailable"):
+            if workflow.inspection_retries < workflow.max_inspection_retries:
+                workflow.inspection_failed("service_unavailable")
                 self.get_logger().warn(
                     "WHZ service unavailable，重试 %d/%d"
                     % (
@@ -1077,7 +1188,7 @@ class TaskManagerNode(Node):
                     )
                 )
             else:
-                self._abort(workflow.abort_reason)
+                self._complete_uncertain_inspection("service_unavailable")
             return
 
         if workflow.stage != InspectionStage.INSPECTING:
@@ -1091,17 +1202,17 @@ class TaskManagerNode(Node):
         if not self._inspection_future.done():
             if now - self._inspection_request_started > self._inspection_response_timeout_sec:
                 self._inspection_future = None
-                workflow.inspection_timed_out(
-                    "%.1fs" % self._inspection_response_timeout_sec
+                self._complete_uncertain_inspection(
+                    "service_timeout=%.1fs" % self._inspection_response_timeout_sec
                 )
-                self._abort(workflow.abort_reason)
             return
 
         try:
             response = self._inspection_future.result()
         except Exception as exc:  # noqa: BLE001
             self._inspection_future = None
-            if workflow.inspection_failed("service_future_error: %s" % exc):
+            if workflow.inspection_retries < workflow.max_inspection_retries:
+                workflow.inspection_failed("service_future_error: %s" % exc)
                 self.get_logger().warn(
                     "WHZ service future failed，重试 %d/%d: %s"
                     % (
@@ -1111,12 +1222,15 @@ class TaskManagerNode(Node):
                     )
                 )
             else:
-                self._abort(workflow.abort_reason)
+                self._complete_uncertain_inspection(
+                    "service_future_error: %s" % exc
+                )
             return
 
         self._inspection_future = None
         if response is None:
-            if workflow.inspection_failed("empty_service_response"):
+            if workflow.inspection_retries < workflow.max_inspection_retries:
+                workflow.inspection_failed("empty_service_response")
                 self.get_logger().warn(
                     "WHZ returned no response，重试 %d/%d"
                     % (
@@ -1125,7 +1239,7 @@ class TaskManagerNode(Node):
                     )
                 )
             else:
-                self._abort(workflow.abort_reason)
+                self._complete_uncertain_inspection("empty_service_response")
             return
 
         try:
@@ -1135,7 +1249,8 @@ class TaskManagerNode(Node):
                 require_audio=self._require_inspection_audio,
             )
         except InspectionContractError as exc:
-            if workflow.inspection_failed(str(exc)):
+            if workflow.inspection_retries < workflow.max_inspection_retries:
+                workflow.inspection_failed(str(exc))
                 self.get_logger().warn(
                     "WHZ inspection rejected，重试 %d/%d: %s"
                     % (
@@ -1145,7 +1260,13 @@ class TaskManagerNode(Node):
                     )
                 )
             else:
-                self._abort(workflow.abort_reason)
+                self._complete_uncertain_inspection(str(exc))
+            return
+
+        if reading.area in workflow.readings:
+            self._complete_uncertain_inspection(
+                "duplicate_area=%s" % reading.area
+            )
             return
 
         workflow.inspection_succeeded(reading)
@@ -1176,11 +1297,26 @@ class TaskManagerNode(Node):
         info.color = reading.color
         info.level = reading.state_key
         info.status = reading.status
+        info.confidence = float(reading.agree_frames) / float(reading.total_frames)
+
+    def _complete_uncertain_inspection(self, reason: str) -> None:
+        self._inspection_workflow.inspection_uncertain(reason)
+        self._inspection_route_index += 1
+        self._inspection_future = None
+        self._inspection_request_started = 0.0
+        self._inspection_service_wait_started = None
+        self.get_logger().warn(
+            "第%d次仪表感知结果 uncertain，继续下一观察位: %s"
+            % (self._inspection_workflow.step_index, reason)
+        )
 
     def _tick_find_red_bar(self, elapsed: float) -> None:
         """Navigate coarsely, then align one approved red-tag slot to I2."""
-        if self._handle_timeout(elapsed):
+        del elapsed
+        if self._abnormal_attempted >= len(self._abnormal_zones):
+            self._enter_phase(Phase.FINISH)
             return
+        current_zone = self._abnormal_zones[self._abnormal_attempted]
 
         if not self._grab_depth_transition_complete:
             if self._grab_depth_mode is None:
@@ -1192,6 +1328,7 @@ class TaskManagerNode(Node):
             if not self._ensure_depth_mode(
                 self._grab_depth_mode,
                 "before:grab_area_approach",
+                fail_soft=True,
             ):
                 return
             self._grab_depth_transition_complete = True
@@ -1205,80 +1342,161 @@ class TaskManagerNode(Node):
             if not self._nav.is_done():
                 return
             if not self._nav.succeeded():
-                self._retry_navigation_or_abort(retry_key, "抓取区")
+                exhausted_reason = self._retry_navigation(retry_key, "抓取区")
+                if exhausted_reason is not None:
+                    self._current_grasp_outcome = (
+                        "uncertain: skipped after grab navigation failure: "
+                        + exhausted_reason
+                    )
+                    self._complete_place_attempt(
+                        current_zone,
+                        uncertain_reason=(
+                            "place skipped because grab navigation failed: "
+                            + exhausted_reason
+                        ),
+                    )
                 return
             self._clear_navigation_retry(retry_key)
             self._nav.reset()
             self._pick_arrived = True
             self._request_precision_release()
 
+        if not self._enable_pick_i2_alignment:
+            self.get_logger().warn(
+                "I2精对齐已关闭，使用抓取区固定偏移继续比赛"
+            )
+            self._advance_to_next_phase()
+            return
+
         if self._pick_executor is None:
             self._pick_executor = PickOneExecutor(
                 _PickRuntimeAdapter(self),
                 PickConfig(
                     red_tag_ids=self._pick_red_tag_ids,
+                    excluded_tag_ids=tuple(self._used_pick_tag_ids),
                     i2_targets=self._pick_i2_targets,
                     stop_after_stage="i2",
                 ),
             )
             self._pick_executor.start()
         result = self._pick_executor.tick()
+        selected_tag_id = self._pick_executor.target_tag_id
+        if (
+            selected_tag_id is not None
+            and selected_tag_id not in self._used_pick_tag_ids
+        ):
+            self._used_pick_tag_ids.append(selected_tag_id)
+            self.get_logger().info(
+                "第%d轮抓取锁定 Tag %d；后续轮次将排除该 Tag"
+                % (self._abnormal_attempted + 1, selected_tag_id)
+            )
         if result is None:
             return
         if not result.success or not result.alignment_success:
-            self._abort("pick I2 alignment failed: %s" % result.reason)
+            self.get_logger().warn(
+                "I2精对齐失败，降级到固定抓取预设: %s" % result.reason
+            )
+            self._request_precision_release()
+            self._advance_to_next_phase()
             return
-        self.get_logger().info("抓取位 I2 对齐完成，等待机械臂明确反馈")
+        self.get_logger().info("抓取位 I2 对齐完成，执行固定抓取预设")
         self._advance_to_next_phase()
 
     def _tick_grasp_bar(self, elapsed: float) -> None:
-        """Call the arm grasp service asynchronously and fail closed."""
-        if self._handle_timeout(elapsed):
+        """Run the fixed grasp preset; uncertain arm outcomes degrade and continue."""
+        del elapsed
+        if self._grasp_uncertain_reason:
+            if not self._arm_motion_guard_elapsed():
+                return
+            reason = self._grasp_uncertain_reason
+            self._grasp_uncertain_reason = ""
+            self._grasp_future = None
+            self._arm_motion_guard_until = 0.0
+            self._current_grasp_outcome = "uncertain: " + reason
+            self.get_logger().warn(
+                "抓取结果 uncertain，保守等待已完成，继续比赛: %s" % reason
+            )
+            self._advance_to_next_phase()
+            return
+        if self._current_grasp_outcome == "sequence_completed_unverified_grasp":
+            if not self._arm_motion_guard_elapsed():
+                return
+            self._arm_motion_guard_until = 0.0
+            self.get_logger().info("抓取动作保护时长已满足，允许进入放置阶段")
+            self._advance_to_next_phase()
             return
         if self._grasp_client is None or self._grasp_service_type is None:
-            self._abort("grasp service client is unavailable")
+            self.get_logger().warn("抓取服务客户端不可用，记录 uncertain 后继续比赛")
+            self._current_grasp_outcome = "uncertain: service client unavailable"
+            self._advance_to_next_phase()
             return
         if self._grasp_request_started == 0.0:
             self._grasp_request_started = time.monotonic()
         if self._grasp_future is None:
             if not self._grasp_client.service_is_ready():
                 if time.monotonic() - self._grasp_request_started > self._arm_service_timeout_sec:
-                    self._abort("grasp service did not become ready")
+                    self.get_logger().warn(
+                        "抓取服务未就绪，记录 uncertain 后继续比赛"
+                    )
+                    self._current_grasp_outcome = "uncertain: service not ready"
+                    self._advance_to_next_phase()
                 return
             request = self._grasp_service_type.Request()
             target = request.target_arm_base
             target.x, target.y, target.z = self._grasp_target_arm_base
-            self._grasp_future = self._grasp_client.call_async(request)
+            try:
+                self._grasp_future = self._grasp_client.call_async(request)
+            except Exception as exc:  # noqa: BLE001
+                self._start_arm_motion_guard()
+                self._grasp_uncertain_reason = "grasp dispatch failed: %s" % exc
+                self.get_logger().warn(
+                    "抓取请求派发异常，无法证明服务端未收到；等待动作保护时长: %s"
+                    % exc
+                )
+                return
             self._grasp_request_started = time.monotonic()
+            self._start_arm_motion_guard()
             return
         if not self._grasp_future.done():
             if time.monotonic() - self._grasp_request_started > self._arm_service_timeout_sec:
-                self._grasp_future.cancel()
-                self._abort("grasp service timed out")
+                self._grasp_uncertain_reason = "grasp service timed out"
+                self.get_logger().warn(
+                    "抓取服务超时；future cancel不能停止舵机，等待动作保护时长"
+                )
             return
         try:
             response = self._grasp_future.result()
         except Exception as exc:  # noqa: BLE001
-            self._abort("grasp service failed: %s" % exc)
+            self._grasp_uncertain_reason = "grasp service failed: %s" % exc
+            self.get_logger().warn(
+                "抓取响应异常，等待动作保护时长后继续: %s" % exc
+            )
             return
         if response is None or not response.success:
             message = "empty response" if response is None else response.message
-            self._abort("grasp rejected: %s" % message)
+            self._grasp_uncertain_reason = "grasp rejected: %s" % message
+            self.get_logger().warn(
+                "抓取未确认，等待动作保护时长后继续: %s" % message
+            )
             return
-        self.get_logger().info("机械臂抓取成功: %s" % response.message)
-        self._advance_to_next_phase()
+        self._grasp_future = None
+        self._current_grasp_outcome = "sequence_completed_unverified_grasp"
+        self.get_logger().info(
+            "机械臂抓取动作序列完成（未验证物体抓持）；继续保持底盘静止: %s"
+            % response.message
+        )
+        return
 
     def _tick_place_to_abnormal_zone(self, elapsed: float) -> None:
         """Navigate, align to the selected A-D face, then request arm place."""
-        if self._handle_timeout(elapsed):
-            return
+        del elapsed
 
-        if self._abnormal_handled >= len(self._abnormal_zones):
-            self.get_logger().info("所有异常区域已处理完毕！")
+        if self._abnormal_attempted >= len(self._abnormal_zones):
+            self.get_logger().info("所有异常区域均已尝试处理")
             self._advance_to_next_phase()
             return
 
-        current_zone = self._abnormal_zones[self._abnormal_handled]
+        current_zone = self._abnormal_zones[self._abnormal_attempted]
 
         if not self._placement_arrived:
             retry_key = "placement:%s" % current_zone
@@ -1289,7 +1507,18 @@ class TaskManagerNode(Node):
             if not self._nav.is_done():
                 return
             if not self._nav.succeeded():
-                self._retry_navigation_or_abort(retry_key, "%s放置区" % current_zone)
+                exhausted_reason = self._retry_navigation(
+                    retry_key,
+                    "%s放置区" % current_zone,
+                )
+                if exhausted_reason is not None:
+                    self._complete_place_attempt(
+                        current_zone,
+                        uncertain_reason=(
+                            "place skipped after navigation failure: "
+                            + exhausted_reason
+                        ),
+                    )
                 return
             self._clear_navigation_retry(retry_key)
             self._nav.reset()
@@ -1297,12 +1526,20 @@ class TaskManagerNode(Node):
             self._request_precision_release()
 
         if not self._place_alignment_complete:
-            if self._place_executor is None:
+            if not self._enable_place_vision_alignment:
+                self.get_logger().warn(
+                    "%s区视觉精对齐已关闭，使用J0固定放置预设" % current_zone
+                )
+                self._place_alignment_complete = True
+                self._place_request_started = time.monotonic()
+                self._request_precision_release()
+            elif self._place_executor is None:
                 self._placement_observer = PlacementObservationBuilder(
                     PlacementObservationConfig(
                         frames_dir=self._manipulation_frames_dir,
                         target_letter=current_zone,
                         max_frame_age_s=self._manipulation_perception_timeout_sec,
+                        **self._placement_observation_kwargs,
                     ),
                     _YoloLetterProvider(self),
                 )
@@ -1315,53 +1552,129 @@ class TaskManagerNode(Node):
                     ),
                 )
                 self._place_executor.start()
-            result = self._place_executor.tick()
-            if result is None:
+            if self._enable_place_vision_alignment:
+                result = self._place_executor.tick()
+                if result is None:
+                    return
+                if not result.success or not result.alignment_success:
+                    self.get_logger().warn(
+                        "%s区视觉精对齐失败，降级到J0固定放置: %s"
+                        % (current_zone, result.reason)
+                    )
+                self._place_alignment_complete = True
+                self._place_executor = None
+                self._placement_observer = None
+                self._place_request_started = time.monotonic()
+                self._request_precision_release()
+
+        if self._place_uncertain_reason:
+            if not self._arm_motion_guard_elapsed():
                 return
-            if not result.success or not result.alignment_success:
-                self._abort("place alignment failed: %s" % result.reason)
+            reason = self._place_uncertain_reason
+            self._place_uncertain_reason = ""
+            self._place_future = None
+            self._arm_motion_guard_until = 0.0
+            self._complete_place_attempt(current_zone, uncertain_reason=reason)
+            return
+        if self._place_sequence_completed_pending:
+            if not self._arm_motion_guard_elapsed():
                 return
-            self._place_alignment_complete = True
-            self._place_executor = None
-            self._placement_observer = None
-            self._place_request_started = time.monotonic()
-            self._request_precision_release()
+            self._place_sequence_completed_pending = False
+            self.get_logger().info(
+                "%s区放置动作保护时长已满足，允许继续任务" % current_zone
+            )
+            self._complete_place_attempt(current_zone)
+            return
 
         if self._place_client is None:
-            self._abort("place service client is unavailable")
+            self._complete_place_attempt(
+                current_zone,
+                uncertain_reason="place service client is unavailable",
+            )
             return
         if self._place_future is None:
             if not self._place_client.service_is_ready():
                 if time.monotonic() - self._place_request_started > self._arm_service_timeout_sec:
-                    self._abort("place service did not become ready")
+                    self._complete_place_attempt(
+                        current_zone,
+                        uncertain_reason="place service did not become ready",
+                    )
                 return
-            self._place_future = self._place_client.call_async(Trigger.Request())
+            try:
+                self._place_future = self._place_client.call_async(Trigger.Request())
+            except Exception as exc:  # noqa: BLE001
+                self._start_arm_motion_guard()
+                self._place_uncertain_reason = "place dispatch failed: %s" % exc
+                self.get_logger().warn(
+                    "放置请求派发异常，无法证明服务端未收到；等待动作保护时长: %s"
+                    % exc
+                )
+                return
             self._place_request_started = time.monotonic()
+            self._start_arm_motion_guard()
             return
         if not self._place_future.done():
             if time.monotonic() - self._place_request_started > self._arm_service_timeout_sec:
-                self._place_future.cancel()
-                self._abort("place service timed out")
+                self._place_uncertain_reason = "place service timed out"
+                self.get_logger().warn(
+                    "放置服务超时；future cancel不能停止舵机，等待动作保护时长"
+                )
             return
         try:
             response = self._place_future.result()
         except Exception as exc:  # noqa: BLE001
-            self._abort("place service failed: %s" % exc)
+            self._place_uncertain_reason = "place service failed: %s" % exc
+            self.get_logger().warn(
+                "放置响应异常，等待动作保护时长后继续: %s" % exc
+            )
             return
         if response is None or not response.success:
             message = "empty response" if response is None else response.message
-            self._abort("place rejected: %s" % message)
+            self._place_uncertain_reason = "place rejected: %s" % message
+            self.get_logger().warn(
+                "放置未确认，等待动作保护时长后继续: %s" % message
+            )
             return
-        self._abnormal_handled += 1
-        remaining = len(self._abnormal_zones) - self._abnormal_handled
+        self._place_future = None
+        self._place_sequence_completed_pending = True
         self.get_logger().info(
-            f"{current_zone}区放置完成 ({self._abnormal_handled}/{len(self._abnormal_zones)})"
-            + (f"，剩余 {remaining} 趟" if remaining > 0 else "，全部完成！")
+            "%s区放置动作序列完成；继续保持底盘静止" % current_zone
         )
+        return
+
+    def _complete_place_attempt(
+        self,
+        current_zone: str,
+        uncertain_reason: str = "",
+    ) -> None:
+        self._abnormal_attempted += 1
+        place_outcome = "uncertain: " + uncertain_reason if uncertain_reason else "sequence_completed"
+        if not uncertain_reason:
+            self._abnormal_handled += 1
+        self._manipulation_outcomes.append({
+            "zone": current_zone,
+            "grasp": self._current_grasp_outcome,
+            "place": place_outcome,
+        })
+        self._arm_motion_guard_until = 0.0
+        remaining = len(self._abnormal_zones) - self._abnormal_attempted
+        if uncertain_reason:
+            self.get_logger().warn(
+                f"{current_zone}区放置结果 uncertain，继续下一任务 "
+                f"({self._abnormal_attempted}/{len(self._abnormal_zones)} attempts): "
+                f"{uncertain_reason}"
+            )
+        else:
+            self.get_logger().info(
+                f"{current_zone}区放置动作序列完成 "
+                f"({self._abnormal_handled} confirmed / "
+                f"{self._abnormal_attempted} attempted)"
+                + (f"，剩余 {remaining} 趟" if remaining > 0 else "，全部完成！")
+            )
         if remaining > 0:
             self._enter_phase(Phase.FIND_RED_BAR)
         else:
-            self._advance_to_next_phase()
+            self._enter_phase(Phase.FINISH)
 
     # ═══════════════════════════════════════════════════════════
     #  阶段推进
@@ -1374,16 +1687,33 @@ class TaskManagerNode(Node):
         self.get_logger().error("任务中止: %s" % self._abort_reason)
         self._enter_phase(Phase.ABORT)
 
-    def _retry_navigation_or_abort(self, key: str, label: str) -> bool:
+    def _runtime_base_safety_ok(self) -> bool:
+        if self._phase in (Phase.START, Phase.FINISH, Phase.ABORT):
+            return True
+        if (
+            self._last_odom_time <= 0.0
+            or time.time() - self._last_odom_time > self._odom_timeout_sec
+        ):
+            self._abort("runtime odometry became unavailable or stale")
+            return False
+        if self._slam_status_time > 0.0 and not self._slam_tracking_ok:
+            self._abort("runtime visual localization reported tracking loss")
+            return False
+        return True
+
+    def _retry_navigation(self, key: str, label: str) -> Optional[str]:
         reason = self._nav.failure_reason or self._nav.result_name
         retries = self._nav_retry_counts.get(key, 0)
         self._nav.reset()
         if retries >= self._max_nav_retries:
-            self._abort(
-                "%s导航在%d次尝试后失败: %s"
-                % (label, self._max_nav_retries + 1, reason)
+            self._clear_navigation_retry(key)
+            exhausted_reason = "%s导航在%d次尝试后失败: %s" % (
+                label,
+                self._max_nav_retries + 1,
+                reason,
             )
-            return False
+            self.get_logger().warn(exhausted_reason)
+            return exhausted_reason
         retries += 1
         self._nav_retry_counts[key] = retries
         self._nav_retry_not_before[key] = time.monotonic() + self._retry_delay_sec
@@ -1391,7 +1721,14 @@ class TaskManagerNode(Node):
             "%s导航失败，重试 %d/%d: %s"
             % (label, retries, self._max_nav_retries, reason)
         )
-        return True
+        return None
+
+    def _retry_navigation_or_abort(self, key: str, label: str) -> bool:
+        exhausted_reason = self._retry_navigation(key, label)
+        if exhausted_reason is None:
+            return True
+        self._abort(exhausted_reason)
+        return False
 
     def _clear_navigation_retry(self, key: str) -> None:
         self._nav_retry_counts.pop(key, None)
@@ -1446,7 +1783,12 @@ class TaskManagerNode(Node):
         self._set_mission_start_wait_reason(reason)
         return not reason
 
-    def _ensure_depth_mode(self, mode, milestone: str) -> bool:
+    def _ensure_depth_mode(
+        self,
+        mode,
+        milestone: str,
+        fail_soft: bool = False,
+    ) -> bool:
         if mode is None or self._depth_mode_client is None:
             return True
         readiness = self._depth_mode_client.readiness()
@@ -1511,19 +1853,41 @@ class TaskManagerNode(Node):
                 if readiness.ready
                 else readiness.reason
             )
-            self._abort(
-                "depth pipeline readiness timed out at %s: %s"
-                % (self._depth_pending_milestone, reason)
+            message = "depth pipeline readiness timed out at %s: %s" % (
+                self._depth_pending_milestone,
+                reason,
             )
+            if fail_soft:
+                self._disable_optional_alignment(message)
+                return True
+            self._abort(message)
             return False
         if readiness.mode == DepthMode.FAULT:
-            self._abort(
-                "depth transition failed at %s: %s"
-                % (self._depth_pending_milestone, readiness.reason)
+            message = "depth transition failed at %s: %s" % (
+                self._depth_pending_milestone,
+                readiness.reason,
             )
+            if fail_soft:
+                self._disable_optional_alignment(message)
+                return True
+            self._abort(message)
             return False
         self._depth_mode_client.republish_active_request(mode)
         return False
+
+    def _disable_optional_alignment(self, reason: str) -> None:
+        self._enable_pick_i2_alignment = False
+        self._enable_place_vision_alignment = False
+        self._depth_pending_mode = None
+        self._depth_pending_milestone = ""
+        self._depth_pending_request_id = ""
+        self._depth_pending_started = 0.0
+        self._depth_pending_odom_baseline = 0.0
+        self._depth_transition_stationary.reset()
+        self.get_logger().warn(
+            "可选 I2/J1 感知链不可用，记录 uncertain 并继续固定抓放: %s"
+            % reason
+        )
 
     def _host_odom_ready_after_depth_transition(self, mode) -> bool:
         if (
@@ -1558,15 +1922,23 @@ class TaskManagerNode(Node):
             self._pick_executor = None
             self._grasp_future = None
             self._grasp_request_started = 0.0
+            self._grasp_uncertain_reason = ""
+            self._current_grasp_outcome = "not_attempted"
+            self._arm_motion_guard_until = 0.0
         if phase == Phase.GRASP_BAR:
             self._grasp_future = None
             self._grasp_request_started = 0.0
+            self._grasp_uncertain_reason = ""
+            self._arm_motion_guard_until = 0.0
         if phase == Phase.PLACE_TO_ABNORMAL_ZONE:
             self._placement_arrival_time = None
             self._placement_arrived = False
             self._place_alignment_complete = False
             self._place_future = None
             self._place_request_started = 0.0
+            self._place_uncertain_reason = ""
+            self._place_sequence_completed_pending = False
+            self._arm_motion_guard_until = 0.0
         self._phase = phase
         self._phase_enter_time = time.time()
 
@@ -1756,6 +2128,7 @@ class TaskManagerNode(Node):
                 "color": info.color,
                 "level": info.level,
                 "status": info.status,
+                "confidence": round(info.confidence, 4),
             }
 
         yolo_summary = None
@@ -1790,7 +2163,14 @@ class TaskManagerNode(Node):
                 if self._last_odom_time > 0.0 else None
             ),
             "abnormal_zones": self._abnormal_zones,
+            "task_queue_frozen": self._task_queue_frozen,
+            "abnormal_attempted": self._abnormal_attempted,
             "abnormal_handled": self._abnormal_handled,
+            "manipulation_outcomes": self._manipulation_outcomes,
+            "used_pick_tag_ids": self._used_pick_tag_ids,
+            "uncertain_inspections": list(
+                self._inspection_workflow.uncertain_attempts
+            ),
             "abort_reason": self._abort_reason,
             "waypoint_source": self._waypoint_source,
             "waypoint_route": self._waypoint_route,

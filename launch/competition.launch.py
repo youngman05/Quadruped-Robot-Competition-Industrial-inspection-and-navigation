@@ -32,7 +32,6 @@ CONE_BEHAVIOR_TREE = PathJoinSubstitution([
     "navigate_cone_w_replanning_and_recovery.xml",
 ])
 
-
 def generate_launch_description() -> LaunchDescription:
     # ─── 启动参数 ───────────────────────────────────
     enable_gauge = LaunchConfiguration("enable_gauge", default="false")
@@ -53,12 +52,13 @@ def generate_launch_description() -> LaunchDescription:
         "enable_yolo_udp_bridge", default="false"
     )
     enable_arm_motion = LaunchConfiguration("enable_arm_motion", default="false")
-    enable_manipulation = LaunchConfiguration("enable_manipulation", default="false")
-    manipulation_calibrated = LaunchConfiguration(
-        "manipulation_calibrated", default="false"
+    arm_motion_authorized = LaunchConfiguration(
+        "arm_motion_authorized", default="false"
     )
+    enable_manipulation = LaunchConfiguration("enable_manipulation", default="false")
     manipulation_params_file = LaunchConfiguration("manipulation_params_file")
     arm_motion_params_file = LaunchConfiguration("arm_motion_params_file")
+    arm_max_sequence_sec = LaunchConfiguration("arm_max_sequence_sec", default="20.0")
     verify_depth_disable_localization = LaunchConfiguration(
         "verify_depth_disable_localization",
         default="true",
@@ -164,17 +164,17 @@ def generate_launch_description() -> LaunchDescription:
     declare_enable_arm_motion = DeclareLaunchArgument(
         "enable_arm_motion",
         default_value="false",
-        description="启动机械臂服务节点；运动授权仍由独立参数文件控制。",
+        description="启动机械臂服务节点。",
+    )
+    declare_arm_motion_authorized = DeclareLaunchArgument(
+        "arm_motion_authorized",
+        default_value="false",
+        description="本次运行显式允许机械臂执行已选固定预设。",
     )
     declare_enable_manipulation = DeclareLaunchArgument(
         "enable_manipulation",
         default_value="false",
         description="启用 TaskManager 抓取、放置和精对齐正式实现。",
-    )
-    declare_manipulation_calibrated = DeclareLaunchArgument(
-        "manipulation_calibrated",
-        default_value="false",
-        description="仅在 AprilTag/I2/抓取/放置标定和分段验收后设为 true。",
     )
     declare_manipulation_params_file = DeclareLaunchArgument(
         "manipulation_params_file",
@@ -189,6 +189,11 @@ def generate_launch_description() -> LaunchDescription:
             FindPackageShare("arm_new_ros"), "config", "arm_motion_params.yaml",
         ]),
         description="机械臂服务参数文件。",
+    )
+    declare_arm_max_sequence_sec = DeclareLaunchArgument(
+        "arm_max_sequence_sec",
+        default_value="20.0",
+        description="机械臂请求发出后禁止底盘离开的保守等待上限。",
     )
     declare_verify_depth_disable_localization = DeclareLaunchArgument(
         "verify_depth_disable_localization",
@@ -352,8 +357,8 @@ def generate_launch_description() -> LaunchDescription:
                 "enable_manipulation": ParameterValue(
                     enable_manipulation, value_type=bool
                 ),
-                "manipulation_calibrated": ParameterValue(
-                    manipulation_calibrated, value_type=bool
+                "arm_max_sequence_sec": ParameterValue(
+                    arm_max_sequence_sec, value_type=float
                 ),
                 "manipulation_frames_dir": depth_frames_dir,
                 "pass_obstacle_timeout_sec": ParameterValue(
@@ -487,7 +492,14 @@ def generate_launch_description() -> LaunchDescription:
         package="arm_new_ros",
         executable="arm_motion_node",
         name="arm_motion_node",
-        parameters=[arm_motion_params_file],
+        parameters=[
+            arm_motion_params_file,
+            {
+                "enable_motion": ParameterValue(
+                    arm_motion_authorized, value_type=bool
+                ),
+            },
+        ],
         output="screen",
         condition=IfCondition(enable_arm_motion),
     )
@@ -564,10 +576,11 @@ def generate_launch_description() -> LaunchDescription:
         declare_enable_apriltag_bridge,
         declare_enable_yolo_udp_bridge,
         declare_enable_arm_motion,
+        declare_arm_motion_authorized,
         declare_enable_manipulation,
-        declare_manipulation_calibrated,
         declare_manipulation_params_file,
         declare_arm_motion_params_file,
+        declare_arm_max_sequence_sec,
         declare_verify_depth_disable_localization,
         declare_cone_params_file,
         declare_enable_whz,

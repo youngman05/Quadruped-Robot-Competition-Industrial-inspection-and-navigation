@@ -215,6 +215,25 @@ class FormalStartupChainContractTests(unittest.TestCase):
         self.assertIn("grep -Fq 'active [3]'", snapshot_block)
         self.assertNotIn('state="active [3]"', snapshot_block)
 
+    def test_parameter_reads_retry_without_weakening_value_gate(self):
+        for token in (
+            'STARTUP_PARAMETER_READ_RETRIES="${STARTUP_PARAMETER_READ_RETRIES:-3}"',
+            'for attempt in $(seq 1 "$STARTUP_PARAMETER_READ_RETRIES")',
+            'timeout "$STARTUP_CLI_TIMEOUT_SEC" ros2 param get "$node" "$parameter"',
+            'kill -0 "$COMP_PID"',
+            'live_parameter_error.$node.$parameter',
+            'startup parameter read retries must be at least 1',
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.script)
+        parameter_block = self.script.split("parameter_value() {", 1)[1].split(
+            "require_numeric_parameter() {", 1
+        )[0]
+        self.assertIn("return 0", parameter_block)
+        self.assertIn("return 1", parameter_block)
+        self.assertNotIn("echo 0", parameter_block)
+        self.assertNotIn("echo false", parameter_block)
+
     def test_phase113_preset_is_no_retry_and_calibration_gated(self):
         for token in (
             "--cone-to-whz-l6",

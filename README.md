@@ -2,7 +2,7 @@
 
 本仓库面向 **2026 年中国高校智能机器人创意大赛 足式机器人挑战赛 四足机器人大型组**，目标是在绝影 Lite 系列四足机器人和 Jetson Xavier NX 级别 AI 主机上，完成国赛线下挑战中的自主避障、巡检识别、语音播报、长条识别与导航搬运流程。
 
-当前仓库覆盖视觉、SLAM、导航、任务管理、语音接口，以及选择性集成的 AprilTag/YOLO 三维感知和机械臂抓放服务。抓放软件链已经接入，但现场标定、机械臂停机链和 L5/L6 实车验收尚未完成，默认配置保持 fail-closed。
+当前仓库覆盖视觉、SLAM、导航、任务管理、语音接口，以及选择性集成的 AprilTag/YOLO 三维感知和机械臂抓放服务。抓放软件链已经接入，主路径使用 `competition_v1` 固定抓放预设，I2/J1 视觉精对齐为可选增强；现场预设验证和 L6 实车测试尚未完成，默认配置保持 fail-closed。
 
 ## 比赛任务理解
 
@@ -12,7 +12,7 @@
 |---|---|---|
 | 避障任务 | 从出发区自主穿越障碍区域，避开随机放置的 2 个锥形桶 | D455 深度降采样 + LaserScan UDP + Nav2 local costmap |
 | 巡检识别 | 自主前往检测区域，识别 A/B/C/D 区域与仪表盘状态，并进行语音播报 | YOLO 字母/目标检测 + OpenCV 仪表识别 + task_manager + speech |
-| 长条抓取任务 | 找到红色异常长条，搬运到异常仪表对应的 A/B/C/D 放置区 | YOLO/AprilTag 三维感知 + Nav2 精对准 + 机械臂服务；现场标定和分段验收仍为硬门禁 |
+| 长条抓取任务 | 找到红色异常长条，搬运到异常仪表对应的 A/B/C/D 放置区 | 固定抓放预设为主路径；AprilTag I2 抓取精对齐和 J1 视觉放置可选，失败时回退固定抓放/J0 |
 
 比赛规则约束：
 
@@ -51,7 +51,7 @@ Task Manager
   -> 按比赛阶段调用导航
   -> 汇总仪表、YOLO、SLAM 状态
   -> 发布 /speech/text
-  -> 调用机械臂抓取/放置服务并按成功反馈推进状态
+  -> 调用机械臂抓取/放置服务；动作结果可标记 uncertain 并继续比赛
 ```
 
 系统分层：
@@ -65,7 +65,11 @@ Task Manager
 | 仪表识别 | OpenCV 传统视觉，Hough 圆/线 + HSV 颜色判定 | 已实现并接入 ROS2 `/gauge/status` |
 | 任务管理 | ROS2 状态机 | 已实现主流程和导航客户端调用 |
 | 语音播报 | `/speech/text` 接口，TTS 节点占位 | 接口已有，实际 TTS 待实现 |
-| 机械臂 | `arm_new_interfaces` + `arm_new_ros` 服务节点 | 软件链已接入且默认禁用；真实外参、抓取/放置目标、物理包络和停机链待现场接受 |
+| 机械臂 | `arm_new_interfaces` + `arm_new_ros` 服务节点 | 软件链已接入且默认禁用；需验证 `competition_v1` 固定抓放参数和最大动作时长，完整 TF/视觉标定仅在启用对应增强时需要 |
+
+第四次仪表识别后，TaskManager 会把 0-4 个异常结果归一化并冻结为恰好两个不同的 A/B/C/D 任务：2 个直接使用，1 个按配置顺序补齐，0 个使用两个兜底区，3-4 个按异常置信度取前两名。实际路线固定为 `grab -> zone_1 -> grab -> zone_2 -> FINISH`。
+
+抓放服务返回 success 只表示预设动作序列无异常完成，不证明已经抓住、仍持有或成功放下物体。感知、I2/J1 对齐和抓放 outcome 可记录为 `uncertain` 后继续；抓取区或放置区单点 Nav2 在有限重试耗尽后跳过该轮机械臂动作并继续下一冻结任务。定位/里程计失效、关键启动失败、启动所有权冲突或速度发布冲突仍必须 `ABORT`。机械臂请求发出后，底盘必须保持静止直到 `max_arm_sequence_sec` 保护时长结束。
 
 ## 技术栈
 
@@ -300,7 +304,7 @@ configs/
 
 docs/
   deployment_jetson.md    Jetson 部署记录
-  pick_place_l6_runbook_zh.md  抓放 formal preflight 与 L5/L6 门禁
+  pick_place_l6_runbook_zh.md  固定抓放预设、无动作 preflight 与 L6 边界
   system_design.md        系统架构笔记
   test_checklist.md       测试清单
 
@@ -447,7 +451,7 @@ ros2 topic echo /task/status
 | loop metrics 仍需修正 primary source 选择 | 会误判回环结果 | 先修 recorder，再用固定路线复测 |
 | YOLO 类别映射存在两套描述 | task_manager 可能解析不到红条/字母/障碍 | 统一训练模型、`classes.yaml` 和 publisher class_name |
 | 语音节点未实现 | 巡检识别语音得分会受影响 | 先做 `/speech/text` 到离线 TTS 或预录音频 |
-| 机械臂无已证明的 cancel/hold/e-stop，现场标定未接受 | 已提交动作可能无法由 `stop_all.sh` 硬停止，完整抓放可能碰撞或误放 | 保持默认禁用；按 `docs/pick_place_l6_runbook_zh.md` 完成物理停机链、分段标定和 L5 验收后再运行 L6 |
+| 机械臂没有真实抓持反馈，已提交动作也不能由取消 ROS future 停止 | 服务 success 可能被误当成抓取成功；底盘过早移动会与仍在执行的舵机序列冲突 | 验证固定 `competition_v1` 预设；结果不确定时记录 `uncertain` 并继续，已发请求后等待 `max_arm_sequence_sec`；物理断能或已验证的 cancel/hold 作为现场安全手段 |
 | ROS2 topic/QoS/TF 名称不一致 | 节点看似启动但数据不流动 | 所有联调必须检查 `ros2 topic list/info` 和 TF tree |
 
 ## 代码入口索引

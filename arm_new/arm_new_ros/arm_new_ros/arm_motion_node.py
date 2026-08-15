@@ -68,6 +68,10 @@ class ArmMotionNode(Node):
         self._pause_s = float(self.get_parameter("pause_s").value)
         self._scan_first = bool(self.get_parameter("scan_first").value)
         self._enable_motion = bool(self.get_parameter("enable_motion").value)
+        self._arm_preset = str(self.get_parameter("arm_preset").value).strip()
+        self._max_arm_sequence_sec = max(
+            0.1, float(self.get_parameter("max_arm_sequence_sec").value)
+        )
         self._transform_calibrated = bool(self.get_parameter("transform_calibrated").value)
         self._grasp_reference_configured = bool(
             self.get_parameter("grasp_reference_configured").value
@@ -100,7 +104,6 @@ class ArmMotionNode(Node):
         self._tf_lookup_timeout_s = max(
             0.0, float(self.get_parameter("tf_lookup_timeout_s").value)
         )
-
         planner_config = ArmGrabConfig(
             open_gripper=int(self.get_parameter("gripper_open_pulse").value),
             grasp_open_gripper=int(
@@ -147,8 +150,9 @@ class ArmMotionNode(Node):
         self.get_logger().info(
             "arm_motion_node ready: services=/arm/execute_grasp_fixed, "
             "/arm/execute_place_fixed, /arm/preflight; motion_enabled={} "
-            "transform_calibrated={}".format(
+            "preset={} transform_calibrated={}".format(
                 self._enable_motion,
+                self._arm_preset,
                 self._transform_calibrated,
             )
         )
@@ -163,12 +167,14 @@ class ArmMotionNode(Node):
         self.declare_parameter("pause_s", 0.2)
         self.declare_parameter("scan_first", True)
         self.declare_parameter("enable_motion", False)
+        self.declare_parameter("arm_preset", "unconfigured")
+        self.declare_parameter("max_arm_sequence_sec", 20.0)
         self.declare_parameter("transform_calibrated", False)
 
         self.declare_parameter("tf_parent_frame", "base_link")
         self.declare_parameter("tf_child_frame", "arm_base_link")
         self.declare_parameter("tf_lookup_timeout_s", 1.0)
-        self.declare_parameter("require_tf_in_preflight", True)
+        self.declare_parameter("require_tf_in_preflight", False)
 
         self.declare_parameter("grasp_reference_configured", False)
         self.declare_parameter("grasp_reference_arm_base", [0.42, 0.00])
@@ -315,6 +321,19 @@ class ArmMotionNode(Node):
         return self._execute_or_plan(payload, steps)
 
     def _execute_or_plan(self, payload: Dict[str, Any], steps: Sequence[Any]) -> Dict[str, Any]:
+        estimated_sequence_sec = self._estimated_sequence_sec(steps)
+        payload["estimated_sequence_sec"] = estimated_sequence_sec
+        payload["max_arm_sequence_sec"] = self._max_arm_sequence_sec
+        if estimated_sequence_sec > self._max_arm_sequence_sec:
+            payload["ok"] = False
+            payload["state"] = "rejected"
+            payload["message"] = (
+                "planned sequence {:.3f}s exceeds max_arm_sequence_sec {:.3f}s".format(
+                    estimated_sequence_sec,
+                    self._max_arm_sequence_sec,
+                )
+            )
+            return payload
         blocked_reason = self._motion_block_reason()
         if blocked_reason:
             payload["ok"] = False
@@ -332,6 +351,8 @@ class ArmMotionNode(Node):
         issues: List[str] = []
         checks: Dict[str, Any] = {
             "motion_enabled": self._enable_motion,
+            "arm_preset": self._arm_preset,
+            "max_arm_sequence_sec": self._max_arm_sequence_sec,
             "transform_calibrated": self._transform_calibrated,
             "grasp_reference_configured": self._grasp_reference_configured,
             "place_target_configured": self._place_target_configured,
@@ -339,14 +360,14 @@ class ArmMotionNode(Node):
             "tf_child_frame": self._tf_child_frame,
             "servo_ids": [],
         }
-        blocked_reason = self._motion_block_reason()
+        blocked_reason = self._configuration_block_reason()
         if blocked_reason:
             issues.append(blocked_reason)
         if not self._grasp_reference_configured:
             issues.append("grasp_reference_arm_base is not marked calibrated")
 
         try:
-            validate_grasp_target(
+            grasp_target = validate_grasp_target(
                 (
                     float(self._grasp_reference[0]),
                     float(self._grasp_reference[1]),
@@ -357,12 +378,25 @@ class ArmMotionNode(Node):
                 self._grasp_z_min_m,
                 self._grasp_z_max_m,
             )
+            _, _, grasp_steps = plan_face_approach_grasp(
+                self._planner,
+                grasp_target,
+                rotation_deg=float(self.get_parameter("grasp_rotation_deg").value),
+                pre_distance_m=float(self.get_parameter("grasp_pre_distance").value),
+                lift_height_m=float(self.get_parameter("grasp_lift_height").value),
+                duration_scale=float(self.get_parameter("grasp_duration_scale").value),
+            )
+            checks["grasp_estimated_sequence_sec"] = self._estimated_sequence_sec(
+                grasp_steps
+            )
+            if checks["grasp_estimated_sequence_sec"] > self._max_arm_sequence_sec:
+                issues.append("fixed grasp plan exceeds max_arm_sequence_sec")
         except Exception as exc:
             issues.append("invalid grasp configuration: {}".format(exc))
 
         try:
             if self._place_target_configured:
-                plan_fixed_place(
+                _, place_steps = plan_fixed_place(
                     self._planner,
                     self._place_reference_grasp_arm,
                     grasp_lift_height_m=float(self.get_parameter("grasp_lift_height").value),
@@ -371,6 +405,11 @@ class ArmMotionNode(Node):
                     descent_duration_ms=int(self.get_parameter("place_descent_duration_ms").value),
                     duration_scale=float(self.get_parameter("place_duration_scale").value),
                 )
+                checks["place_estimated_sequence_sec"] = self._estimated_sequence_sec(
+                    place_steps
+                )
+                if checks["place_estimated_sequence_sec"] > self._max_arm_sequence_sec:
+                    issues.append("fixed place plan exceeds max_arm_sequence_sec")
             else:
                 issues.append("place_reference_grasp_arm is not marked configured")
         except Exception as exc:
@@ -389,12 +428,15 @@ class ArmMotionNode(Node):
                 checks["tf_available"] = False
                 issues.append("required TF is unavailable: {}".format(exc))
 
-        try:
-            executor = BusLinkerExecutor(self._port, self._baud)
-            with executor:
-                checks["servo_ids"] = executor.require_servos_online()
-        except Exception as exc:
-            issues.append("servo preflight failed: {}".format(exc))
+        if self._enable_motion:
+            try:
+                executor = BusLinkerExecutor(self._port, self._baud)
+                with executor:
+                    checks["servo_ids"] = executor.require_servos_online()
+            except Exception as exc:
+                issues.append("servo preflight failed: {}".format(exc))
+        else:
+            checks["servo_scan_skipped"] = True
 
         return {
             "ok": not issues,
@@ -404,16 +446,27 @@ class ArmMotionNode(Node):
             "checks": checks,
         }
 
-    def _motion_block_reason(self) -> str:
+    def _configuration_block_reason(self) -> str:
         reasons = []
-        if not self._enable_motion:
-            reasons.append("enable_motion is false")
-        if not self._transform_calibrated:
-            reasons.append("transform_calibrated is false")
+        if self._arm_preset != "competition_v1":
+            reasons.append("arm_preset must be competition_v1")
+        if not self._grasp_reference_configured:
+            reasons.append("grasp_reference_configured is false")
+        if not self._place_target_configured:
+            reasons.append("place_target_configured is false")
         if self._grasp_include_home:
             reasons.append("grasp_include_home must be false")
         if self._place_include_home:
             reasons.append("place_include_home must be false")
+        return "; ".join(reasons)
+
+    def _motion_block_reason(self) -> str:
+        reasons = []
+        if not self._enable_motion:
+            reasons.append("enable_motion is false")
+        configuration_reason = self._configuration_block_reason()
+        if configuration_reason:
+            reasons.append(configuration_reason)
         return "; ".join(reasons)
 
     def _execute_steps(self, steps: List[Any]) -> None:
@@ -425,6 +478,12 @@ class ArmMotionNode(Node):
                 scan_first=self._scan_first,
                 pause_s=self._pause_s,
             )
+
+    def _estimated_sequence_sec(self, steps: Sequence[Any]) -> float:
+        return sum(
+            max(0.0, float(step.duration_ms) / 1000.0) + self._pause_s
+            for step in steps
+        )
 
     def _action_payload(
         self,
@@ -440,6 +499,7 @@ class ArmMotionNode(Node):
             "action": action,
             "state": "planned",
             "motion_enabled": self._enable_motion,
+            "arm_preset": self._arm_preset,
             "transform_calibrated": self._transform_calibrated,
             "num_steps": len(steps),
             "steps": [step.to_command() for step in steps],
@@ -461,6 +521,7 @@ class ArmMotionNode(Node):
             "state": "error",
             "message": message,
             "motion_enabled": self._enable_motion,
+            "arm_preset": self._arm_preset,
             "transform_calibrated": self._transform_calibrated,
         }
         if error_type:

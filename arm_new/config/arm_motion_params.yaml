@@ -7,10 +7,14 @@ arm_motion_node:
     tf_lookup_timeout_s: 1.0
     tf_parent_frame: base_link
     tf_child_frame: arm_base_link
-    require_tf_in_preflight: true
+    # Fixed competition motions do not consume this TF. It can still be enabled
+    # as an optional diagnostic for a future coordinate-driven preset.
+    require_tf_in_preflight: false
 
-    # Keep repository defaults fail closed. Use an explicit calibrated override
-    # only after base_link->arm_base_link and the fixed targets are accepted.
+    # The selected YAML is a fixed motion preset. Motion remains disabled here
+    # and is authorized only by the launch-time arm_motion_authorized override.
+    arm_preset: unconfigured
+    max_arm_sequence_sec: 20.0
     transform_calibrated: false
     enable_motion: false
     port: /dev/ttyACM0
@@ -18,9 +22,8 @@ arm_motion_node:
     pause_s: 0.2
     scan_first: true
 
-    # Repository defaults remain fail closed. Field values live only in an
-    # explicitly accepted override selected by ARM_MOTION_PARAMS_FILE; startup
-    # records that exact file's SHA-256. There is no implicit site-config loader.
+    # Repository defaults remain fail closed. A competition_v1 override supplies
+    # the tested fixed values; no separate approval bundle is required.
     # I1 reference uses arm_base_link axes: +X forward, +Y left, +Z up.
     grasp_reference_configured: false
     # Current hardware-test baseline at z=0.15 m. ArmPi API [0.00, 0.42, z]

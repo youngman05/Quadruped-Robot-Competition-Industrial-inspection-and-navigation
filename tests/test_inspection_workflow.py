@@ -147,6 +147,20 @@ class InspectionWorkflowTests(unittest.TestCase):
         self.assertEqual(list(workflow.readings), ["A"])
         self.assertEqual(workflow.abort_reason, "duplicate_area=A")
 
+    def test_uncertain_perception_attempt_advances_without_aborting(self):
+        workflow = self.make_workflow(steps=2)
+        self.settle_and_start(workflow)
+        workflow.inspection_uncertain("service_timeout=20.0s")
+
+        self.assertEqual(workflow.stage, InspectionStage.NAVIGATING)
+        self.assertEqual(workflow.step_index, 1)
+        self.assertEqual(workflow.uncertain_attempts, ["service_timeout=20.0s"])
+
+        self.settle_and_start(workflow)
+        workflow.inspection_uncertain("invalid_result")
+        self.assertEqual(workflow.stage, InspectionStage.COMPLETE)
+        self.assertEqual(workflow.step_index, 2)
+
     def test_full_four_step_workflow_requires_exact_abcd(self):
         workflow = self.make_workflow(steps=4)
         colors = {

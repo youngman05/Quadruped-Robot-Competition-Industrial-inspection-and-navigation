@@ -37,7 +37,7 @@ class TaskManagerWhzContractTests(unittest.TestCase):
             self.assertNotIn(text, self.source)
         self.assertNotIn("_on_gauge_status", self.source)
 
-    def test_arrival_settling_retry_and_completeness_contracts_are_present(self):
+    def test_arrival_settling_retry_and_soft_perception_contracts_are_present(self):
         required = (
             "InspectionStage.NAVIGATING",
             "self._nav.succeeded()",
@@ -45,7 +45,9 @@ class TaskManagerWhzContractTests(unittest.TestCase):
             "self._last_odom_linear_speed",
             "max_nav_retries",
             "max_inspection_retries",
-            "require_complete_abcd",
+            "_complete_uncertain_inspection",
+            "inspection_uncertain(reason)",
+            "freeze_two_zone_tasks",
             "self._abort(workflow.abort_reason)",
         )
         for text in required:

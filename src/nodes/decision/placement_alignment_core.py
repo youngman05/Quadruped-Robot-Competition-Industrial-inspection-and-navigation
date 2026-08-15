@@ -406,7 +406,6 @@ def fit_face_yaw(
     x1, y1, x2, y2 = bbox
     u_center = (x1 + x2) / 2.0
     half_box_px = color_intrinsics.fx * (box_width_m / 2.0) / letter_z
-
     z_h = (
         projection.points_color[:, 2] * cos_pitch
         - projection.points_color[:, 1] * sin_pitch

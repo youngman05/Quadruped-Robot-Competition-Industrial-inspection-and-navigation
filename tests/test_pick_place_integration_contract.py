@@ -1,3 +1,4 @@
+import ast
 import hashlib
 import importlib.util
 import unittest
@@ -16,9 +17,28 @@ TASK_MANAGER = (ROOT / "src" / "nodes" / "decision" / "task_manager.py").read_te
 CALIBRATION_GATE = (ROOT / "scripts" / "pick_place_calibration_gate.py").read_text(
     encoding="utf-8"
 )
+ARM_MOTION_NODE = (
+    ROOT / "arm_new" / "arm_new_ros" / "arm_new_ros" / "arm_motion_node.py"
+).read_text(encoding="utf-8")
 PREFLIGHT = (ROOT / "scripts" / "preflight_l6_pick_place.sh").read_text(
     encoding="utf-8"
 )
+NO_MOTION_START = (
+    ROOT / "scripts" / "start_l6_pick_place_no_motion.sh"
+).read_text(encoding="utf-8")
+
+
+def task_manager_method(name):
+    tree = ast.parse(TASK_MANAGER)
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+        ):
+            source = ast.get_source_segment(TASK_MANAGER, node)
+            if source is not None:
+                return source
+    raise AssertionError(f"TaskManager method not found: {name}")
 
 
 class PickPlaceIntegrationContractTests(unittest.TestCase):
@@ -31,19 +51,18 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
             "2c44515757b962e17778e5b7bdb3189b454dda32b5675c79d94dd563f10919d1",
         )
 
-    def test_full_route_entrypoint_is_separate_and_calibration_gated(self):
+    def test_full_route_entrypoint_is_separate_and_fixed_preset_gated(self):
         source = (ROOT / "scripts" / "start_l6_pick_place.sh").read_text(
             encoding="utf-8"
         )
         for token in (
             "TASK_MANIPULATION_PARAMS_FILE:?",
             "ARM_MOTION_PARAMS_FILE:?",
-            "APRILTAG_TAG_IDS:?",
-            "APRILTAG_TAG_SIZE_M:?",
             "PICK_PLACE_SOURCE_COMMIT:?",
-            "PICK_PLACE_CALIBRATION_APPROVED",
-            "TASK_MANIPULATION_CALIBRATED",
+            "ARM_MOTION_AUTHORIZED:-false",
+            "full pick/place requires explicit ARM_MOTION_AUTHORIZED=true",
             "PURE_L6_START=false",
+            "TASK_WAYPOINT_ROUTE=full_interleaved",
             "--pick-place-l6",
             "--dog",
             "--cmd-vel-bridge",
@@ -51,9 +70,26 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
         ):
             with self.subTest(token=token):
                 self.assertIn(token, source)
+        for token in (
+            "APRILTAG_TAG_IDS:?",
+            "APRILTAG_TAG_SIZE_M:?",
+        ):
+            with self.subTest(removed_wrapper_token=token):
+                self.assertNotIn(token, source + PREFLIGHT)
+        for token in (
+            "PICK_PLACE_CALIBRATION_BUNDLE",
+            "PICK_PLACE_CALIBRATION_APPROVED",
+            "TASK_MANIPULATION_CALIBRATED",
+            "ARM_STOP_CHAIN",
+        ):
+            with self.subTest(removed_token=token):
+                self.assertNotIn(
+                    token,
+                    START + source + PREFLIGHT + CALIBRATION_GATE + LAUNCH,
+                )
 
     def test_pick_place_preflight_finishes_before_runtime_cleanup(self):
-        gate = START.index("pick/place calibration parameter gate failed")
+        gate = START.index("pick/place fixed preset gate failed")
         image = START.index("unified pick/place image runtime verification failed")
         preflight_exit = START.index("if $PICK_PLACE_PREFLIGHT_ONLY; then")
         cleanup = START.index("echo '[0/6] 清理旧进程...'")
@@ -62,9 +98,10 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
         self.assertLess(preflight_exit, cleanup)
         for token in (
             "--pick-place-preflight-only",
-            "I2 targets are duplicated",
-            "place_target_distance_m is not calibrated",
-            "arm parameter {key} must be true",
+            "task and arm presets must both be",
+            "arm preset YAML must keep enable_motion false",
+            "arm parameter {} must be true",
+            "arm_service_timeout_sec must be >= max_arm_sequence_sec",
             "3ed76de727a87be8d64cc3b259bf2b0ec39daaaa3fac1f3f97af249824abc648",
         ):
             self.assertIn(token, START + CALIBRATION_GATE)
@@ -72,7 +109,9 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
         for token in (
             "PICK_PLACE_SOURCE_COMMIT:?",
             "PICK_PLACE_IMAGE_ID",
+            "ARM_MOTION_AUTHORIZED=false",
             "--pick-place-preflight-only",
+            "TASK_WAYPOINT_ROUTE=full_interleaved",
         ):
             with self.subTest(preflight_token=token):
                 self.assertIn(token, PREFLIGHT)
@@ -141,7 +180,11 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
             self.assertIn(token, START)
         self.assertNotIn("docker run.*realsense", START)
         self.assertIn(
-            "if $PICK_PLACE_L6; then\n    ENABLE_CAMERA_RELAY=true",
+            '[ "$TASK_ENABLE_PICK_I2_ALIGNMENT" = "true" ] && ENABLE_APRILTAG_BRIDGE=true',
+            START,
+        )
+        self.assertIn(
+            'if [ "$TASK_ENABLE_PLACE_VISION_ALIGNMENT" = "true" ]; then',
             START,
         )
 
@@ -165,22 +208,207 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
             'executable="yolo_udp_bridge"',
             'package="arm_new_ros"',
             '"manipulation_frames_dir": depth_frames_dir',
+            '"arm_max_sequence_sec": ParameterValue(',
             "enable_manipulation, \"' == 'true')\"",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, LAUNCH)
 
-    def test_arm_feedback_is_fail_closed_and_count_advances_after_place_success(self):
-        grasp_success = TASK_MANAGER.index("if response is None or not response.success:")
-        grasp_advance = TASK_MANAGER.index("self._advance_to_next_phase()", grasp_success)
-        place_success = TASK_MANAGER.index(
-            "if response is None or not response.success:", grasp_advance
+    def test_optional_alignment_falls_back_to_fixed_competition_presets(self):
+        find_red_bar = task_manager_method("_tick_find_red_bar")
+        place = task_manager_method("_tick_place_to_abnormal_zone")
+        depth_fallback = task_manager_method("_disable_optional_alignment")
+        for token in (
+            "if not self._enable_pick_i2_alignment:",
+            "使用抓取区固定偏移继续比赛",
+            "I2精对齐失败，降级到固定抓取预设",
+        ):
+            self.assertIn(token, find_red_bar)
+        for token in (
+            "if not self._enable_place_vision_alignment:",
+            "使用J0固定放置预设",
+            "视觉精对齐失败，降级到J0固定放置",
+        ):
+            self.assertIn(token, place)
+        self.assertIn("fail_soft=True", find_red_bar)
+        self.assertIn("self._enable_pick_i2_alignment = False", depth_fallback)
+        self.assertIn("self._enable_place_vision_alignment = False", depth_fallback)
+
+    def test_fourth_inspection_freezes_exactly_two_distinct_tasks(self):
+        inspection = task_manager_method("_tick_inspect_gauges")
+        store = task_manager_method("_store_inspection_reading")
+        for token in (
+            "freeze_two_zone_tasks(",
+            "self._abnormal_zone_fallback_order",
+            "self._task_queue_frozen = True",
+            "self._abnormal_zones[0]",
+            "self._abnormal_zones[1]",
+        ):
+            self.assertIn(token, inspection)
+        self.assertIn("reading.agree_frames", store)
+        self.assertIn("reading.total_frames", store)
+        self.assertIn('"task_queue_frozen": self._task_queue_frozen', TASK_MANAGER)
+
+    def test_inspection_perception_failures_are_uncertain_and_continue(self):
+        inspection = task_manager_method("_tick_inspect_gauges")
+        uncertain = task_manager_method("_complete_uncertain_inspection")
+        for token in (
+            'self._complete_uncertain_inspection("service_unavailable")',
+            '"service_timeout=%.1fs"',
+            '"service_future_error: %s"',
+            'self._complete_uncertain_inspection(str(exc))',
+        ):
+            self.assertIn(token, inspection)
+        self.assertIn("inspection_uncertain(reason)", uncertain)
+        self.assertIn("self._inspection_route_index += 1", uncertain)
+
+    def test_two_rounds_exclude_the_first_selected_pickup_tag(self):
+        find_red_bar = task_manager_method("_tick_find_red_bar")
+        self.assertIn("excluded_tag_ids=tuple(self._used_pick_tag_ids)", find_red_bar)
+        self.assertIn("self._used_pick_tag_ids.append(selected_tag_id)", find_red_bar)
+        self.assertIn('"used_pick_tag_ids": self._used_pick_tag_ids', TASK_MANAGER)
+
+    def test_manipulation_navigation_exhaustion_skips_only_that_task(self):
+        find_red_bar = task_manager_method("_tick_find_red_bar")
+        place = task_manager_method("_tick_place_to_abnormal_zone")
+        retry = task_manager_method("_retry_navigation")
+        self.assertIn("self._retry_navigation(retry_key, \"抓取区\")", find_red_bar)
+        self.assertIn("place skipped because grab navigation failed", find_red_bar)
+        self.assertIn("self._retry_navigation(", place)
+        self.assertIn("place skipped after navigation failure", place)
+        self.assertNotIn("self._abort(", find_red_bar)
+        self.assertNotIn("self._abort(", place)
+        self.assertNotIn("self._abort(", retry)
+        self.assertIn(
+            'TASK_MAX_NAV_RETRIES="${TASK_PICK_PLACE_MAX_NAV_RETRIES:-2}"',
+            START,
         )
-        handled = TASK_MANAGER.index("self._abnormal_handled += 1", place_success)
-        self.assertLess(grasp_success, grasp_advance)
-        self.assertLess(place_success, handled)
+        self.assertIn(
+            'require_exact_parameter /task_manager_node max_nav_retries "$TASK_MAX_NAV_RETRIES"',
+            START,
+        )
+
+    def test_runtime_localization_and_odometry_faults_remain_hard_abort(self):
+        safety = task_manager_method("_runtime_base_safety_ok")
+        self.assertIn("runtime odometry became unavailable or stale", safety)
+        self.assertIn("runtime visual localization reported tracking loss", safety)
+        self.assertIn("self._abort(", safety)
+
+    def test_pick_place_mode_forces_real_full_interleaved_waypoints(self):
+        self.assertIn(
+            'TASK_WAYPOINT_FILE="$PROJECT_ROOT/configs/navigation/waypoints_real.yaml"',
+            START,
+        )
+        self.assertIn('TASK_WAYPOINT_ROUTE="full_interleaved"', START)
+        self.assertIn("TASK_WAYPOINT_ROUTE=full_interleaved", PREFLIGHT)
+        self.assertIn("TASK_WAYPOINT_ROUTE=full_interleaved", NO_MOTION_START)
+
+    def test_no_motion_start_exposes_the_graph_without_arming_motion(self):
+        for token in (
+            "TASK_MISSION_START_ARMED=false",
+            "ARM_MOTION_AUTHORIZED=false",
+            "--pick-place-no-motion-start",
+        ):
+            self.assertIn(token, NO_MOTION_START)
+        self.assertNotIn("--dog", NO_MOTION_START)
+        self.assertNotIn("--cmd-vel-bridge", NO_MOTION_START)
+        self.assertNotIn("--prepare-lite3-motion", NO_MOTION_START)
+        for token in (
+            "PICK_PLACE_NO_MOTION_START=false",
+            "if $PICK_PLACE_PREFLIGHT_ONLY || $PICK_PLACE_NO_MOTION_START; then",
+            "if $CONE_TO_WHZ_L6 && ! $PICK_PLACE_NO_MOTION_START; then",
+            "TaskManager 保持未 armed",
+        ):
+            self.assertIn(token, START)
+
+    def test_arm_request_starts_a_max_sequence_zero_velocity_guard(self):
+        start_guard = task_manager_method("_start_arm_motion_guard")
+        state_tick = task_manager_method("_state_machine_tick")
+        grasp = task_manager_method("_tick_grasp_bar")
+        place = task_manager_method("_tick_place_to_abnormal_zone")
+        self.assertIn("time.monotonic() + self._arm_max_sequence_sec", start_guard)
+        self.assertIn("if not self._arm_motion_guard_elapsed():", state_tick)
+        self.assertIn("self._publish_precision_zero()", state_tick)
+        for method in (grasp, place):
+            dispatched = method.index("call_async")
+            guarded = method.index("self._start_arm_motion_guard()", dispatched)
+            self.assertGreater(guarded, dispatched)
+            self.assertNotIn("future.cancel()", method)
+
+        grasp_pending = grasp.index(
+            'if self._current_grasp_outcome == "sequence_completed_unverified_grasp":'
+        )
+        grasp_guard = grasp.index(
+            "if not self._arm_motion_guard_elapsed():",
+            grasp_pending,
+        )
+        grasp_advance = grasp.index("self._advance_to_next_phase()", grasp_pending)
+        self.assertLess(grasp_guard, grasp_advance)
+        grasp_response = grasp.index("if response is None or not response.success:")
+        grasp_success = grasp[grasp_response:]
+        self.assertIn(
+            'self._current_grasp_outcome = "sequence_completed_unverified_grasp"',
+            grasp_success,
+        )
+        self.assertNotIn("self._advance_to_next_phase()", grasp_success)
+
+        place_pending = place.index("if self._place_sequence_completed_pending:")
+        place_guard = place.index(
+            "if not self._arm_motion_guard_elapsed():",
+            place_pending,
+        )
+        place_complete = place.index("self._complete_place_attempt", place_pending)
+        self.assertLess(place_guard, place_complete)
+        place_response = place.index("if response is None or not response.success:")
+        place_success = place[place_response:]
+        self.assertIn("self._place_sequence_completed_pending = True", place_success)
+        self.assertNotIn("self._complete_place_attempt", place_success)
+
+    def test_arm_failures_are_uncertain_and_continue_after_the_guard(self):
+        grasp = task_manager_method("_tick_grasp_bar")
+        place = task_manager_method("_tick_place_to_abnormal_zone")
+        for token in (
+            'self._grasp_uncertain_reason = "grasp dispatch failed: %s" % exc',
+            'self._grasp_uncertain_reason = "grasp service timed out"',
+            'self._grasp_uncertain_reason = "grasp service failed: %s" % exc',
+            'self._grasp_uncertain_reason = "grasp rejected: %s" % message',
+            'self._current_grasp_outcome = "uncertain: " + reason',
+            "self._advance_to_next_phase()",
+        ):
+            self.assertIn(token, grasp)
+        for token in (
+            'self._place_uncertain_reason = "place dispatch failed: %s" % exc',
+            'self._place_uncertain_reason = "place service timed out"',
+            'self._place_uncertain_reason = "place service failed: %s" % exc',
+            'self._place_uncertain_reason = "place rejected: %s" % message',
+            "self._complete_place_attempt(current_zone, uncertain_reason=reason)",
+        ):
+            self.assertIn(token, place)
+        self.assertNotIn("self._abort(", grasp)
+        self.assertNotIn("self._abort(", place)
         self.assertIn('ExecuteGraspFixed, "/arm/execute_grasp_fixed"', TASK_MANAGER)
         self.assertIn('Trigger, "/arm/execute_place_fixed"', TASK_MANAGER)
+
+    def test_attempted_handled_counts_are_distinct_and_empty_work_finishes(self):
+        place = task_manager_method("_tick_place_to_abnormal_zone")
+        complete = task_manager_method("_complete_place_attempt")
+        self.assertIn(
+            "if self._abnormal_attempted >= len(self._abnormal_zones):",
+            place,
+        )
+        self.assertIn("self._advance_to_next_phase()", place)
+        self.assertIn("self._abnormal_attempted += 1", complete)
+        handled_guard = complete.index("if not uncertain_reason:")
+        handled_increment = complete.index("self._abnormal_handled += 1")
+        self.assertLess(handled_guard, handled_increment)
+        self.assertIn("self._manipulation_outcomes.append", complete)
+        self.assertIn("self._enter_phase(Phase.FINISH)", complete)
+        for token in (
+            '"abnormal_attempted": self._abnormal_attempted',
+            '"abnormal_handled": self._abnormal_handled',
+            '"manipulation_outcomes": self._manipulation_outcomes',
+        ):
+            self.assertIn(token, TASK_MANAGER)
 
     def test_manipulation_rejects_stale_cached_perception(self):
         for token in (
@@ -385,11 +613,25 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
             ROOT / "arm_new" / "arm_new_ros" / "launch" / "arm_motion.launch.py"
         ).read_text(encoding="utf-8")
         self.assertIn("enable_motion: false", params)
+        self.assertIn("arm_preset: unconfigured", params)
+        self.assertIn("max_arm_sequence_sec: 20.0", params)
         self.assertIn("transform_calibrated: false", params)
+        self.assertIn("require_tf_in_preflight: false", params)
         self.assertIn("grasp_reference_configured: false", params)
         self.assertIn("place_target_configured: false", params)
         self.assertNotIn("static_transform", arm_launch)
         self.assertNotIn("frame_transforms.yaml", arm_launch)
+
+    def test_no_motion_arm_preflight_is_plan_only(self):
+        preflight = ARM_MOTION_NODE.index("def _run_preflight")
+        servo_guard = ARM_MOTION_NODE.index("if self._enable_motion:", preflight)
+        servo_scan = ARM_MOTION_NODE.index("executor.require_servos_online()", servo_guard)
+        skipped = ARM_MOTION_NODE.index('checks["servo_scan_skipped"] = True', servo_scan)
+        preflight_end = ARM_MOTION_NODE.index("def _configuration_block_reason", preflight)
+        self.assertLess(preflight, servo_guard)
+        self.assertLess(servo_guard, servo_scan)
+        self.assertLess(servo_scan, skipped)
+        self.assertLess(skipped, preflight_end)
 
     def test_pick_place_python_packages_declare_build_tools(self):
         arm_package = (

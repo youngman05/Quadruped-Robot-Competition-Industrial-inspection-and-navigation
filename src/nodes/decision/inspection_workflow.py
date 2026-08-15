@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 
 VALID_AREAS = frozenset("ABCD")
@@ -146,6 +146,7 @@ class InspectionWorkflow:
         self.stable_since: Optional[float] = None
         self.abort_reason = ""
         self.readings: Dict[str, InspectionReading] = {}
+        self.uncertain_attempts: List[str] = []
 
     def navigation_succeeded(self) -> None:
         self._require_stage(InspectionStage.NAVIGATING)
@@ -201,6 +202,23 @@ class InspectionWorkflow:
         if self.stage != InspectionStage.INSPECTING:
             raise RuntimeError("inspection timeout in stage %s" % self.stage.value)
         self.abort("inspection_outcome_unknown: %s" % reason)
+
+    def inspection_uncertain(self, reason: str) -> None:
+        if self.stage not in (
+            InspectionStage.WAITING_SERVICE,
+            InspectionStage.INSPECTING,
+        ):
+            raise RuntimeError("uncertain inspection in stage %s" % self.stage.value)
+        self.uncertain_attempts.append(str(reason))
+        self.step_index += 1
+        self.nav_retries = 0
+        self.inspection_retries = 0
+        self.stable_since = None
+        self.stage = (
+            InspectionStage.COMPLETE
+            if self.step_index >= self.step_count
+            else InspectionStage.NAVIGATING
+        )
 
     def inspection_succeeded(self, reading: InspectionReading) -> None:
         self._require_stage(InspectionStage.INSPECTING)
