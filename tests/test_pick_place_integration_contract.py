@@ -26,6 +26,9 @@ PREFLIGHT = (ROOT / "scripts" / "preflight_l6_pick_place.sh").read_text(
 NO_MOTION_START = (
     ROOT / "scripts" / "start_l6_pick_place_no_motion.sh"
 ).read_text(encoding="utf-8")
+FORMAL_L6_TEST_START = (
+    ROOT / "scripts" / "start_l6_pick_place_test_16ad08c.sh"
+).read_text(encoding="utf-8")
 
 
 def task_manager_method(name):
@@ -87,6 +90,53 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
                     token,
                     START + source + PREFLIGHT + CALIBRATION_GATE + LAUNCH,
                 )
+
+    def test_formal_l6_test_entrypoint_is_a_pinned_exec_only_wrapper(self):
+        for token in (
+            "/home/superwfx666/worktrees/quadruped-pick-place-formal-16ad08c",
+            "TASK_MANIPULATION_PARAMS_FILE=/home/superwfx666/competition_configs/pick_place_competition_v1.yaml",
+            "ARM_MOTION_PARAMS_FILE=/home/superwfx666/competition_configs/arm_motion_competition_v1.yaml",
+            "PICK_PLACE_SOURCE_COMMIT=16ad08c6fc4b2368535919b88eed08af2e2f7590",
+            "IMAGE=isaac_ros_cuvslam_runtime:humble-rs-cone-pick-place",
+            "PICK_PLACE_IMAGE_ID=sha256:f7384634ab69256558415a074d4ad53774f2399390ddcdc7135f2c33415fb5a0",
+            "ARM_MOTION_AUTHORIZED=true",
+            "PURE_L6_START=true",
+            "TASK_EXPECTED_MAP_ID=competition_field_phase1",
+            "TASK_WAYPOINT_ROUTE=full_interleaved",
+            "TASK_PASS_OBSTACLE_TIMEOUT_SEC=180.0",
+            "TASK_PASS_OBSTACLE_WAYPOINT_TIMEOUT_SEC=120.0",
+            "TASK_INSPECTION_TIMEOUT_SEC=300.0",
+            "exec env",
+            "bash scripts/start_competition.sh",
+            "--pick-place-l6",
+            "--dog",
+            "--cmd-vel-bridge",
+            "--prepare-lite3-motion",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, FORMAL_L6_TEST_START)
+
+        for forbidden in (
+            "nohup",
+            " &",
+            "while ",
+            "for ",
+            "sleep ",
+            "timeout ",
+            "ros2 ",
+            "docker ",
+            "pgrep ",
+            "wait ",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, FORMAL_L6_TEST_START)
+
+        self.assertEqual(FORMAL_L6_TEST_START.count("exec env"), 1)
+        self.assertTrue(
+            FORMAL_L6_TEST_START.rstrip().endswith(
+                "--prepare-lite3-motion"
+            )
+        )
 
     def test_pick_place_preflight_finishes_before_runtime_cleanup(self):
         gate = START.index("pick/place fixed preset gate failed")

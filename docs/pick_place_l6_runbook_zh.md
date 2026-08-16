@@ -136,3 +136,11 @@ ARM_MOTION_AUTHORIZED=true bash scripts/start_l6_pick_place.sh
 ```
 
 该入口会固定加载 `waypoints_real.yaml/full_interleaved`，准备 Lite3 motion mode、启动相机/导航/机械臂/TaskManager，并在最终启动检查后设置 `mission_start_armed=true`。它不是诊断或无动作入口；上面的命令仅说明授权方式，不授权本任务执行。
+
+当前正式部署 `16ad08c` 另提供现场专用的纯启动封装：
+
+```bash
+bash scripts/start_l6_pick_place_test_16ad08c.sh
+```
+
+该封装只切换到 `/home/superwfx666/worktrees/quadruped-pick-place-formal-16ad08c`，注入已冻结的两份外部 YAML、source commit、镜像及运动授权，然后通过 `exec` 进入已部署版本的正式启动器。它设置已有的 `PURE_L6_START=true` 分支，并传入与正式 L6 入口相同的 `--pick-place-l6 --dog --cmd-vel-bridge --prepare-lite3-motion`：正式栈启动后直接以 armed 状态交给 TaskManager 执行完整两轮任务，不再执行启动器后半段的 ROS 图、QoS、参数和健康轮询。它不启动监控进程，不复制 TaskManager 航点逻辑；正式启动器在启动前仍保留 source/config/image 基线门禁、命令仲裁和故障清理。这个脚本是面向已冻结 `16ad08c` worktree 的单文件辅助入口，复制进去不会改变 tracked-clean 判定或要求重建四包。运行该脚本本身即代表现场监督者已完成运动授权，并确认外部 TaskManager YAML 中的两个 `pick_red_tag_ids` 是本轮实际抓取 Tag。
