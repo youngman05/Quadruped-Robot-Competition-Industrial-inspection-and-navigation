@@ -34,12 +34,31 @@ cleanup_pick_place_verifier() {
     return 0
 }
 
+preserve_docker_perception_logs() {
+    local container="${CN:-${RUNTIME_CUVSLAM_CONTAINER:-}}"
+    local log_name source_path target_path
+    [ -n "$container" ] || return 0
+    for log_name in apriltag_pose yolo_3d; do
+        source_path="/tmp/${log_name}.log"
+        target_path="$LOGDIR/competition_${log_name}_${STARTUP_TIMESTAMP}.log"
+        if docker exec "$container" test -s "$source_path" >/dev/null 2>&1; then
+            if docker cp "$container:$source_path" "$target_path" >/dev/null 2>&1; then
+                echo " Docker perception log: $target_path"
+                tail -80 "$target_path" 2>/dev/null || true
+            else
+                echo " WARNING: could not preserve Docker perception log: $source_path"
+            fi
+        fi
+    done
+}
+
 startup_no_go() {
     echo "NO-GO: $*"
     echo " 启动快照: $STARTUP_SNAPSHOT"
     if ! cleanup_pick_place_verifier; then
         echo " WARNING: verifier container cleanup failed: $PICK_PLACE_VERIFIER_CONTAINER"
     fi
+    preserve_docker_perception_logs
     if ${STARTUP_RUNTIME_TOUCHED:-false}; then
         echo " 清理已启动的正式栈..."
         bash scripts/stop_all.sh >/dev/null 2>&1 || true

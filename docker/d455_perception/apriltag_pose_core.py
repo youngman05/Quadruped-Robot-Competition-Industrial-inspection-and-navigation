@@ -118,10 +118,20 @@ class AprilTagPoseDetector:
         self.pose_history_max_missed_frames = int(pose_history_max_missed_frames)
         self._previous_rotations = {}
         self._missed_frames = {}
-        dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
-        parameters = cv2.aruco.DetectorParameters()
+        self._dictionary = cv2.aruco.getPredefinedDictionary(
+            cv2.aruco.DICT_APRILTAG_36h11
+        )
+        if hasattr(cv2.aruco, "DetectorParameters"):
+            parameters = cv2.aruco.DetectorParameters()
+        else:
+            parameters = cv2.aruco.DetectorParameters_create()
         parameters.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
-        self._detector = cv2.aruco.ArucoDetector(dictionary, parameters)
+        self._parameters = parameters
+        self._detector = (
+            cv2.aruco.ArucoDetector(self._dictionary, parameters)
+            if hasattr(cv2.aruco, "ArucoDetector")
+            else None
+        )
         half = self.tag_size_m / 2.0
         self._object_corners = np.array(
             [[-half, half, 0.0], [half, half, 0.0], [half, -half, 0.0], [-half, -half, 0.0]],
@@ -135,7 +145,14 @@ class AprilTagPoseDetector:
         distortion: Sequence[float],
     ) -> List[TagPose]:
         gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
-        corners, ids, _rejected = self._detector.detectMarkers(gray)
+        if self._detector is not None:
+            corners, ids, _rejected = self._detector.detectMarkers(gray)
+        else:
+            corners, ids, _rejected = cv2.aruco.detectMarkers(
+                gray,
+                self._dictionary,
+                parameters=self._parameters,
+            )
         if ids is None:
             self._update_missed_histories(())
             return []

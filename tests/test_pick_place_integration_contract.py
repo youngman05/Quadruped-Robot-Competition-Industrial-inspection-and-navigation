@@ -492,6 +492,19 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
         ):
             self.assertIn(token, STOP)
 
+    def test_startup_preserves_perception_logs_before_cleanup(self):
+        no_go = START.split("startup_no_go() {", 1)[1].split(
+            "handle_startup_signal() {", 1
+        )[0]
+        self.assertIn("preserve_docker_perception_logs", no_go)
+        self.assertLess(
+            no_go.index("preserve_docker_perception_logs"),
+            no_go.index("stop_all.sh"),
+        )
+        self.assertIn('for log_name in apriltag_pose yolo_3d', START)
+        self.assertIn('docker cp "$container:$source_path" "$target_path"', START)
+        self.assertIn('tail -80 "$target_path"', START)
+
     def test_unified_image_and_exact_model_are_locked(self):
         dockerfile = (ROOT / "docker" / "Dockerfile.cuvslam-pick-place").read_text(
             encoding="utf-8"
@@ -531,6 +544,8 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
         self.assertIn("_check_distribution_versions()", verify)
         self.assertNotIn("str(torch.__version__) != EXPECTED_TORCH_VERSION", verify)
         self.assertIn("_check_pip_dependencies()", verify)
+        self.assertIn("AprilTagPoseDetector(0.1, [0, 1])", verify)
+        self.assertIn("apriltag=ok", verify)
         self.assertIn("pipeline.warmup((360, 640, 3))", verify)
         self.assertIn("torchvision.ops.nms(boxes, scores, 0.5)", verify)
         self.assertIn("keep.device != boxes.device", verify)
@@ -627,7 +642,18 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
                     side_effect=lambda name: accepted[name],
                 )
             )
-            stack.enter_context(mock.patch.dict("sys.modules", {"cv2": mock.Mock(aruco=object())}))
+            detector = mock.Mock()
+            stack.enter_context(
+                mock.patch.dict(
+                    "sys.modules",
+                    {
+                        "cv2": mock.Mock(aruco=object()),
+                        "apriltag_pose_core": mock.Mock(
+                            AprilTagPoseDetector=detector
+                        ),
+                    },
+                )
+            )
             stack.enter_context(mock.patch.object(verifier, "MODEL_PATH", model_path))
             stack.enter_context(
                 mock.patch.object(
@@ -640,6 +666,7 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
                 mock.patch("builtins.__import__", side_effect=guarded_import)
             )
             verifier.main(build_stage=True)
+            detector.assert_called_once_with(0.1, [0, 1])
 
     def test_image_lock_covers_transitives_and_preserves_system_opencv_exception(self):
         dockerfile = (ROOT / "docker" / "Dockerfile.cuvslam-pick-place").read_text(

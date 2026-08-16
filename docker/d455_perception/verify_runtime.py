@@ -63,9 +63,14 @@ def _check_pip_dependencies() -> None:
 
 def _check_opencv() -> None:
     import cv2
+    from apriltag_pose_core import AprilTagPoseDetector
 
     if not hasattr(cv2, "aruco"):
         raise RuntimeError("OpenCV aruco module is unavailable")
+    try:
+        AprilTagPoseDetector(0.1, [0, 1])
+    except Exception as exc:
+        raise RuntimeError("OpenCV AprilTag detector initialization failed") from exc
 
 
 def _check_model_hash() -> None:
@@ -82,7 +87,7 @@ def main(*, build_stage: bool = False) -> None:
     if build_stage:
         print(
             "pick-place build stage verified: "
-            "pip=ok distributions=ok opencv=ok model_sha256=ok"
+            "pip=ok distributions=ok opencv=ok apriltag=ok model_sha256=ok"
         )
         return
 
@@ -159,7 +164,7 @@ def main(*, build_stage: bool = False) -> None:
         "pick-place runtime verified: "
         f"torch={torch.__version__} torchvision={torchvision.__version__} "
         f"ultralytics={ultralytics.__version__} classes={sorted(class_names)} "
-        "pip=ok nms=ok warmup=ok synthetic_udp=ok"
+        "pip=ok apriltag=ok nms=ok warmup=ok synthetic_udp=ok"
     )
 
 

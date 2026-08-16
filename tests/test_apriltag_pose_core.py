@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import cv2
 import numpy as np
@@ -65,6 +67,43 @@ class PoseCandidateSelectionTest(unittest.TestCase):
         self.assertIn(0, detector._previous_rotations)
         detector._update_missed_histories(())
         self.assertNotIn(0, detector._previous_rotations)
+
+    def test_opencv_42_uses_legacy_aruco_api(self) -> None:
+        calls = []
+
+        class LegacyAruco:
+            DICT_APRILTAG_36h11 = 20
+            CORNER_REFINE_SUBPIX = 1
+
+            @staticmethod
+            def getPredefinedDictionary(dictionary_id):
+                calls.append(("dictionary", dictionary_id))
+                return "april-tag-dictionary"
+
+            @staticmethod
+            def DetectorParameters_create():
+                calls.append(("parameters",))
+                return types.SimpleNamespace(cornerRefinementMethod=None)
+
+            @staticmethod
+            def detectMarkers(image, dictionary, parameters=None):
+                calls.append(("detect", dictionary, parameters.cornerRefinementMethod))
+                return [], None, []
+
+        with mock.patch.object(CORE.cv2, "aruco", LegacyAruco):
+            detector = CORE.AprilTagPoseDetector(0.1, [0, 1])
+            detections = detector.detect(
+                np.zeros((8, 8, 3), dtype=np.uint8),
+                np.eye(3),
+                np.zeros(5),
+            )
+
+        self.assertEqual(detections, [])
+        self.assertIsNone(detector._detector)
+        self.assertEqual(calls[0], ("dictionary", 20))
+        self.assertEqual(calls[1], ("parameters",))
+        self.assertEqual(calls[2][:2], ("detect", "april-tag-dictionary"))
+        self.assertEqual(calls[2][2], 1)
 
     def test_quaternion_is_unit_length(self) -> None:
         quaternion = CORE.quaternion_xyzw(rotation(42.0))
