@@ -89,14 +89,22 @@ class WaypointCalibrationTests(unittest.TestCase):
         ):
             resolve_waypoint_route(document, "inspection_interleaved")
 
-    def test_repository_real_waypoints_track_pending_grab_approach(self):
+    def test_repository_real_waypoints_release_operator_authorized_grab_approach(self):
         path = REPO_ROOT / "configs" / "navigation" / "waypoints_real.yaml"
         document = json.loads(path.read_text(encoding="utf-8"))
 
         self.assertEqual(document["version"], 1)
         self.assertEqual(document["frame_id"], "map")
         self.assertEqual(document["map_id"], "competition_field_phase1")
-        self.assertEqual(document["calibration"]["status"], "in_progress")
+        self.assertEqual(document["calibration"]["status"], "complete")
+        self.assertEqual(
+            document["calibration"]["release_authorization"],
+            "operator_approved_for_supervised_l6",
+        )
+        self.assertEqual(
+            document["calibration"]["grab_area_approach_field_result"],
+            "pending",
+        )
         self.assertEqual(
             document["calibration"]["map_yaml_sha256"],
             "6993e41e4d057f204fa7d229e25906cf1ccfd4f2cc7c9bee9881851d69ff8ec0",
