@@ -22,6 +22,10 @@ setup(
             "share/" + package_name + "/configs/manipulation",
             glob("configs/manipulation/*.yaml"),
         ),
+        (
+            "share/" + package_name + "/configs/transforms",
+            glob("configs/transforms/*.yaml"),
+        ),
         ("share/" + package_name + "/configs/ros", glob("configs/ros/*")),
         ("share/" + package_name + "/navi/map", glob("navi/map/*.pgm") + glob("navi/map/*.yaml")),
     ],

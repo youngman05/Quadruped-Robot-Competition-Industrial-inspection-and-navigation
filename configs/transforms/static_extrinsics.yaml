@@ -1,0 +1,63 @@
+schema_version: 1
+
+# Every transform maps a point from child_frame into parent_frame:
+# p_parent = R_parent_child * p_child + t_parent_child
+convention:
+  length_unit: m
+  quaternion_order: xyzw
+  axes: "ROS REP-103: X forward, Y left, Z up"
+
+frames:
+  base_link:
+    owner: robot_description
+    description: "Lite3 torso/body reference frame; ROS REP-103 axes: +X forward, +Y left, +Z up."
+  camera_link:
+    owner: project_static_extrinsics
+    description: "D455 mechanical mounting frame; ROS REP-103 axes: +X forward, +Y left, +Z up. RealSense owns the child optical frames."
+  arm_base_link:
+    owner: project_static_extrinsics
+    description: "ArmPi mounting-base TF frame. Its origin is the same physical base reference point used by the arm_new API frame `arm`; ROS REP-103 axes are +X arm forward, +Y arm left, +Z up. `arm` itself is not a ROS TF frame: its right-handed API axes are +X right, +Y forward, +Z up, so for coincident origins p_arm_base_link = [y_arm, -x_arm, z_arm]. The base_link->arm_base_link mounting extrinsic is not measured yet and is intentionally absent from static_transforms."
+  dog_camera_optical_frame:
+    owner: project_static_extrinsics
+    description: "Lite3 built-in front-camera optical frame: +X image right, +Y image down, +Z forward."
+
+static_transforms:
+  - parent_frame: base_link
+    child_frame: camera_link
+    translation_m: [0.231724440, 0.077561412, 0.503275873]
+    rotation_xyzw: [0.000900958, 0.240529563, -0.013474058, 0.970547870]
+    publish: true
+    status: calibrated
+    source: "Five-point stationary green-block fit on Jetson Xavier; raw D455 camera_link UDP observations to surveyed base_link face centers."
+    measurement:
+      calibrated_at: "2026-08-04"
+      translational_uncertainty_m: [0.020, 0.020, 0.020]
+      rotational_uncertainty_deg: [1.5, 1.5, 1.5]
+
+  # The physical ArmPi API frame uses +X right, +Y forward, +Z up. The
+  # published child uses ROS axes instead, so it is aligned with base_link.
+  - parent_frame: base_link
+    child_frame: arm_base_link
+    translation_m: [0.24, 0.0, 0.41]
+    rotation_xyzw: [0.0, 0.0, 0.0, 1.0]
+    publish: true
+    status: calibrated
+    source: "Accepted mounted ArmPi base pose in base_link; position (front, left, up) = (0.24, 0.0, 0.41) m and axes parallel to base_link."
+    measurement:
+      calibrated_at: "2026-08-11"
+      translational_uncertainty_m: null
+      rotational_uncertainty_deg: null
+
+  # The camera centre is 0.50 m directly ahead of base_link. The rotation maps
+  # optical +Z forward, +X image-right, +Y image-down into REP-103 base axes.
+  - parent_frame: base_link
+    child_frame: dog_camera_optical_frame
+    translation_m: [0.50, 0.0, 0.0]
+    rotation_xyzw: [0.5, -0.5, 0.5, -0.5]
+    publish: true
+    status: provisional
+    source: "User-provided mounting position on 2026-08-12; optical axes follow the OpenCV/ROS camera convention."
+    measurement:
+      calibrated_at: "2026-08-12"
+      translational_uncertainty_m: null
+      rotational_uncertainty_deg: null

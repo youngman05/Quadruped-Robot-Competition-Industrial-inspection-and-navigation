@@ -39,16 +39,26 @@ class AprilTagPacketTest(unittest.TestCase):
 
     def test_loads_calibrated_camera_extrinsic(self):
         translation, rotation = load_static_extrinsic(
-            ROOT / "configs" / "navigation" / "cuvslam_camera_extrinsics.yaml",
+            ROOT / "configs" / "transforms" / "static_extrinsics.yaml",
             "base_link",
             "camera_link",
         )
-        self.assertEqual(translation, (0.08, 0.0, 0.493))
+        self.assertEqual(translation, (0.231724440, 0.077561412, 0.503275873))
         for actual, expected in zip(
             rotation,
-            (0.0, 0.25881917, 0.0, 0.96592579),
+            (0.000900958, 0.240529563, -0.013474058, 0.970547870),
         ):
-            self.assertAlmostEqual(actual, expected, places=6)
+            self.assertAlmostEqual(actual, expected, places=9)
+
+    def test_bridge_and_package_use_project_static_extrinsics(self):
+        bridge = (
+            ROOT / "src" / "nodes" / "perception" / "apriltag_udp_bridge.py"
+        ).read_text(encoding="utf-8")
+        setup_source = (ROOT / "setup.py").read_text(encoding="utf-8")
+        self.assertIn('/ "transforms"', bridge)
+        self.assertIn('/ "static_extrinsics.yaml"', bridge)
+        self.assertNotIn("cuvslam_camera_extrinsics.yaml", bridge)
+        self.assertIn('glob("configs/transforms/*.yaml")', setup_source)
 
 
 if __name__ == "__main__":

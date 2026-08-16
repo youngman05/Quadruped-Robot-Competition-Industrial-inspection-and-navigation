@@ -8,8 +8,8 @@
 |---|---|---|
 | 统一镜像无相机 verifier | PASS | 镜像 `sha256:f7384634ab69256558415a074d4ad53774f2399390ddcdc7135f2c33415fb5a0` 已在 `--runtime nvidia --network none` 下通过 `pip/nms/warmup/synthetic_udp` |
 | 固定抓放预设 | 待现场验证 | TaskManager 和机械臂 YAML 必须同时选择 `competition_v1`，并提供已验证的固定抓取、固定放置、夹爪脉冲和动作时序 |
-| I2 AprilTag 抓取精对齐 | 可选 | 关闭或检测/对齐失败时，回退抓取区固定偏移和固定抓取预设 |
-| J1 视觉放置 | 可选 | 关闭或检测/对齐失败时，回退 J0 固定位置和固定放置预设 |
+| I2 AprilTag 抓取精对齐 | 比赛预设默认开启 | 使用原 `static_extrinsics.yaml`、100 mm Tag 和原 ID0/ID1 示教位姿；失败时回退固定抓取预设 |
+| J1 视觉放置 | 当前关闭 | 未确认 `place_target_distance_m`，继续使用 J0 固定位置和固定放置预设 |
 | 机械臂真实抓持反馈 | 不具备 | 服务 success 只表示动作序列无异常完成，不证明已经抓住、仍持有或成功放下物体 |
 | 完整 L6 | 待现场监督 | 当前交付只完成到无运动启动与图/参数/服务检查，不发送导航或机械臂动作 |
 
@@ -44,8 +44,12 @@
 manipulation_preset: competition_v1
 abnormal_zone_fallback_order: [A, B, C, D]
 pick_red_tag_ids: [<pickup_tag_1>, <pickup_tag_2>]
-enable_pick_i2_alignment: false
+enable_pick_i2_alignment: true
 enable_place_vision_alignment: false
+pick_i2_targets_json: >-
+  {"0":[0.806210719,0.018127014,3.109325721],
+   "1":[0.806210719,0.018127014,3.109325721]}
+apriltag_tag_size_m: 0.100
 arm_service_timeout_sec: 30.0
 
 # Arm motion
@@ -67,7 +71,7 @@ enable_motion: false
 
 两个实际抓取 Tag ID 始终必须填写且必须不同。第一轮优先选择尚未使用且当前可见的 Tag，第二轮排除第一轮已经锁定的 Tag。关闭 I2 时不需要填写 I2 目标表；启用对应增强功能时，再补齐其参数：
 
-- `enable_pick_i2_alignment: true`：需要实测 tag size、两个 ID 对应的 I2 目标和 AprilTag 数据链；两个 Tag 可以使用同一个已测试的期望相对位姿。
+- `enable_pick_i2_alignment: true`：当前比赛预设使用 100 mm Tag，并为 ID0/ID1 复用原示教目标 `[0.806210719,0.018127014,3.109325721]`。Host bridge 必须读取 `configs/transforms/static_extrinsics.yaml`，不得改用导航外参。
 - `enable_place_vision_alignment: true`：需要 J1 使用的 RGB-D/安装参数和 `place_target_distance_m`。
 
 ## 无动作 Preflight

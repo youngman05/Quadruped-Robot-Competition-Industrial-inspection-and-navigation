@@ -35,8 +35,8 @@ class AprilTagUdpBridge(Node):
             config_path = str(
                 Path(get_package_share_directory("quadruped_robot_competition"))
                 / "configs"
-                / "navigation"
-                / "cuvslam_camera_extrinsics.yaml"
+                / "transforms"
+                / "static_extrinsics.yaml"
             )
         self._translation, self._rotation = load_static_extrinsic(
             Path(config_path), self._target_frame, self._source_frame
