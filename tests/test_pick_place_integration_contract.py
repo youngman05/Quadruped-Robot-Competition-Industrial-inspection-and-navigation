@@ -505,6 +505,14 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
         self.assertIn('docker cp "$container:$source_path" "$target_path"', START)
         self.assertIn('tail -80 "$target_path"', START)
 
+    def test_startup_preserves_cuvslam_launcher_error(self):
+        no_go = START.split("startup_no_go() {", 1)[1].split(
+            "handle_startup_signal() {", 1
+        )[0]
+        self.assertIn("preserve_cuvslam_start_log", no_go)
+        self.assertIn('/tmp/cuvslam_start.log', START)
+        self.assertIn('competition_cuvslam_start_${STARTUP_TIMESTAMP}.log', START)
+
     def test_unified_image_and_exact_model_are_locked(self):
         dockerfile = (ROOT / "docker" / "Dockerfile.cuvslam-pick-place").read_text(
             encoding="utf-8"

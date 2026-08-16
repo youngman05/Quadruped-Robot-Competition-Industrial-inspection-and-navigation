@@ -52,12 +52,25 @@ preserve_docker_perception_logs() {
     done
 }
 
+preserve_cuvslam_start_log() {
+    local source_path="/tmp/cuvslam_start.log"
+    local target_path="$LOGDIR/competition_cuvslam_start_${STARTUP_TIMESTAMP}.log"
+    [ -s "$source_path" ] || return 0
+    if cp -- "$source_path" "$target_path" 2>/dev/null; then
+        echo " cuVSLAM start log: $target_path"
+        tail -80 "$target_path" 2>/dev/null || true
+    else
+        echo " WARNING: could not preserve cuVSLAM start log: $source_path"
+    fi
+}
+
 startup_no_go() {
     echo "NO-GO: $*"
     echo " 启动快照: $STARTUP_SNAPSHOT"
     if ! cleanup_pick_place_verifier; then
         echo " WARNING: verifier container cleanup failed: $PICK_PLACE_VERIFIER_CONTAINER"
     fi
+    preserve_cuvslam_start_log
     preserve_docker_perception_logs
     if ${STARTUP_RUNTIME_TOUCHED:-false}; then
         echo " 清理已启动的正式栈..."
@@ -735,6 +748,13 @@ if [ -z "$CN" ]; then
         sleep 3
         CN=$(docker ps --format '{{.Names}}' 2>/dev/null | grep cuvslam || true)
         if [ -n "$CN" ]; then break; fi
+        if ! kill -0 "$RUNTIME_CUVSLAM_WRAPPER_PID" >/dev/null 2>&1; then
+            wait "$RUNTIME_CUVSLAM_WRAPPER_PID"
+            CUVSLAM_WRAPPER_STATUS=$?
+            RUNTIME_CUVSLAM_WRAPPER_PID=""
+            echo
+            startup_no_go "cuVSLAM launcher exited before Docker became ready (rc=$CUVSLAM_WRAPPER_STATUS)"
+        fi
         echo -n "."
     done
     if [ -z "$CN" ]; then

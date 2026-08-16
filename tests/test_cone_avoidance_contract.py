@@ -307,6 +307,11 @@ class ConeAvoidanceContractTests(unittest.TestCase):
         source = COMPETITION_START.read_text(encoding="utf-8")
         self.assertIn('RUNTIME_CUVSLAM_WRAPPER_PID=""', source)
         self.assertIn("RUNTIME_CUVSLAM_WRAPPER_PID=$!", source)
+        self.assertIn('kill -0 "$RUNTIME_CUVSLAM_WRAPPER_PID"', source)
+        self.assertIn(
+            'startup_no_go "cuVSLAM launcher exited before Docker became ready (rc=$CUVSLAM_WRAPPER_STATUS)"',
+            source,
+        )
         self.assertIn('kill -TERM "$RUNTIME_CUVSLAM_WRAPPER_PID"', source)
         for message in (
             "Docker startup timed out",
