@@ -279,7 +279,7 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
     def test_optional_alignment_falls_back_to_fixed_competition_presets(self):
         find_red_bar = task_manager_method("_tick_find_red_bar")
         place = task_manager_method("_tick_place_to_abnormal_zone")
-        depth_fallback = task_manager_method("_disable_optional_alignment")
+        depth_fallback = task_manager_method("_disable_place_vision_alignment")
         for token in (
             "if not self._enable_pick_i2_alignment:",
             "使用抓取区固定偏移继续比赛",
@@ -292,9 +292,11 @@ class PickPlaceIntegrationContractTests(unittest.TestCase):
             "视觉精对齐失败，降级到J0固定放置",
         ):
             self.assertIn(token, place)
-        self.assertIn("fail_soft=True", find_red_bar)
-        self.assertIn("self._enable_pick_i2_alignment = False", depth_fallback)
+        self.assertNotIn("fail_soft=True", find_red_bar)
+        self.assertIn("fail_soft=True", place)
+        self.assertNotIn("self._enable_pick_i2_alignment = False", depth_fallback)
         self.assertIn("self._enable_place_vision_alignment = False", depth_fallback)
+        self.assertIn("保留RGB AprilTag/I2", depth_fallback)
 
     def test_fourth_inspection_freezes_exactly_two_distinct_tasks(self):
         inspection = task_manager_method("_tick_inspect_gauges")

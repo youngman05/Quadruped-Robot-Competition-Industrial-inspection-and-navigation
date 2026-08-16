@@ -41,6 +41,27 @@ class ConeScanSafetyTests(unittest.TestCase):
         self.assertFalse(ready)
         self.assertIn("applied revision", reason)
 
+    def test_unchanged_disabled_state_can_acknowledge_after_parameter_readback(self):
+        tracker = ConeLayerAppliedTracker()
+        tracker.observe("local", self.layer_status(False, 2, 10), 1.0)
+        tracker.observe("global", self.layer_status(False, 3, 20), 1.0)
+        tracker.begin_transition(False)
+
+        self.assertEqual(
+            tracker.current_state_matches(False),
+            (True, "local/global cone layers already applied"),
+        )
+        self.assertFalse(tracker.readiness()[0])
+
+    def test_unchanged_ack_rejects_any_layer_state_mismatch(self):
+        tracker = ConeLayerAppliedTracker()
+        tracker.observe("local", self.layer_status(False, 2, 10), 1.0)
+        tracker.observe("global", self.layer_status(True, 3, 20), 1.0)
+
+        ready, reason = tracker.current_state_matches(False)
+        self.assertFalse(ready)
+        self.assertIn("global cone layer requested state mismatch", reason)
+
     def test_layer_state_mismatch_fails_closed(self):
         tracker = ConeLayerAppliedTracker()
         tracker.observe("local", self.layer_status(True, 0, 1), 1.0)

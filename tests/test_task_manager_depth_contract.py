@@ -21,6 +21,7 @@ class TaskManagerDepthContractTests(unittest.TestCase):
             '"mission_start"',
             '"after_success:obstacle_cross_target"',
             '"before:grab_area_approach"',
+            '"after_success:%s" % placement_waypoint',
             "self._depth_mode_client.readiness()",
             "self._depth_mode_client.end_to_end_ready(mode)",
             "self._depth_mode_client.republish_active_request(mode)",
@@ -36,6 +37,39 @@ class TaskManagerDepthContractTests(unittest.TestCase):
                 self.assertIn(token, self.source)
         self.assertNotIn("spin_until_future_complete", self.source)
         self.assertNotIn("time.sleep", self.source)
+
+    def test_pickup_stays_depth_disabled_and_placement_enables_depth_after_arrival(self):
+        find_red_bar = self.source.split("def _tick_find_red_bar", 1)[1].split(
+            "def _tick_grasp_bar", 1
+        )[0]
+        place = self.source.split("def _tick_place_to_abnormal_zone", 1)[1].split(
+            "def _complete_place_attempt", 1
+        )[0]
+        self.assertIn(
+            'self._depth_policy.before_waypoint("grab_area_approach")',
+            find_red_bar,
+        )
+        self.assertNotIn("fail_soft=True", find_red_bar)
+        self.assertLess(
+            place.index("self._placement_arrived = True"),
+            place.index("self._ensure_depth_mode("),
+        )
+        self.assertIn(
+            "self._depth_policy.waypoint_succeeded(placement_waypoint)",
+            place,
+        )
+        self.assertIn("fail_soft=True", place)
+
+    def test_each_pickup_round_rechecks_disabled_depth_mode(self):
+        enter_phase = self.source.split("def _enter_phase", 1)[1].split(
+            "def _switch_to_phase2_map", 1
+        )[0]
+        self.assertIn("if phase == Phase.FIND_RED_BAR:", enter_phase)
+        self.assertIn("self._grab_navigation_depth_mode = None", enter_phase)
+        self.assertIn(
+            "self._grab_navigation_depth_transition_complete = False",
+            enter_phase,
+        )
 
     def test_phase2_map_switch_is_default_off(self):
         self.assertIn('declare_parameter("enable_phase2_map_switch", False)', self.source)

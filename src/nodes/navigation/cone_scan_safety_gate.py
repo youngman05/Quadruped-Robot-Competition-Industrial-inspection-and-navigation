@@ -326,6 +326,14 @@ class ConeScanSafetyGate(Node):
                 self._resource_reason = "cone costmap layer verification failed: %s" % exc
                 return
             self._resource_futures = []
+            already_applied, reason = self._layer_tracker.current_state_matches(
+                self._resource_expected_enabled
+            )
+            if already_applied:
+                self._resource_stage = "ready"
+                self._resource_ready = True
+                self._resource_reason = reason
+                return
             self._resource_stage = "waiting_layer_apply"
             self._resource_reason = "waiting for local/global cone layer application"
             return

@@ -97,6 +97,19 @@ class ConeLayerAppliedTracker:
         self._baseline = {}
         self._expected_enabled = None
 
+    def current_state_matches(self, expected_enabled: bool) -> Tuple[bool, str]:
+        """Accept a no-op transition only when both applied states already match."""
+        if not self.baseline_ready():
+            return False, "waiting for local/global cone layer applied status"
+        expected = bool(expected_enabled)
+        for source in self.SOURCES:
+            status = self._latest[source]
+            if status.requested_enabled != expected:
+                return False, "%s cone layer requested state mismatch" % source
+            if status.applied_enabled != expected:
+                return False, "%s cone layer applied state mismatch" % source
+        return True, "local/global cone layers already applied"
+
     def readiness(self) -> Tuple[bool, str]:
         if self._expected_enabled is None or not self._baseline:
             return False, "cone layer transition has not started"

@@ -559,8 +559,10 @@ class TaskManagerNode(Node):
         self._depth_pending_odom_baseline = 0.0
         self._obstacle_depth_mode = None
         self._obstacle_depth_transition_complete = False
-        self._grab_depth_mode = None
-        self._grab_depth_transition_complete = False
+        self._grab_navigation_depth_mode = None
+        self._grab_navigation_depth_transition_complete = False
+        self._placement_depth_mode = None
+        self._placement_depth_transition_complete = False
         self._depth_recorded_waypoints = set()
         self._mission_start_nav_ready = False
         self._mission_start_cone_layers_ready = (
@@ -1318,20 +1320,19 @@ class TaskManagerNode(Node):
             return
         current_zone = self._abnormal_zones[self._abnormal_attempted]
 
-        if not self._grab_depth_transition_complete:
-            if self._grab_depth_mode is None:
-                self._grab_depth_mode = (
+        if not self._grab_navigation_depth_transition_complete:
+            if self._grab_navigation_depth_mode is None:
+                self._grab_navigation_depth_mode = (
                     self._depth_policy.before_waypoint("grab_area_approach")
                     if self._depth_policy is not None
                     else None
                 )
             if not self._ensure_depth_mode(
-                self._grab_depth_mode,
+                self._grab_navigation_depth_mode,
                 "before:grab_area_approach",
-                fail_soft=True,
             ):
                 return
-            self._grab_depth_transition_complete = True
+            self._grab_navigation_depth_transition_complete = True
 
         if not self._pick_arrived:
             retry_key = "find_red_bar:grab_area_approach"
@@ -1359,6 +1360,12 @@ class TaskManagerNode(Node):
             self._clear_navigation_retry(retry_key)
             self._nav.reset()
             self._pick_arrived = True
+            if (
+                self._depth_policy is not None
+                and "grab_area_approach" not in self._depth_recorded_waypoints
+            ):
+                self._depth_policy.waypoint_succeeded("grab_area_approach")
+                self._depth_recorded_waypoints.add("grab_area_approach")
             self._request_precision_release()
 
         if not self._enable_pick_i2_alignment:
@@ -1497,13 +1504,14 @@ class TaskManagerNode(Node):
             return
 
         current_zone = self._abnormal_zones[self._abnormal_attempted]
+        placement_waypoint = f"placement_{current_zone}_approach"
 
         if not self._placement_arrived:
             retry_key = "placement:%s" % current_zone
             if not self._navigation_retry_ready(retry_key):
                 return
             if not self._nav.goal_sent and not self._nav.is_done():
-                self._nav.navigate_to_waypoint(f"placement_{current_zone}_approach")
+                self._nav.navigate_to_waypoint(placement_waypoint)
             if not self._nav.is_done():
                 return
             if not self._nav.succeeded():
@@ -1524,6 +1532,25 @@ class TaskManagerNode(Node):
             self._nav.reset()
             self._placement_arrived = True
             self._request_precision_release()
+
+        if (
+            self._enable_place_vision_alignment
+            and not self._placement_depth_transition_complete
+        ):
+            if self._placement_depth_mode is None:
+                self._placement_depth_mode = (
+                    self._depth_policy.waypoint_succeeded(placement_waypoint)
+                    if self._depth_policy is not None
+                    else None
+                )
+                self._depth_recorded_waypoints.add(placement_waypoint)
+            if not self._ensure_depth_mode(
+                self._placement_depth_mode,
+                "after_success:%s" % placement_waypoint,
+                fail_soft=True,
+            ):
+                return
+            self._placement_depth_transition_complete = True
 
         if not self._place_alignment_complete:
             if not self._enable_place_vision_alignment:
@@ -1858,7 +1885,7 @@ class TaskManagerNode(Node):
                 reason,
             )
             if fail_soft:
-                self._disable_optional_alignment(message)
+                self._disable_place_vision_alignment(message)
                 return True
             self._abort(message)
             return False
@@ -1868,15 +1895,14 @@ class TaskManagerNode(Node):
                 readiness.reason,
             )
             if fail_soft:
-                self._disable_optional_alignment(message)
+                self._disable_place_vision_alignment(message)
                 return True
             self._abort(message)
             return False
         self._depth_mode_client.republish_active_request(mode)
         return False
 
-    def _disable_optional_alignment(self, reason: str) -> None:
-        self._enable_pick_i2_alignment = False
+    def _disable_place_vision_alignment(self, reason: str) -> None:
         self._enable_place_vision_alignment = False
         self._depth_pending_mode = None
         self._depth_pending_milestone = ""
@@ -1885,7 +1911,7 @@ class TaskManagerNode(Node):
         self._depth_pending_odom_baseline = 0.0
         self._depth_transition_stationary.reset()
         self.get_logger().warn(
-            "可选 I2/J1 感知链不可用，记录 uncertain 并继续固定抓放: %s"
+            "J1深度感知链不可用，保留RGB AprilTag/I2并降级到J0固定放置: %s"
             % reason
         )
 
@@ -1920,6 +1946,8 @@ class TaskManagerNode(Node):
         if phase == Phase.FIND_RED_BAR:
             self._pick_arrived = False
             self._pick_executor = None
+            self._grab_navigation_depth_mode = None
+            self._grab_navigation_depth_transition_complete = False
             self._grasp_future = None
             self._grasp_request_started = 0.0
             self._grasp_uncertain_reason = ""
@@ -1934,6 +1962,8 @@ class TaskManagerNode(Node):
             self._placement_arrival_time = None
             self._placement_arrived = False
             self._place_alignment_complete = False
+            self._placement_depth_mode = None
+            self._placement_depth_transition_complete = False
             self._place_future = None
             self._place_request_started = 0.0
             self._place_uncertain_reason = ""
