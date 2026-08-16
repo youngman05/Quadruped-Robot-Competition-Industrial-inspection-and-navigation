@@ -13,7 +13,7 @@ exec env \
     ARM_MOTION_PARAMS_FILE=/home/superwfx666/competition_configs/arm_motion_competition_v1.yaml \
     PICK_PLACE_SOURCE_COMMIT="$SOURCE_COMMIT" \
     IMAGE=isaac_ros_cuvslam_runtime:humble-rs-cone-pick-place \
-    PICK_PLACE_IMAGE_ID=sha256:f7384634ab69256558415a074d4ad53774f2399390ddcdc7135f2c33415fb5a0 \
+    PICK_PLACE_IMAGE_ID=sha256:aafbc91a7e7169fe3b6b87f7dd1caf639fbc0ff3c9fbfef6150b1b8b09fa5966 \
     ARM_MOTION_AUTHORIZED=true \
     PURE_L6_START=true \
     TASK_EXPECTED_MAP_ID=competition_field_phase1 \

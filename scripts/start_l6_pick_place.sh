@@ -24,7 +24,7 @@ export TASK_PASS_OBSTACLE_WAYPOINT_TIMEOUT_SEC=120.0
 export TASK_INSPECTION_TIMEOUT_SEC=300.0
 export PURE_L6_START=false
 export IMAGE="${IMAGE:-isaac_ros_cuvslam_runtime:humble-rs-cone-pick-place}"
-export PICK_PLACE_IMAGE_ID="${PICK_PLACE_IMAGE_ID:-sha256:f7384634ab69256558415a074d4ad53774f2399390ddcdc7135f2c33415fb5a0}"
+export PICK_PLACE_IMAGE_ID="${PICK_PLACE_IMAGE_ID:-sha256:aafbc91a7e7169fe3b6b87f7dd1caf639fbc0ff3c9fbfef6150b1b8b09fa5966}"
 
 exec bash "$PROJECT_ROOT/scripts/start_competition.sh" \
     --pick-place-l6 \

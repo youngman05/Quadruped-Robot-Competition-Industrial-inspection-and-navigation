@@ -6,7 +6,7 @@
 
 | 项目 | 状态 | 说明 |
 |---|---|---|
-| 统一镜像无相机 verifier | PASS | 镜像 `sha256:f7384634ab69256558415a074d4ad53774f2399390ddcdc7135f2c33415fb5a0` 已在 `--runtime nvidia --network none` 下通过 `pip/nms/warmup/synthetic_udp` |
+| 统一镜像无相机 verifier | PASS | 镜像 `sha256:aafbc91a7e7169fe3b6b87f7dd1caf639fbc0ff3c9fbfef6150b1b8b09fa5966` 已在 `--runtime nvidia --network none` 下通过 `pip/apriltag/nms/warmup/synthetic_udp`，并通过无相机 AprilTag 节点启动烟测 |
 | 固定抓放预设 | 待现场验证 | TaskManager 和机械臂 YAML 必须同时选择 `competition_v1`，并提供已验证的固定抓取、固定放置、夹爪脉冲和动作时序 |
 | I2 AprilTag 抓取精对齐 | 比赛预设默认开启 | 使用原 `static_extrinsics.yaml`、100 mm Tag 和原 ID0/ID1 示教位姿；失败时回退固定抓取预设 |
 | J1 视觉放置 | 当前关闭 | 未确认 `place_target_distance_m`，继续使用 J0 固定位置和固定放置预设 |
