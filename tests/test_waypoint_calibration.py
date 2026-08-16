@@ -89,14 +89,14 @@ class WaypointCalibrationTests(unittest.TestCase):
         ):
             resolve_waypoint_route(document, "inspection_interleaved")
 
-    def test_repository_real_waypoints_are_completed_phase1_route(self):
+    def test_repository_real_waypoints_track_pending_grab_approach(self):
         path = REPO_ROOT / "configs" / "navigation" / "waypoints_real.yaml"
         document = json.loads(path.read_text(encoding="utf-8"))
 
         self.assertEqual(document["version"], 1)
         self.assertEqual(document["frame_id"], "map")
         self.assertEqual(document["map_id"], "competition_field_phase1")
-        self.assertEqual(document["calibration"]["status"], "complete")
+        self.assertEqual(document["calibration"]["status"], "in_progress")
         self.assertEqual(
             document["calibration"]["map_yaml_sha256"],
             "6993e41e4d057f204fa7d229e25906cf1ccfd4f2cc7c9bee9881851d69ff8ec0",
@@ -118,6 +118,12 @@ class WaypointCalibrationTests(unittest.TestCase):
         )
         self.assertEqual(len(document["routes"]["full_interleaved"]), 14)
         self.assertEqual(set(document["waypoints"]), set(DEFAULT_FULL_ROUTE))
+
+        grab = document["waypoints"]["grab_area_approach"]
+        self.assertEqual(
+            (grab["x"], grab["y"], grab["yaw"], grab["yaw_deg"], grab["action"]),
+            (4.25, 3.05, -math.pi / 2.0, -90.0, "grab"),
+        )
 
         goals = resolve_waypoint_route(document, "full_interleaved")
         self.assertEqual([goal["label"] for goal in goals], list(DEFAULT_FULL_ROUTE))

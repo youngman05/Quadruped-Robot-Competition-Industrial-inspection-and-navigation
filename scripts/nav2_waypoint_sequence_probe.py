@@ -148,7 +148,7 @@ _INSPECTION_TAIL = [
 ]
 
 _FULL_TAIL = [
-    ("grab_area_approach", 3.10, 2.00, 0.0),
+    ("grab_area_approach", 4.25, 3.05, -math.pi / 2.0),
     ("placement_A_approach", 3.25, 4.95, math.pi / 2.0),
     ("placement_B_approach", 3.75, 4.95, math.pi / 2.0),
     ("placement_C_approach", 4.25, 4.95, math.pi / 2.0),
