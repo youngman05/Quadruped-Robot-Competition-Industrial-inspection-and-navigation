@@ -124,14 +124,12 @@ def plan_fixed_place(
     descent_duration_ms: int,
     duration_scale: float = 1.0,
 ) -> Tuple[Point3, List[MotionStep]]:
-    """Return to the grasp-end pose, descend with theta3 fixed, and release."""
+    """Move directly to the grasp point and release the gripper. Legacy lift/descent arguments remain for interface compatibility."""
 
     grasp_api = as_point3(grasp_reference_arm, "place_reference_grasp_arm")
-    steps = planner.plan_place_from_lift(
+    steps = planner.plan_place(
         grasp_api,
-        lift_height_m=float(grasp_lift_height_m),
-        descent_m=float(descent_m),
-        pose1_duration_ms=max(1, int(pose1_duration_ms)),
-        descent_duration_ms=max(1, int(descent_duration_ms)),
+        duration_ms=max(1, int(pose1_duration_ms)),
+        include_home=False,
     )
     return grasp_api, scale_steps(steps, duration_scale)

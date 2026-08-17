@@ -59,7 +59,7 @@ class MotionServiceCoreTest(unittest.TestCase):
         self.assertEqual(names[-1], "lift")
         self.assertNotIn("home_from_sorting_py", names)
 
-    def test_fixed_place_returns_to_lift_then_descends_with_wrist_fixed(self) -> None:
+    def test_fixed_place_moves_to_grasp_point_then_releases(self) -> None:
         reference_api, steps = plan_fixed_place(
             self.planner,
             (0.0, 0.42, 0.15),
@@ -71,15 +71,10 @@ class MotionServiceCoreTest(unittest.TestCase):
         self.assertEqual(reference_api, (0.0, 0.42, 0.15))
         self.assertEqual(
             [step.name for step in steps],
-            ["place_pose_1", "place_descend_2cm", "open_gripper"],
+            ["place_target", "open_gripper"],
         )
         self.assertEqual(dict(steps[-1].servos), {1: self.planner.config.open_gripper})
-        self.assertEqual(steps[0].coordinate[:2], (0.0, 0.42))
-        self.assertEqual(steps[1].coordinate[:2], (0.0, 0.42))
-        self.assertAlmostEqual(steps[0].coordinate[2], 0.23)
-        self.assertAlmostEqual(steps[1].coordinate[2], 0.21)
-        self.assertEqual(dict(steps[0].servos)[3], dict(steps[1].servos)[3])
-        self.assertEqual(steps[0].ik_angles["theta3"], steps[1].ik_angles["theta3"])
+        self.assertEqual(steps[0].coordinate, (0.0, 0.42, 0.15))
 
     def test_place_reference_is_serializable_as_a_point_payload(self) -> None:
         reference_api, _steps = plan_fixed_place(

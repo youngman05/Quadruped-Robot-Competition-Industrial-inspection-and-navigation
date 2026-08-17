@@ -48,17 +48,14 @@ duration.
 It always uses `include_home=false`; the final lift pose is the transport pose.
 
 The placement service has no request payload because the dog is already at a
-calibrated A/B/C/D base pose. It derives the grasp-end lift pose from
-`place_reference_grasp_arm` in ArmPi API axes, returns to that pose, descends
-`place_descent_m` with physical wrist joint `theta3` (servo ID3) fixed, then
-opens the gripper:
+calibrated A/B/C/D base pose. It moves directly to `place_reference_grasp_arm` in ArmPi API axes and then opens the gripper:
 
 ```text
-place_pose_1 -> place_descend_2cm -> open_gripper
+place_target -> open_gripper
 ```
 
 The final `open_gripper` step also reads the current ID1 pulse and approaches
-`400` with the same bounded pulse increments. If current ID1 feedback cannot be
+`900` with the same bounded pulse increments. If current ID1 feedback cannot be
 read, the service fails instead of sending one direct target jump.
 
 With the current `100` pulse increment, example ramps are:
