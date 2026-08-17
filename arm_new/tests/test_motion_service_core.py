@@ -73,6 +73,7 @@ class MotionServiceCoreTest(unittest.TestCase):
             [step.name for step in steps],
             ["place_pose_1", "place_descend_2cm", "open_gripper"],
         )
+        self.assertEqual(dict(steps[-1].servos), {1: self.planner.config.open_gripper})
         self.assertEqual(steps[0].coordinate[:2], (0.0, 0.42))
         self.assertEqual(steps[1].coordinate[:2], (0.0, 0.42))
         self.assertAlmostEqual(steps[0].coordinate[2], 0.23)

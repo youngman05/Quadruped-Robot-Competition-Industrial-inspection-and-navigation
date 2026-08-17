@@ -31,10 +31,10 @@ arm_motion_node:
     grasp_z_min_m: 0.15
     grasp_z_max_m: 0.25
     grasp_rotation_deg: 0.0
-    # Grasp uses its own fully-open target before approach. Placement keeps
-    # the separately calibrated release target below.
+    # Grasp pre-opening and fixed-placement release use the calibrated
+    # full-open pulse.
     grasp_open_gripper_pulse: 900
-    gripper_open_pulse: 400
+    gripper_open_pulse: 900
     gripper_close_pulse: 100
     # Every ID1 target in grasp/place reads feedback and approaches its target
     # with no command jump larger than this pulse value.
