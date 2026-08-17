@@ -19,10 +19,10 @@ class ArmPostureTest(unittest.TestCase):
     def test_stand_up_uses_current_initial_position_without_id1(self) -> None:
         steps = plan_stand_up()
 
-        self.assertEqual([step.servos[0][0] for step in steps], [2, 3, 4, 5, 6])
+        self.assertEqual([step.servos[0][0] for step in steps], [6, 2, 3, 4, 5])
         self.assertEqual(
             dict(step.servos[0] for step in steps),
-            {2: 504, 3: 256, 4: 755, 5: 636, 6: 519},
+            {2: 504, 3: 256, 4: 755, 5: 636, 6: 220},
         )
         self.assertNotIn(1, [step.servos[0][0] for step in steps])
 
