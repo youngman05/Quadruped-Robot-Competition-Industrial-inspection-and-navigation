@@ -4,7 +4,6 @@
 掌控比赛全流程，协调感知、导航、语音、机械臂各模块。
 
 订阅:
-    /yolo/detections       std_msgs/String  YOLO 实例分割结果 (JSON)
     /visual_slam/status    std_msgs/String  VO 定位状态
 
 发布:
@@ -68,7 +67,7 @@ from nodes.navigation.mission_route import (
     inspection_route_steps,
     observation_steps,
 )
-from nodes.perception.yolo_udp_bridge_core import CLASS_SCHEMA, MODEL_ID
+from nodes.decision.manipulation_contracts import CLASS_SCHEMA, MODEL_ID
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -116,16 +115,6 @@ class GaugeInfo:
     status: Optional[str] = None    # normal / high / low
     angle: Optional[float] = None
     confidence: float = 0.0
-
-
-@dataclass
-class YoloDetection:
-    """单帧 YOLO 检测汇总。"""
-    timestamp: float = 0.0
-    gauges: List[Dict[str, Any]] = field(default_factory=list)   # gauge 实例
-    letters: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)  # {"A": [...], ...}
-    red_bars: List[Dict[str, Any]] = field(default_factory=list)
-    green_bars: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class _PickRuntimeAdapter:
@@ -183,7 +172,7 @@ class TaskManagerNode(Node):
             "start", "pass_obstacle", "inspect_gauges", "report_status",
             "find_red_bar", "grasp_bar", "place_to_abnormal_zone", "finish",
         ])
-        self.declare_parameter("timeout_per_phase", 300.0)   # 每阶段超时 (秒), 含YOLO
+        self.declare_parameter("timeout_per_phase", 300.0)   # 每阶段超时 (秒)
         self.declare_parameter("pass_obstacle_timeout_sec", 180.0)
         self.declare_parameter("pass_obstacle_waypoint_timeout_sec", 120.0)
         self.declare_parameter("inspection_timeout_sec", 300.0)
@@ -194,10 +183,10 @@ class TaskManagerNode(Node):
 
         self.declare_parameter("phase2_map_yaml", "navi/map/competition_field_phase2.yaml")
         self.declare_parameter("gauge_topic", "/gauge/status")
-        self.declare_parameter("yolo_topic", "/yolo/detections")
         self.declare_parameter("slam_status_topic", "/visual_slam/status")
         self.declare_parameter("odom_topic", "/odom")
-        self.declare_parameter("odom_timeout_sec", 1.0)
+        self.declare_parameter("odom_timeout_sec", 10.0)
+        self.declare_parameter("odom_ready_hold_sec", 10.0)
         self.declare_parameter("phase_topic", "/task/phase")
         self.declare_parameter("status_topic", "/task/status")
         self.declare_parameter("whz_service", "/whz/inspect")
@@ -275,12 +264,14 @@ class TaskManagerNode(Node):
         self._require_stable = bool(self.get_parameter("require_stable_gauge").value)
         self._auto_advance = bool(self.get_parameter("auto_advance").value)
 
-        yolo_topic = str(self.get_parameter("yolo_topic").value)
         slam_status_topic = str(self.get_parameter("slam_status_topic").value)
         odom_topic = str(self.get_parameter("odom_topic").value)
         phase_topic = str(self.get_parameter("phase_topic").value)
         status_topic = str(self.get_parameter("status_topic").value)
         self._odom_timeout_sec = float(self.get_parameter("odom_timeout_sec").value)
+        self._odom_ready_hold_sec = max(
+            0.0, float(self.get_parameter("odom_ready_hold_sec").value)
+        )
         whz_service = str(self.get_parameter("whz_service").value)
         self._max_nav_retries = max(
             0, int(self.get_parameter("max_nav_retries").value)
@@ -426,9 +417,6 @@ class TaskManagerNode(Node):
         )
 
         # ── 订阅者 ────────────────────────────────
-        self._yolo_sub = self.create_subscription(
-            String, yolo_topic, self._on_yolo_detections, 10,
-        )
         self._apriltag_sub = (
             self.create_subscription(
                 String,
@@ -454,14 +442,12 @@ class TaskManagerNode(Node):
         self._gauge_info: Dict[str, GaugeInfo] = {   # 按字母索引的仪表信息
             letter: GaugeInfo(letter=letter) for letter in "ABCD"
         }
-        self._latest_yolo: Optional[YoloDetection] = None
-        self._latest_yolo_packet: Dict[str, Any] = {}
-        self._latest_yolo_received_monotonic = 0.0
         self._latest_apriltag_frame: Optional[FiducialDetectionFrame] = None
         self._latest_apriltag_received_monotonic = 0.0
         self._slam_tracking_ok: bool = False
         self._slam_status_time: float = 0.0
         self._last_odom_time: float = 0.0
+        self._odom_first_seen_time: float = 0.0
         self._last_odom_linear_speed: float = float("inf")
         self._last_odom_angular_speed: float = float("inf")
         self._abnormal_zones: Tuple[str, ...] = ()     # 第四次巡检后冻结的两个不同任务
@@ -819,6 +805,10 @@ class TaskManagerNode(Node):
             self._mission_start_wait_reason = "waiting for fresh odometry"
 
         odom_fresh = (time.time() - self._last_odom_time) <= self._odom_timeout_sec
+        odom_held = (
+            self._odom_first_seen_time > 0.0
+            and time.time() - self._odom_first_seen_time >= self._odom_ready_hold_sec
+        )
         if (
             self._enable_depth_milestones
             and odom_fresh
@@ -839,8 +829,8 @@ class TaskManagerNode(Node):
                 self._advance_to_next_phase()
             return
 
-        # 正式条件: SLAM 就绪 + 至少收到过一次 gauge/yolo 数据
-        if odom_fresh and elapsed > 1.0:
+        # 正式条件: SLAM 就绪 + 至少收到过一次 gauge 数据
+        if odom_fresh and odom_held and elapsed > 1.0:
             if self._inspection_only:
                 self.get_logger().info("定位就绪，进入限定观察位巡检")
                 self._enter_phase(Phase.INSPECT_GAUGES)
@@ -1864,49 +1854,6 @@ class TaskManagerNode(Node):
     #  订阅回调
     # ═══════════════════════════════════════════════════════════
 
-    def _on_yolo_detections(self, msg: String) -> None:
-        """解析 /yolo/detections JSON，提取仪表/字母/红条/绿条。"""
-        try:
-            data = json.loads(msg.data)
-        except (json.JSONDecodeError, TypeError) as exc:
-            self.get_logger().warn(f"yolo/detections JSON 解析失败: {exc}")
-            return
-
-        if self._enable_manipulation and (
-            data.get("model_id") != self._manipulation_model_id
-            or data.get("class_schema") != self._manipulation_class_schema
-        ):
-            self.get_logger().warn(
-                "Dropped YOLO packet with unexpected model identity",
-                throttle_duration_sec=2.0,
-            )
-            return
-        detections = data.get("detections", [])
-        if not isinstance(detections, list):
-            self.get_logger().warn("yolo/detections must contain a detections array")
-            return
-        detection = YoloDetection(
-            timestamp=time.time(),
-        )
-
-        for d in detections:
-            if not isinstance(d, dict):
-                continue
-            class_name = d.get("class_name", "")
-
-            if class_name == "gauge":
-                detection.gauges.append(d)
-            elif class_name in ("A", "B", "C", "D"):
-                detection.letters.setdefault(class_name, []).append(d)
-            elif class_name in ("red", "red_bar"):
-                detection.red_bars.append(d)
-            elif class_name in ("green", "green_bar"):
-                detection.green_bars.append(d)
-
-        self._latest_yolo = detection
-        self._latest_yolo_packet = data
-        self._latest_yolo_received_monotonic = time.monotonic()
-
     def _on_apriltag_detections(self, msg: String) -> None:
         try:
             self._latest_apriltag_frame = parse_fiducial_frame(json.loads(msg.data))
@@ -1947,6 +1894,8 @@ class TaskManagerNode(Node):
 
     def _on_odom(self, msg: Odometry) -> None:
         """Track host-side localization readiness from /odom."""
+        if self._odom_first_seen_time <= 0.0:
+            self._odom_first_seen_time = time.time()
         twist = msg.twist.twist
         self._last_odom_linear_speed = math.sqrt(
             twist.linear.x * twist.linear.x
@@ -1977,15 +1926,6 @@ class TaskManagerNode(Node):
                 "level": info.level,
                 "status": info.status,
                 "confidence": round(info.confidence, 4),
-            }
-
-        yolo_summary = None
-        if self._latest_yolo:
-            yolo_summary = {
-                "num_gauges": len(self._latest_yolo.gauges),
-                "num_letters": sum(len(v) for v in self._latest_yolo.letters.values()),
-                "num_red_bars": len(self._latest_yolo.red_bars),
-                "num_green_bars": len(self._latest_yolo.green_bars),
             }
 
         payload = {
@@ -2087,7 +2027,6 @@ class TaskManagerNode(Node):
                 ),
             },
             "gauges": gauge_data,
-            "yolo": yolo_summary,
         }
 
         msg = String()

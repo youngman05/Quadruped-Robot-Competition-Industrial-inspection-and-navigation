@@ -801,19 +801,6 @@ def generate_launch_description():
                 output='screen',
             )
         )
-        launch_entities.append(
-            ExecuteProcess(
-                cmd=[
-                    'python3', '/logs/cone_scan_udp_exporter.py',
-                    '--scan-topic', '/cone_obstacle/scan_humble',
-                    '--depth-topic', '${CONE_SCAN_DEPTH_TOPIC}',
-                    '--host', '${CONE_SCAN_UDP_HOST}',
-                    '--port', '${CONE_SCAN_UDP_PORT}',
-                ],
-                output='screen',
-            )
-        )
-
     visual_slam_node = ComposableNode(
         name='visual_slam_node',
         package='isaac_ros_visual_slam',

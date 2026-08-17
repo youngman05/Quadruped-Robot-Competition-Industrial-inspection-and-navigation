@@ -114,22 +114,6 @@ def generate_launch_description() -> LaunchDescription:
         }],
     )
 
-    planner_static = Node(
-        package="nav2_planner",
-        executable="planner_server",
-        name="planner_server",
-        output="screen",
-        parameters=[params_file],
-        condition=IfCondition(static_mode),
-    )
-    planner_depth = Node(
-        package="nav2_planner",
-        executable="planner_server",
-        name="planner_server",
-        output="screen",
-        parameters=[params_file, depth_params_file],
-        condition=IfCondition(depth_mode),
-    )
     planner_cone = Node(
         package="nav2_planner",
         executable="planner_server",
@@ -139,24 +123,6 @@ def generate_launch_description() -> LaunchDescription:
         condition=IfCondition(cone_mode),
     )
 
-    controller_static = Node(
-        package="nav2_controller",
-        executable="controller_server",
-        name="controller_server",
-        output="screen",
-        parameters=[params_file],
-        remappings=[("/cmd_vel", "/cmd_vel_nav2")],
-        condition=IfCondition(static_mode),
-    )
-    controller_depth = Node(
-        package="nav2_controller",
-        executable="controller_server",
-        name="controller_server",
-        output="screen",
-        parameters=[params_file, depth_params_file],
-        remappings=[("/cmd_vel", "/cmd_vel_nav2")],
-        condition=IfCondition(depth_mode),
-    )
     controller_cone = Node(
         package="nav2_controller",
         executable="controller_server",
@@ -176,22 +142,6 @@ def generate_launch_description() -> LaunchDescription:
         remappings=[("/cmd_vel", "/cmd_vel_nav2")],
     )
 
-    cmd_vel_arbiter_direct = Node(
-        package="quadruped_robot_competition",
-        executable="cmd_vel_arbiter",
-        name="cmd_vel_arbiter",
-        output="screen",
-        parameters=[{"output_topic": "/cmd_vel"}],
-        condition=IfCondition(static_mode),
-    )
-    cmd_vel_arbiter_gated = Node(
-        package="quadruped_robot_competition",
-        executable="cmd_vel_arbiter",
-        name="cmd_vel_arbiter",
-        output="screen",
-        parameters=[{"output_topic": "/cmd_vel_selected"}],
-        condition=IfCondition(depth_mode),
-    )
     cmd_vel_arbiter_cone = Node(
         package="quadruped_robot_competition",
         executable="cmd_vel_arbiter",
@@ -201,38 +151,17 @@ def generate_launch_description() -> LaunchDescription:
         condition=IfCondition(cone_mode),
     )
 
-    depth_relay_publisher = Node(
-        package="quadruped_robot_competition",
-        executable="depth_relay_publisher",
-        name="depth_relay_publisher",
-        output="screen",
-        parameters=[{"frames_dir": depth_frames_dir}],
-        condition=IfCondition(depth_mode),
-    )
-    depth_optical_tf = Node(
-        package="tf2_ros",
-        executable="static_transform_publisher",
-        name="camera_depth_optical_tf",
-        arguments=[
-            "0", "0", "0",
-            "-0.5", "0.5", "-0.5", "0.5",
-            "camera_link", "camera_depth_optical_frame",
-        ],
-        output="screen",
-        condition=IfCondition(depth_mode),
-    )
-    depth_safety_gate = Node(
-        package="quadruped_robot_competition",
-        executable="depth_safety_gate",
-        name="depth_safety_gate",
-        output="screen",
-        condition=IfCondition(depth_mode),
-    )
     cone_scan_udp_bridge = Node(
         package="quadruped_robot_competition",
         executable="cone_scan_udp_bridge",
         name="cone_scan_udp_bridge",
         output="screen",
+        parameters=[{
+            "enable_dds": True,
+            "source_scan_topic": "/cone_obstacle/scan_humble",
+            "source_depth_topic": "/camera/depth/image_rect_raw",
+            "max_rate_hz": 5.0,
+        }],
         condition=IfCondition(cone_mode),
     )
     cone_mode_relay = Node(
@@ -304,22 +233,13 @@ def generate_launch_description() -> LaunchDescription:
         declare_cone_params,
         startup_info,
         map_server,
-        cmd_vel_arbiter_direct,
-        cmd_vel_arbiter_gated,
         cmd_vel_arbiter_cone,
-        depth_relay_publisher,
-        depth_optical_tf,
-        depth_safety_gate,
         cone_scan_udp_bridge,
         cone_mode_relay,
         cone_scan_safety_gate,
-        planner_static,
-        planner_depth,
         planner_cone,
-        controller_static,
-        controller_depth,
         controller_cone,
         recoveries,
         bt_navigator,
-        TimerAction(period=3.0, actions=[lifecycle]),
+        TimerAction(period=0.1, actions=[lifecycle]),
     ])

@@ -29,25 +29,6 @@ gauge_status_node:
     # --- 稳定性 ---
     stable_frame_count: 3         # 连续 N 帧一致才判定 stable
 
-# --- 以下节点待实现 ---
-
-yolo_detect_node:
-  ros__parameters:
-    model_path: "src/cv/yolo_detector/projects/combined/model/best.pt"
-    conf: 0.5
-    imgsz: 640
-    device: "0"              # 0=GPU, cpu=CPU
-    interval_sec: 0.1
-    frame_id: "d455_color_optical_frame"
-    use_d455: true
-    camera_id: 0
-    width: 640
-    height: 480
-    enable_depth: true
-    detections_topic: "/yolo/detections"
-    image_topic: "/yolo/image"
-    count_topic: "/yolo/instance_count"
-
 task_manager_node:
   ros__parameters:
     phases: ["start", "pass_obstacle", "inspect_gauges", "report_status", "find_red_bar", "grasp_bar", "place_to_abnormal_zone", "finish"]
@@ -55,13 +36,13 @@ task_manager_node:
     report_duration: 5.0         # 语音播报最短时长
     tick_rate: 10.0              # 状态机主循环频率 (Hz)
     require_stable_gauge: true   # 是否必须仪表稳定检测才推进
+    odom_timeout_sec: 3.0        # 允许的 /odom 最大间隔（秒）
     depth_mode_request_topic: "/depth/mode_request"
     depth_mode_status_topic: "/depth/mode_status"
     depth_transition_timeout_sec: 8.0
     depth_transition_settle_duration_sec: 1.0
     host_odom_disable_timeout_sec: 2.0
     gauge_topic: "/gauge/status"
-    yolo_topic: "/yolo/detections"
     slam_status_topic: "/visual_slam/status"
     phase_topic: "/task/phase"
     status_topic: "/task/status"

@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Docker ROS node: D455 AprilTag pose in camera_link -> Host UDP."""
+"""Docker ROS node: publish D455 AprilTag poses over DDS in camera_link."""
 
 from __future__ import annotations
 
 import json
 import os
-import socket
 import time
 from typing import Optional
 
@@ -16,6 +15,7 @@ from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CameraInfo, Image
+from std_msgs.msg import String
 from tf2_ros import Buffer, TransformListener
 
 from apriltag_pose_core import AprilTagPoseDetector, quaternion_xyzw, transform_pose
@@ -48,11 +48,9 @@ class D455AprilTagPoseNode(Node):
             float(self.get_parameter("max_reprojection_error_px").value),
             int(self.get_parameter("pose_history_max_missed_frames").value),
         )
-        self._udp_target = (
-            str(self.get_parameter("udp_host").value),
-            int(self.get_parameter("udp_port").value),
+        self._detections_topic = str(
+            self.get_parameter("detections_topic").value
         )
-        self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._bridge = CvBridge()
         self._camera_matrix: Optional[np.ndarray] = None
         self._distortion = np.zeros(5, dtype=np.float64)
@@ -69,13 +67,16 @@ class D455AprilTagPoseNode(Node):
         )
         self.create_subscription(Image, self._color_topic, self._on_image, qos)
         self.create_subscription(CameraInfo, self._info_topic, self._on_info, qos)
+        self._publisher = self.create_publisher(
+            String, self._detections_topic, qos
+        )
         self.create_timer(1.0 / float(self.get_parameter("process_rate_hz").value), self._process_latest)
         self.get_logger().info(
-            "AprilTag IDs {}: {} -> {} UDP {}:{}".format(
+            "AprilTag IDs {}: {} -> {} DDS {}".format(
                 sorted(self._detector.expected_tag_ids),
                 self._color_topic,
                 self._output_frame,
-                *self._udp_target,
+                self._detections_topic,
             )
         )
 
@@ -92,8 +93,9 @@ class D455AprilTagPoseNode(Node):
         self.declare_parameter("max_reprojection_error_px", 3.0)
         self.declare_parameter("pose_history_max_missed_frames", 5)
         self.declare_parameter("process_rate_hz", 10.0)
-        self.declare_parameter("udp_host", "127.0.0.1")
-        self.declare_parameter("udp_port", 19003)
+        self.declare_parameter(
+            "detections_topic", "/apriltag/detections_camera"
+        )
 
     def _on_image(self, message: Image) -> None:
         self._latest_image = message
@@ -149,10 +151,9 @@ class D455AprilTagPoseNode(Node):
             ],
             "detection_ms": (time.perf_counter() - started) * 1000.0,
         }
-        self._socket.sendto(
-            json.dumps(packet, separators=(",", ":")).encode("utf-8"),
-            self._udp_target,
-        )
+        message = String()
+        message.data = json.dumps(packet, separators=(",", ":"))
+        self._publisher.publish(message)
         self._sequence += 1
         self.get_logger().info(
             "tags={} detection_ms={:.1f}".format(
@@ -162,7 +163,6 @@ class D455AprilTagPoseNode(Node):
         )
 
     def destroy_node(self):
-        self._socket.close()
         return super().destroy_node()
 
 

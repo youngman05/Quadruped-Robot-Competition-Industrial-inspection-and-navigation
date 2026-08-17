@@ -35,7 +35,6 @@ CONE_BEHAVIOR_TREE = PathJoinSubstitution([
 def generate_launch_description() -> LaunchDescription:
     # ─── 启动参数 ───────────────────────────────────
     enable_gauge = LaunchConfiguration("enable_gauge", default="false")
-    enable_yolo = LaunchConfiguration("enable_yolo", default="true")
     enable_task_manager = LaunchConfiguration("enable_task_manager", default="false")
     enable_speech = LaunchConfiguration("enable_speech", default="false")
     enable_navigation = LaunchConfiguration("enable_navigation", default="false")
@@ -45,11 +44,11 @@ def generate_launch_description() -> LaunchDescription:
     enable_depth_pipeline = LaunchConfiguration("enable_depth_pipeline", default="false")
     enable_cone_avoidance = LaunchConfiguration("enable_cone_avoidance", default="false")
     enable_cone_mode_control = LaunchConfiguration("enable_cone_mode_control", default="false")
+    require_cone_layer_startup_ready = LaunchConfiguration(
+        "require_cone_layer_startup_ready", default="false"
+    )
     enable_apriltag_bridge = LaunchConfiguration(
         "enable_apriltag_bridge", default="false"
-    )
-    enable_yolo_udp_bridge = LaunchConfiguration(
-        "enable_yolo_udp_bridge", default="false"
     )
     enable_arm_motion = LaunchConfiguration("enable_arm_motion", default="false")
     arm_motion_authorized = LaunchConfiguration(
@@ -73,6 +72,11 @@ def generate_launch_description() -> LaunchDescription:
     whz_min_agree_frames = LaunchConfiguration("whz_min_agree_frames")
     auto_advance = LaunchConfiguration("auto_advance", default="false")
     mission_start_armed = LaunchConfiguration("mission_start_armed", default="true")
+    start_phase = LaunchConfiguration("start_phase", default="start")
+    start_zone = LaunchConfiguration("start_zone", default="A")
+    skip_pick_navigation = LaunchConfiguration(
+        "skip_pick_navigation", default="false"
+    )
     max_nav_retries = LaunchConfiguration("max_nav_retries", default="3")
     max_inspection_retries = LaunchConfiguration("max_inspection_retries", default="3")
     finish_after_inspection = LaunchConfiguration("finish_after_inspection", default="false")
@@ -100,10 +104,6 @@ def generate_launch_description() -> LaunchDescription:
     declare_enable_gauge = DeclareLaunchArgument(
         "enable_gauge", default_value="false",
         description="启动仪表检测节点"
-    )
-    declare_enable_yolo = DeclareLaunchArgument(
-        "enable_yolo", default_value="true",
-        description="启动 YOLO 检测节点"
     )
     declare_enable_task_manager = DeclareLaunchArgument(
         "enable_task_manager", default_value="false",
@@ -151,15 +151,15 @@ def generate_launch_description() -> LaunchDescription:
         default_value="false",
         description="越障后动态关闭 D455 depth、锥桶 costmap 与扫描安全门。",
     )
+    declare_require_cone_layer_startup_ready = DeclareLaunchArgument(
+        "require_cone_layer_startup_ready",
+        default_value="false",
+        description="是否在 START 前等待本地/全局锥桶 costmap layer baseline ready。",
+    )
     declare_enable_apriltag_bridge = DeclareLaunchArgument(
         "enable_apriltag_bridge",
         default_value="false",
-        description="启动 Host AprilTag UDP bridge（Docker UDP 19003）。",
-    )
-    declare_enable_yolo_udp_bridge = DeclareLaunchArgument(
-        "enable_yolo_udp_bridge",
-        default_value="false",
-        description="启动 Host D455 YOLO UDP bridge（Docker UDP 19004）。",
+        description="启动 Host AprilTag DDS bridge（订阅 /apriltag/detections_camera）。",
     )
     declare_enable_arm_motion = DeclareLaunchArgument(
         "enable_arm_motion",
@@ -241,6 +241,18 @@ def generate_launch_description() -> LaunchDescription:
         "mission_start_armed", default_value="true",
         description="允许 TaskManager 从 START 推进；正式启动验收期间设为 false。",
     )
+    declare_start_phase = DeclareLaunchArgument(
+        "start_phase", default_value="start",
+        description="TaskManager 初始阶段；find_red_bar 用于从 AprilTag 精对准调试。",
+    )
+    declare_start_zone = DeclareLaunchArgument(
+        "start_zone", default_value="A",
+        description="find_red_bar 模式下使用的异常区 A/B/C/D。",
+    )
+    declare_skip_pick_navigation = DeclareLaunchArgument(
+        "skip_pick_navigation", default_value="false",
+        description="find_red_bar 模式下跳过 grab_area_approach 导航，直接进入 I2 对齐。",
+    )
     declare_max_nav_retries = DeclareLaunchArgument(
         "max_nav_retries", default_value="3",
         description="TaskManager 对失败 Nav2 goal 的重新提交次数",
@@ -303,16 +315,6 @@ def generate_launch_description() -> LaunchDescription:
         condition=IfCondition(enable_gauge),
     )
 
-    yolo_node = Node(
-        package="quadruped_robot_competition",
-        executable="yolo_detect_publisher",
-        name="yolo_detect_publisher_node",
-        parameters=[str(PARAMS_FILE)],
-        output="screen",
-        condition=IfCondition(enable_yolo),
-    )
-
-    # ── whz 巡检 (字母+仪表+语音) ──
     whz_inspection_node = Node(
         package="whz",
         executable="inspection_node",
@@ -343,6 +345,11 @@ def generate_launch_description() -> LaunchDescription:
                 "auto_advance": auto_advance,
                 "mission_start_armed": ParameterValue(
                     mission_start_armed, value_type=bool
+                ),
+                "start_phase": start_phase,
+                "start_zone": start_zone,
+                "skip_pick_navigation": ParameterValue(
+                    skip_pick_navigation, value_type=bool
                 ),
                 "max_nav_retries": ParameterValue(max_nav_retries, value_type=int),
                 "max_inspection_retries": ParameterValue(
@@ -388,7 +395,7 @@ def generate_launch_description() -> LaunchDescription:
                     value_type=bool,
                 ),
                 "require_cone_layer_startup_ready": ParameterValue(
-                    enable_cone_mode_control,
+                    require_cone_layer_startup_ready,
                     value_type=bool,
                 ),
                 "depth_safety_status_topic": PythonExpression([
@@ -477,15 +484,11 @@ def generate_launch_description() -> LaunchDescription:
         executable="apriltag_udp_bridge",
         name="apriltag_udp_bridge_node",
         output="screen",
+        parameters=[{
+            "source_topic": "/apriltag/detections_camera",
+            "detections_topic": "/apriltag/detections_base",
+        }],
         condition=IfCondition(enable_apriltag_bridge),
-    )
-
-    yolo_udp_bridge_node = Node(
-        package="quadruped_robot_competition",
-        executable="yolo_udp_bridge",
-        name="yolo_udp_bridge_node",
-        output="screen",
-        condition=IfCondition(enable_yolo_udp_bridge),
     )
 
     arm_motion_node = Node(
@@ -496,6 +499,9 @@ def generate_launch_description() -> LaunchDescription:
             arm_motion_params_file,
             {
                 "enable_motion": ParameterValue(
+                    arm_motion_authorized, value_type=bool
+                ),
+                "transform_calibrated": ParameterValue(
                     arm_motion_authorized, value_type=bool
                 ),
             },
@@ -543,7 +549,6 @@ def generate_launch_description() -> LaunchDescription:
             "║   四足机器人竞赛系统 (Nav2版) 启动中   ║\n",
             "╠════════════════════════════════════════╣\n",
             "║ gauge_status     : ", enable_gauge, "  ║\n",
-            "║ yolo_detect      : ", enable_yolo, "  ║\n",
             "║ task_manager     : ", enable_task_manager, "  ║\n",
             "║ speech           : ", enable_speech, "  ║\n",
             "║ navigation (Nav2): ", enable_navigation, "  ║\n",
@@ -552,7 +557,6 @@ def generate_launch_description() -> LaunchDescription:
             "║ depth_pipeline   : ", enable_depth_pipeline, "  ║\n",
             "║ cone_avoidance   : ", enable_cone_avoidance, "  ║\n",
             "║ AprilTag bridge  : ", enable_apriltag_bridge, "  ║\n",
-            "║ YOLO UDP bridge  : ", enable_yolo_udp_bridge, "  ║\n",
             "║ arm motion       : ", enable_arm_motion, "  ║\n",
             "║ manipulation     : ", enable_manipulation, "  ║\n",
             "║ whz_inspection   : ", enable_whz, "  ║\n",
@@ -562,7 +566,6 @@ def generate_launch_description() -> LaunchDescription:
 
     return LaunchDescription([
         declare_enable_gauge,
-        declare_enable_yolo,
         declare_enable_task_manager,
         declare_enable_speech,
         declare_enable_navigation,
@@ -573,8 +576,8 @@ def generate_launch_description() -> LaunchDescription:
         declare_depth_frames_dir,
         declare_enable_cone_avoidance,
         declare_enable_cone_mode_control,
+        declare_require_cone_layer_startup_ready,
         declare_enable_apriltag_bridge,
-        declare_enable_yolo_udp_bridge,
         declare_enable_arm_motion,
         declare_arm_motion_authorized,
         declare_enable_manipulation,
@@ -591,6 +594,9 @@ def generate_launch_description() -> LaunchDescription:
         declare_whz_min_agree_frames,
         declare_auto_advance,
         declare_mission_start_armed,
+        declare_start_phase,
+        declare_start_zone,
+        declare_skip_pick_navigation,
         declare_max_nav_retries,
         declare_max_inspection_retries,
         declare_finish_after_inspection,
@@ -605,7 +611,6 @@ def generate_launch_description() -> LaunchDescription:
         declare_global_pose_mode,
         startup_info,
         gauge_node,
-        yolo_node,
         whz_inspection_node,
         task_manager_node,
         speech_node,
@@ -614,7 +619,6 @@ def generate_launch_description() -> LaunchDescription:
         base_to_camera_tf,
         depth_pub_node,
         apriltag_bridge_node,
-        yolo_udp_bridge_node,
         arm_motion_node,
         cmd_vel_bridge_node,
         navigation_launch,

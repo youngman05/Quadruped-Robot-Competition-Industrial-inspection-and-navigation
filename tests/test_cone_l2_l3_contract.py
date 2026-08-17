@@ -96,9 +96,9 @@ class ConeL2L3ContractTests(unittest.TestCase):
 
     def test_gate_has_deadline_margin_and_three_frame_warmup(self):
         source = GATE_PATH.read_text(encoding="utf-8")
-        self.assertIn('declare_parameter("health_timeout_sec", 0.20)', source)
-        self.assertIn('declare_parameter("required_consecutive_frames", 3)', source)
-        self.assertIn('declare_parameter("output_rate_hz", 40.0)', source)
+        self.assertIn('declare_parameter("health_timeout_sec", 1.0)', source)
+        self.assertIn('declare_parameter("required_consecutive_frames", 2)', source)
+        self.assertIn('declare_parameter("output_rate_hz", 20.0)', source)
 
     def test_clear_scene_semantics_are_used_on_both_sides(self):
         exporter = EXPORTER_PATH.read_text(encoding="utf-8")

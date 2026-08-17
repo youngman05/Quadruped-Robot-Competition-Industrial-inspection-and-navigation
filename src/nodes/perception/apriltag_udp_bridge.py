@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Publish Docker D455 AprilTag UDP poses in base_link."""
+"""Transform Docker D455 AprilTag DDS poses into base_link."""
 
 from __future__ import annotations
 
 import json
-import socket
 from pathlib import Path
 
 import rclpy
@@ -25,8 +24,7 @@ class AprilTagUdpBridge(Node):
     def __init__(self) -> None:
         super().__init__("apriltag_udp_bridge_node")
         self._declare_parameters()
-        self._bind_host = str(self.get_parameter("udp_bind_host").value)
-        self._port = int(self.get_parameter("udp_port").value)
+        self._source_topic = str(self.get_parameter("source_topic").value)
         self._source_frame = str(self.get_parameter("source_frame").value)
         self._target_frame = str(self.get_parameter("target_frame").value)
         self._max_age_s = float(self.get_parameter("max_packet_age_s").value)
@@ -41,42 +39,34 @@ class AprilTagUdpBridge(Node):
         self._translation, self._rotation = load_static_extrinsic(
             Path(config_path), self._target_frame, self._source_frame
         )
-        self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self._socket.bind((self._bind_host, self._port))
-        self._socket.setblocking(False)
         self._publisher = self.create_publisher(
             String, str(self.get_parameter("detections_topic").value), 10
         )
-        self._timer = self.create_timer(
-            float(self.get_parameter("poll_period_s").value), self._poll
+        self.create_subscription(
+            String,
+            self._source_topic,
+            self._on_source,
+            10,
         )
         self.get_logger().info(
-            "AprilTag UDP {}:{}: {} -> {}".format(
-                self._bind_host, self._port, self._source_frame, self._target_frame
+            "AprilTag DDS {}: {} -> {}".format(
+                self._source_topic, self._source_frame, self._target_frame
             )
         )
 
     def _declare_parameters(self) -> None:
-        self.declare_parameter("udp_bind_host", "127.0.0.1")
-        self.declare_parameter("udp_port", 19003)
+        self.declare_parameter(
+            "source_topic", "/apriltag/detections_camera"
+        )
         self.declare_parameter("source_frame", "camera_link")
         self.declare_parameter("target_frame", "base_link")
         self.declare_parameter("detections_topic", "/apriltag/detections_base")
-        self.declare_parameter("poll_period_s", 0.01)
         self.declare_parameter("max_packet_age_s", 0.5)
         self.declare_parameter("extrinsics_config", "")
 
-    def _poll(self) -> None:
-        payload = None
+    def _on_source(self, msg: String) -> None:
         try:
-            while True:
-                payload, _source = self._socket.recvfrom(16384)
-        except BlockingIOError:
-            pass
-        if payload is None:
-            return
-        try:
-            packet = validate_packet(json.loads(payload.decode("utf-8")))
+            packet = validate_packet(json.loads(msg.data))
             if packet["frame_id"] != self._source_frame:
                 return
             now_s = self.get_clock().now().nanoseconds / 1e9
@@ -118,7 +108,6 @@ class AprilTagUdpBridge(Node):
         )
 
     def destroy_node(self):
-        self._socket.close()
         return super().destroy_node()
 
 

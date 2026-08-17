@@ -319,10 +319,10 @@ if $ENABLE_CONE_AVOIDANCE; then
 fi
 CUVSLAM_DOCKER_DOMAIN_ID="${CUVSLAM_DOCKER_DOMAIN_ID:-0}"
 if $PICK_PLACE_L6; then
-    CUVSLAM_DOCKER_DOMAIN_ID="${CONE_DOCKER_ROS_DOMAIN_ID:-42}"
+    CUVSLAM_DOCKER_DOMAIN_ID="${CONE_DOCKER_ROS_DOMAIN_ID:-0}"
     export IMAGE="${IMAGE:-isaac_ros_cuvslam_runtime:humble-rs-cone-pick-place}"
 elif $ENABLE_CONE_AVOIDANCE; then
-    CUVSLAM_DOCKER_DOMAIN_ID="${CONE_DOCKER_ROS_DOMAIN_ID:-42}"
+    CUVSLAM_DOCKER_DOMAIN_ID="${CONE_DOCKER_ROS_DOMAIN_ID:-0}"
     export IMAGE="${IMAGE:-isaac_ros_cuvslam_runtime:humble-rs-cone}"
 fi
 
@@ -893,6 +893,9 @@ fi
 if $ENABLE_APRILTAG_BRIDGE; then
     docker exec "$CN" test -x /opt/quadruped/perception/bin/run_apriltag_pose_node.sh \
         || startup_no_go "AprilTag runtime is missing from the unified image"
+    docker cp "$PROJECT_ROOT/docker/d455_perception/d455_apriltag_pose_node.py" \
+        "$CN":/opt/quadruped/perception/bin/d455_apriltag_pose_node.py \
+        >/dev/null 2>&1 || startup_no_go "Failed to inject DDS AprilTag node"
     docker exec -d \
         -e APRILTAG_TAG_IDS="$APRILTAG_TAG_IDS" \
         -e APRILTAG_TAG_SIZE_M="$APRILTAG_TAG_SIZE_M" \
@@ -948,7 +951,7 @@ if [ -f "$PROJECT_ROOT/configs/ros/fastrtps_no_shm.xml" ]; then
     export FASTRTPS_DEFAULT_PROFILES_FILE="$PROJECT_ROOT/configs/ros/fastrtps_no_shm.xml"
 fi
 
-nohup python3 scripts/final_bridge.py \
+nohup python3 scripts/final_bridge_dds.py \
   --camera-world-rebase "$FINAL_BRIDGE_CAMERA_WORLD_REBASE" \
   --planarize-output > /tmp/fb.log 2>&1 &
 BRIDGE_PID=$!

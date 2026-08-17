@@ -34,11 +34,8 @@ setup(
         "console_scripts": [
             # ── 感知层 ──────────────────────────
             "gauge_status_publisher = nodes.perception.gauge_status:main",
-            "yolo_detect_publisher = nodes.perception.yolo_detect_publisher:main",
             "color_image_publisher = nodes.perception.color_image_publisher:main",
-            "yolo_image_server = nodes.perception.yolo_image_server:main",
             "apriltag_udp_bridge = nodes.perception.apriltag_udp_bridge:main",
-            "yolo_udp_bridge = nodes.perception.yolo_udp_bridge:main",
             # ── 决策层 ──────────────────────────
             "task_manager = nodes.decision.task_manager:main",
             # "speech_publisher = nodes.decision.speech:main",

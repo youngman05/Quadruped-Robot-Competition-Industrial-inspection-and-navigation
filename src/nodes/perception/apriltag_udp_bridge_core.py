@@ -138,11 +138,49 @@ def transform_pose(
     translation: Sequence[float],
     rotation_xyzw: Sequence[float],
 ) -> Tuple[Tuple[float, float, float], Tuple[float, float, float, float]]:
-    from nodes.perception.yolo_udp_bridge_core import transform_point
-
-    transformed_position = transform_point(position, translation, rotation_xyzw)
+    transformed_position = _transform_point(position, translation, rotation_xyzw)
     transformed_orientation = quaternion_multiply(rotation_xyzw, orientation_xyzw)
     return tuple(transformed_position), transformed_orientation
+
+
+def _transform_point(
+    point: Sequence[float],
+    translation: Sequence[float],
+    rotation_xyzw: Sequence[float],
+) -> Tuple[float, float, float]:
+    """Apply a normalized quaternion transform: p_target = R * p_source + t."""
+
+    if len(point) != 3 or len(translation) != 3 or len(rotation_xyzw) != 4:
+        raise ValueError("point, translation, and rotation must be 3, 3, and 4 values")
+    if not all(
+        isinstance(value, (int, float)) and math.isfinite(float(value))
+        for value in (*point, *translation, *rotation_xyzw)
+    ):
+        raise ValueError("transform values must be finite")
+
+    x, y, z, w = (float(value) for value in rotation_xyzw)
+    norm = math.sqrt(x * x + y * y + z * z + w * w)
+    if norm == 0.0:
+        raise ValueError("rotation quaternion must be non-zero")
+    x, y, z, w = x / norm, y / norm, z / norm, w / norm
+    px, py, pz = (float(value) for value in point)
+    tx, ty, tz = (float(value) for value in translation)
+
+    transformed = (
+        (1.0 - 2.0 * (y * y + z * z)) * px
+        + 2.0 * (x * y - z * w) * py
+        + 2.0 * (x * z + y * w) * pz
+        + tx,
+        2.0 * (x * y + z * w) * px
+        + (1.0 - 2.0 * (x * x + z * z)) * py
+        + 2.0 * (y * z - x * w) * pz
+        + ty,
+        2.0 * (x * z - y * w) * px
+        + 2.0 * (y * z + x * w) * py
+        + (1.0 - 2.0 * (x * x + y * y)) * pz
+        + tz,
+    )
+    return transformed
 
 
 def stamp_seconds(packet: Dict[str, Any]) -> float:

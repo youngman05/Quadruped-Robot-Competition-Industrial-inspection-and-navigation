@@ -17,7 +17,7 @@ echo "[1] 停止 launch..."
 pkill -9 -f "ros2 launch"          2>/dev/null
 pkill -9 -f "competition.launch"   2>/dev/null
 pkill -9 -f "transfer_launch"      2>/dev/null
-sleep 2
+sleep 0.5
 
 # 2. 杀掉所有比赛节点
 echo "[2] 停止比赛节点..."
@@ -32,21 +32,21 @@ for name in task_manager initial_pose_publisher depth_publisher \
             recoveries_server lifecycle_manager; do
     pkill -9 -f "$name" 2>/dev/null
 done
-sleep 1
+sleep 0.2
 
 # 3. 杀掉 transfer SDK 和狗初始化
 echo "[3] 停止 SDK / 狗..."
 for name in jetson2motion jetson2app sensor_checker lite3_init dog_init; do
     pkill -9 -f "$name" 2>/dev/null
 done
-sleep 1
+sleep 0.2
 
 # 4. 杀掉桥接进程
 echo "[4] 停止桥接..."
 pkill -9 -f "final_bridge"         2>/dev/null
 pkill -9 -f "cuvslam_odometry_udp_exporter" 2>/dev/null
 pkill -9 -f "_ros2_daemon"         2>/dev/null
-sleep 1
+sleep 0.2
 
 # 5. 清理 Docker 内中继（不碰 cuVSLAM/realsense）
 echo "[5] 停止 Docker 中继..."

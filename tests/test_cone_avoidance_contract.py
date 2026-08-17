@@ -70,7 +70,6 @@ class ConeAvoidanceContractTests(unittest.TestCase):
             "package='pointcloud_to_laserscan'",
             "'target_frame': '${CONE_SCAN_TARGET_FRAME}'",
             "('scan', '/cone_obstacle/scan_humble')",
-            "cone_scan_udp_exporter.py",
         ):
             self.assertIn(token, source)
 
@@ -232,7 +231,7 @@ class ConeAvoidanceContractTests(unittest.TestCase):
             "if $ENABLE_DEPTH_PIPELINE && $ENABLE_CONE_AVOIDANCE; then", source
         )
         self.assertIn('export CONE_AVOIDANCE_ENABLE="$ENABLE_CONE_AVOIDANCE"', source)
-        self.assertIn('CONE_DOCKER_ROS_DOMAIN_ID:-42', source)
+        self.assertIn('CONE_DOCKER_ROS_DOMAIN_ID:-0', source)
         self.assertIn("enable_cone_avoidance:=$ENABLE_CONE_AVOIDANCE", source)
         case_line = next(
             line for line in source.splitlines() if "--cone-avoidance)" in line

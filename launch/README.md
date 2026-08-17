@@ -28,15 +28,6 @@ source /opt/ros/foxy/setup.bash
 ros2 launch launch/competition.launch.py
 ```
 
-### 加上 YOLO 检测
-
-```bash
-# [Linux]
-cd ~/quadruped-robot-competition
-source /opt/ros/foxy/setup.bash
-ros2 launch launch/competition.launch.py enable_yolo:=true
-```
-
 ### 加上任务管理器
 
 ```bash
@@ -53,7 +44,6 @@ ros2 launch launch/competition.launch.py enable_task_manager:=true
 cd ~/quadruped-robot-competition
 source /opt/ros/foxy/setup.bash
 ros2 launch launch/competition.launch.py \
-  enable_yolo:=true \
   enable_task_manager:=true \
   enable_placeholders:=true
 ```
@@ -65,7 +55,6 @@ ros2 launch launch/competition.launch.py \
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `enable_gauge` | `true` | 仪表检测节点 |
-| `enable_yolo` | `false` | YOLO 检测节点（需 ultralytics + torch） |
 | `enable_task_manager` | `false` | 任务管理状态机 |
 | `enable_speech` | `false` | 语音播报（待实现） |
 | `enable_placeholders` | `false` | 全部占位节点（测试用） |
@@ -76,7 +65,6 @@ ros2 launch launch/competition.launch.py \
 
 ```text
 感知层 →  gauge_status_node (D455 仪表)
-          yolo_detect_node  (YOLO 实例分割)
 
 定位层 →  cuVSLAM (Docker 容器, 不由此 launch 管理)
 

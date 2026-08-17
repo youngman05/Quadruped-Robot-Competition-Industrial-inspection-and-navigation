@@ -8,6 +8,9 @@ from typing import Any, Mapping, Tuple
 
 Point3 = Tuple[float, float, float]
 
+MODEL_ID = "gauge-ad-3ed76de7-v1"
+CLASS_SCHEMA = "competition-ad-yellow-red-green-v1"
+
 
 @dataclass(frozen=True)
 class SegmentResult:

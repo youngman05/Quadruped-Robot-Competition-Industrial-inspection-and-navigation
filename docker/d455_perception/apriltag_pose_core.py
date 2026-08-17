@@ -165,12 +165,17 @@ class AprilTagPoseDetector:
             if tag_id not in self.expected_tag_ids:
                 continue
             image_corners = np.asarray(raw_corners, dtype=np.float64).reshape(4, 2)
+            # OpenCV 4.2 Python binding has a known bug: when reprojectionError
+            # is omitted, it is allocated as CV_8U and solvePnPGeneric raises.
+            # Explicitly provide a float64 output array to keep the detector alive.
+            reprojection_error = np.empty((1,), dtype=np.float64)
             result = cv2.solvePnPGeneric(
                 self._object_corners,
                 image_corners,
                 camera_matrix,
                 distortion,
                 flags=cv2.SOLVEPNP_IPPE_SQUARE,
+                reprojectionError=reprojection_error,
             )
             if not result[0]:
                 continue

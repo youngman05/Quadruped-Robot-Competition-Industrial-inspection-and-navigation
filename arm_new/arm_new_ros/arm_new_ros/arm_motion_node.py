@@ -327,6 +327,20 @@ class ArmMotionNode(Node):
             lift_height_m=float(self.get_parameter("grasp_lift_height").value),
             duration_scale=float(self.get_parameter("grasp_duration_scale").value),
         )
+        steps = list(steps)
+        steps.extend(
+            plan_lie_down(
+                default_duration_ms=int(
+                    self.get_parameter("posture_default_duration_ms").value
+                ),
+                servo4_duration_ms=int(
+                    self.get_parameter("posture_servo4_duration_ms").value
+                ),
+                servo6_duration_ms=int(
+                    self.get_parameter("posture_servo6_duration_ms").value
+                ),
+            )
+        )
         payload = self._action_payload(
             "grasp",
             steps,
@@ -338,6 +352,8 @@ class ArmMotionNode(Node):
                 "lift_point": list(pose.lift_point),
             },
         )
+        payload["posture"] = "lie_down"
+        payload["gripper_preserved"] = True
         payload["gripper_ramp"] = {
             "step": "close_gripper",
             "max_step_pulse": self._gripper_ramp_step_pulse,

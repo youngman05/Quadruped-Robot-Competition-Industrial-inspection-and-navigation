@@ -84,6 +84,7 @@ class DepthRelayController(Node):
     def __init__(self, args: argparse.Namespace) -> None:
         super().__init__("depth_relay_controller")
         self.args = args
+        self.poll_interval_sec = 1.0 / max(0.1, float(args.poll_rate_hz))
         self.output_dir = Path(args.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.stream_id = uuid.uuid4().hex
@@ -168,7 +169,7 @@ class DepthRelayController(Node):
                 lambda msg: self._on_localization_sample("cuvslam_odom", msg),
                 qos_profile_sensor_data,
             )
-        self.create_timer(0.10, self._poll_control)
+        self.create_timer(self.poll_interval_sec, self._poll_control)
         self.create_timer(0.50, self._write_status)
         self._write_status()
         self.get_logger().info(
@@ -528,6 +529,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     )
     parser.add_argument("--localization-min-samples", type=int, default=3)
     parser.add_argument("--localization-max-age-sec", type=float, default=0.50)
+    parser.add_argument("--poll-rate-hz", type=float, default=2.0)
     parser.add_argument("--localization-timeout-sec", type=float, default=5.0)
     return parser.parse_args(argv)
 
