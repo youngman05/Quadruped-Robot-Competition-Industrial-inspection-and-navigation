@@ -36,10 +36,7 @@ def _plan_posture(
     default_duration_ms: int,
     duration_overrides_ms: Mapping[int, int],
 ) -> List[MotionStep]:
-    target_by_id = {
-        int(servo_id): int(pulse)
-        for servo_id, pulse in targets
-    }
+    target_by_id = _without_gripper(targets)
     expected_ids = set(int(servo_id) for servo_id in order)
     if set(target_by_id) != expected_ids:
         raise ValueError(
@@ -78,7 +75,7 @@ def plan_lie_down(
         "lie_down",
         # Keep the lying posture's ID2..6 sequence unchanged and never
         # generate a command for the gripper servo ID1.
-        _without_gripper(LYING_POSITION_SERVOS),
+        LYING_POSITION_SERVOS,
         LIE_DOWN_ORDER,
         default_duration_ms,
         {4: servo4_duration_ms, 6: servo6_duration_ms},
@@ -96,7 +93,7 @@ def plan_stand_up(
         "stand_up",
         # INITIAL_POSITION_SERVOS also documents ID1, but stand_up must leave
         # the current gripper position untouched and only generate IDs 2..6.
-        _without_gripper(INITIAL_POSITION_SERVOS),
+        INITIAL_POSITION_SERVOS,
         STAND_UP_ORDER,
         default_duration_ms,
         {4: servo4_duration_ms, 6: servo6_duration_ms},
