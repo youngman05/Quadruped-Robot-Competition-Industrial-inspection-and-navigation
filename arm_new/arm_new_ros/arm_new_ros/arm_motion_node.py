@@ -203,7 +203,7 @@ class ArmMotionNode(Node):
         self.declare_parameter("grasp_rotation_deg", 0.0)
         self.declare_parameter("grasp_open_gripper_pulse", 900)
         self.declare_parameter("gripper_open_pulse", 400)
-        self.declare_parameter("gripper_close_pulse", 10)
+        self.declare_parameter("gripper_close_pulse", 100)
         self.declare_parameter("gripper_ramp_step_pulse", 100)
         self.declare_parameter("grasp_pre_distance", 0.05)
         self.declare_parameter("grasp_lift_height", 0.08)

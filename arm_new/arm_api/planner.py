@@ -35,7 +35,7 @@ class ArmGrabConfig(object):
         lift_z=0.045,
         open_gripper=400,
         grasp_open_gripper=900,
-        close_gripper=10,
+        close_gripper=100,
         include_retreat=False,
         retreat_z=0.04,
         link_l1=0.0610,

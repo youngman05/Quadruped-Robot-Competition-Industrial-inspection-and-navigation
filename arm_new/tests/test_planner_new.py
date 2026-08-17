@@ -18,11 +18,20 @@ class ArmGrabPlannerNewTest(unittest.TestCase):
         steps = self.planner.plan_horizontal_face_grab(self.target)
         names = [step.name for step in steps]
 
-        self.assertEqual(names[:3], ["pre_grasp_open_and_rotate", "safe_pose", "pre_grasp"])
+        self.assertEqual(
+            names[:4],
+            [
+                "pre_grasp_open_and_rotate",
+                "safe_pose",
+                "open_gripper_after_safe_pose",
+                "pre_grasp",
+            ],
+        )
         self.assertEqual(dict(steps[0].servos)[1], 900)
+        self.assertEqual(dict(steps[2].servos), {1: 900})
         self.assertIn("close_gripper", names)
         close_step = next(step for step in steps if step.name == "close_gripper")
-        self.assertEqual(dict(close_step.servos)[1], 10)
+        self.assertEqual(dict(close_step.servos)[1], 100)
         self.assertEqual(names[-1], "lift")
         self.assertTrue(all(0 <= pulse <= 1000 for step in steps for _, pulse in step.servos))
 

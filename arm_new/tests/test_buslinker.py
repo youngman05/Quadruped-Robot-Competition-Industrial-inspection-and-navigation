@@ -11,8 +11,8 @@ from arm_api.buslinker import BusLinkerExecutor, interpolate_pulse_ramp
 
 class BusLinkerPulseRampTest(unittest.TestCase):
     def test_descending_ramp_finishes_at_target(self) -> None:
-        pulses = interpolate_pulse_ramp(900, 10, 100)
-        self.assertEqual(pulses, (800, 700, 600, 500, 400, 300, 200, 100, 10))
+        pulses = interpolate_pulse_ramp(900, 100, 100)
+        self.assertEqual(pulses, (800, 700, 600, 500, 400, 300, 200, 100))
         self.assertTrue(
             all(abs(right - left) <= 100 for left, right in zip((900,) + pulses, pulses))
         )
@@ -33,7 +33,7 @@ class BusLinkerPulseRampTest(unittest.TestCase):
     def test_close_gripper_reads_feedback_and_sends_each_ramp_target(self) -> None:
         executor = BusLinkerExecutor()
         executor.ser = object()
-        step = MotionStep("close_gripper", None, 600, ((1, 10),))
+        step = MotionStep("close_gripper", None, 600, ((1, 100),))
 
         with patch(
             "arm_api.buslinker.read_position", return_value=310

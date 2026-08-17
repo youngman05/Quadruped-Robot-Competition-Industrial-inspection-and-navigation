@@ -647,6 +647,12 @@ class ArmGrabPlannerNew(object):
                 800,
                 self.config.safe_servos,
             ),
+            MotionStep(
+                "open_gripper_after_safe_pose",
+                None,
+                500,
+                ((1, self.config.grasp_open_gripper),),
+            ),
         ]
 
         previous_servo_data = None

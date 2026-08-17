@@ -35,7 +35,7 @@ arm_motion_node:
     # the separately calibrated release target below.
     grasp_open_gripper_pulse: 900
     gripper_open_pulse: 400
-    gripper_close_pulse: 10
+    gripper_close_pulse: 100
     # Every ID1 target in grasp/place reads feedback and approaches its target
     # with no command jump larger than this pulse value.
     gripper_ramp_step_pulse: 100
