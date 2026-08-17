@@ -46,11 +46,10 @@ arm_motion_node:
     grasp_approach_steps: 8
     grasp_approach_step_duration_ms: 180
 
-    # Fixed placement returns to the grasp-end lift pose, descends while ID3
-    # stays fixed, then opens the gripper. ArmPi API axes: +X right, +Y
-    # forward, +Z up. Do not enable until the reference is validated on-site.
-    place_target_configured: false
-    place_reference_grasp_arm: [0.0, 0.0, 0.0]
+    # Fixed placement moves directly to the calibrated reference point, then
+    # opens the gripper. ArmPi API axes: +X right, +Y forward, +Z up.
+    place_target_configured: true
+    place_reference_grasp_arm: [0.0, 0.42, 0.15]
     place_pose_1_duration_ms: 1200
     place_descent_m: 0.02
     place_descent_duration_ms: 800
