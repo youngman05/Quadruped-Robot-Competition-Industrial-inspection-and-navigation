@@ -2,9 +2,9 @@
 """Docker-side depth relay and staged depth-mode controller.
 
 The node subscribes to the RealSense topics already owned by the cuVSLAM
-container. It never opens the D455 directly. ``consumer_only`` is the default
-strategy; changing the RealSense ``enable_depth`` parameter is opt-in because
-it must first pass a stationary cuVSLAM A/B test on the actual Jetson image.
+container. It never opens the D455 directly. The physical Depth stream stays
+enabled across modes; mode transitions only gate consumers and optional
+high-load cone pipeline parameters.
 """
 
 from __future__ import annotations
@@ -275,7 +275,9 @@ class DepthRelayController(Node):
             self._fault("RealSense parameter service unavailable")
             return
         parameter_values = {
-            self.args.enable_depth_parameter: desired.requires_depth,
+            # IR1/IR2 share the Stereo/Depth Module, so disabling Depth here
+            # restarts localization inputs and can interrupt cuVSLAM odometry.
+            self.args.enable_depth_parameter: True,
         }
         if self.args.manage_cone_pipeline_parameters:
             cone_pipeline_enabled = desired == DepthMode.AVOIDANCE

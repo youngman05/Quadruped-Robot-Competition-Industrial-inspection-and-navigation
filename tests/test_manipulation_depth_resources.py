@@ -6,14 +6,19 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ManipulationDepthResourceTests(unittest.TestCase):
-    def test_relay_keeps_raw_depth_but_disables_cone_pipeline(self):
+    def test_relay_keeps_physical_depth_on_but_gates_consumers_by_mode(self):
         source = (ROOT / "scripts" / "depth_relay_docker.py").read_text(
             encoding="utf-8"
         )
         self.assertIn(
+            "self.args.enable_depth_parameter: True",
+            source,
+        )
+        self.assertNotIn(
             "self.args.enable_depth_parameter: desired.requires_depth",
             source,
         )
+        self.assertIn("if not self.mode.requires_depth", source)
         self.assertIn(
             "cone_pipeline_enabled = desired == DepthMode.AVOIDANCE",
             source,
