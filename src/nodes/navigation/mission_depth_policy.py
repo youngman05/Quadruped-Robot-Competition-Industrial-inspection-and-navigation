@@ -52,21 +52,6 @@ DEFAULT_DEPTH_MILESTONES = (
         DepthMode.DISABLED,
         waypoint="obstacle_cross_target",
     ),
-    DepthMilestone(
-        MilestoneTrigger.BEFORE_WAYPOINT,
-        DepthMode.DISABLED,
-        waypoint="grab_area_approach",
-        requires_completed=("pos2b_lower_right",),
-    ),
-    *(
-        DepthMilestone(
-            MilestoneTrigger.WAYPOINT_SUCCEEDED,
-            DepthMode.MANIPULATION,
-            waypoint="placement_%s_approach" % letter,
-            requires_completed=("grab_area_approach",),
-        )
-        for letter in "ABCD"
-    ),
 )
 
 

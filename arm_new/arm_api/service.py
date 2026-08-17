@@ -11,11 +11,11 @@
 """
 
 from .buslinker import BusLinkerExecutor
-from .common import MotionStep
+from .common import INITIAL_POSITION_SERVOS, MotionStep
 from .planner import ArmGrabPlanner
 
 
-DEFAULT_HOME_SERVOS = ((1, 200), (2, 500), (3, 80), (4, 825), (5, 625), (6, 500))
+DEFAULT_HOME_SERVOS = INITIAL_POSITION_SERVOS
 
 
 class ArmServiceConfig(object):
@@ -58,7 +58,7 @@ class ArmServiceResult(object):
 
 
 def make_home_step(duration_ms=1500):
-    """生成 ArmPi 原工程稳定初始姿态。"""
+    """生成当前标定的 ArmPi initial position。"""
 
     return MotionStep("home_from_sorting_py", None, duration_ms, DEFAULT_HOME_SERVOS)
 

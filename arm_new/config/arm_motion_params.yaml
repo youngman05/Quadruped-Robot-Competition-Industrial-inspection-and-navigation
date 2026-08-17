@@ -2,30 +2,28 @@ arm_motion_node:
   ros__parameters:
     grasp_actions_topic: /arm/grasp_actions
     place_actions_topic: /arm/place_actions
+    posture_actions_topic: /arm/posture_actions
     status_topic: /arm/status
     # The production node exposes services only.  It never subscribes to YOLO.
     tf_lookup_timeout_s: 1.0
     tf_parent_frame: base_link
     tf_child_frame: arm_base_link
-    # Fixed competition motions do not consume this TF. It can still be enabled
-    # as an optional diagnostic for a future coordinate-driven preset.
-    require_tf_in_preflight: false
+    require_tf_in_preflight: true
 
-    # The selected YAML is a fixed motion preset. Motion remains disabled here
-    # and is authorized only by the launch-time arm_motion_authorized override.
-    arm_preset: unconfigured
-    max_arm_sequence_sec: 20.0
-    transform_calibrated: false
-    enable_motion: false
+    # Accepted mounted-arm calibration. Motion remains separately disabled by
+    # default and must be enabled only for a supervised hardware run.
+    transform_calibrated: true
+    enable_motion: true
     port: /dev/ttyACM0
     baud: 115200
     pause_s: 0.2
     scan_first: true
 
-    # Repository defaults remain fail closed. A competition_v1 override supplies
-    # the tested fixed values; no separate approval bundle is required.
+    # Transitional runtime copy. The system-level source of truth is
+    # configs/calibration/competition_sites.yaml. Keep motion disabled if the
+    # two files disagree; remove this copy when the sites loader is integrated.
     # I1 reference uses arm_base_link axes: +X forward, +Y left, +Z up.
-    grasp_reference_configured: false
+    grasp_reference_configured: true
     # Current hardware-test baseline at z=0.15 m. ArmPi API [0.00, 0.42, z]
     # corresponds to ROS arm_base_link [0.42, 0.00, z].
     grasp_reference_arm_base: [0.42, 0.00]
@@ -33,11 +31,14 @@ arm_motion_node:
     grasp_z_min_m: 0.15
     grasp_z_max_m: 0.25
     grasp_rotation_deg: 0.0
-    # ID1 pulses are calibrated on the current gripper: 400 opens and 256
-    # closes. The grasp-open value is separate for future per-phase tuning.
-    grasp_open_gripper_pulse: 400
+    # Grasp uses its own fully-open target before approach. Placement keeps
+    # the separately calibrated release target below.
+    grasp_open_gripper_pulse: 900
     gripper_open_pulse: 400
-    gripper_close_pulse: 256
+    gripper_close_pulse: 10
+    # Every ID1 target in grasp/place reads feedback and approaches its target
+    # with no command jump larger than this pulse value.
+    gripper_ramp_step_pulse: 100
     grasp_pre_distance: 0.05
     grasp_lift_height: 0.08
     grasp_duration_scale: 2.0
@@ -55,3 +56,10 @@ arm_motion_node:
     place_descent_duration_ms: 800
     place_duration_scale: 1.0
     place_include_home: false
+
+    # Fixed posture services preserve ID1 so the gripper state is unchanged.
+    # stand_up targets the current initial position for IDs 2..6; lie_down
+    # uses the calibrated compact posture with ID6 pulse 280.
+    posture_default_duration_ms: 1200
+    posture_servo4_duration_ms: 1500
+    posture_servo6_duration_ms: 1000

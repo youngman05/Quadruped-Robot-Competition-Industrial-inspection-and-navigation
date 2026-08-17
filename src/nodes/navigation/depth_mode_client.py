@@ -9,7 +9,7 @@ from typing import Optional
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
 
-from nodes.navigation.depth_contract import DepthMode
+from nodes.navigation.depth_contract import DepthMode, new_control_request
 from nodes.navigation.depth_mode import DepthModeCoordinator
 
 
@@ -102,6 +102,38 @@ class DepthModeClient:
         self._publisher.publish(msg)
         self._next_republish_at = now + self.REQUEST_REPUBLISH_INTERVAL_SEC
         return True
+
+    def direct_disable(self) -> None:
+        """Publish a one-shot DISABLED request and stop consuming depth status.
+
+        This is intentionally a fire-and-forget path used after the cone
+        avoidance area has been completed. TaskManager no longer waits for the
+        Docker controller acknowledgement or the safety-gate status, and no
+        later mission milestone may re-enable depth.
+        """
+        request = new_control_request(DepthMode.DISABLED)
+        self.active_request_id = request["request_id"]
+        self.safety_request_id = request["request_id"]
+        self.safety_ready = True
+        self.safety_mode = DepthMode.DISABLED
+        self.safety_status_time = time.monotonic()
+        self._coordinator.current_mode = DepthMode.DISABLED
+        self._coordinator.desired_mode = DepthMode.DISABLED
+        self._coordinator.pending_request = None
+        self._active_request = dict(request)
+        self._active_request_payload = json.dumps(request, sort_keys=True)
+        msg = String()
+        msg.data = self._active_request_payload
+        self._publisher.publish(msg)
+        self.close_depth_subscriptions()
+
+    def close_depth_subscriptions(self) -> None:
+        """Permanently stop TaskManager-side depth status subscriptions."""
+        for subscription in (self._subscription, self._safety_subscription):
+            if subscription is not None:
+                self._node.destroy_subscription(subscription)
+        self._subscription = None
+        self._safety_subscription = None
 
     def readiness(self):
         return self._coordinator.readiness()

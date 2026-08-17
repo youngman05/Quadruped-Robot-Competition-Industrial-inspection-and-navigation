@@ -152,6 +152,10 @@ def validate_calibration(task_path: Path, arm_path: Path) -> Dict[str, Any]:
         task.get("enable_place_vision_alignment"),
         "enable_place_vision_alignment",
     )
+    if enable_place_vision:
+        raise CalibrationGateError(
+            "enable_place_vision_alignment must be false: J1 placement alignment is disabled"
+        )
     fallback_order = _zone_order(task.get("abnormal_zone_fallback_order"))
     tag_ids = _tag_ids(task.get("pick_red_tag_ids"))
     targets = _i2_targets(task, tag_ids, enable_pick_i2)
@@ -170,23 +174,6 @@ def validate_calibration(task_path: Path, arm_path: Path) -> Dict[str, Any]:
     place_target_distance_m = _finite_float(
         task.get("place_target_distance_m", 0.0), "place_target_distance_m"
     )
-    if enable_place_vision:
-        if place_target_distance_m <= 0.0:
-            raise CalibrationGateError(
-                "place_target_distance_m must be positive when vision alignment is enabled"
-            )
-        _positive_int(
-            task.get("placement_color_width_px"), "placement_color_width_px"
-        )
-        _positive_int(
-            task.get("placement_color_height_px"), "placement_color_height_px"
-        )
-        _finite_float(
-            task.get("placement_camera_pitch_deg"), "placement_camera_pitch_deg"
-        )
-        _positive_float(
-            task.get("placement_box_width_m"), "placement_box_width_m"
-        )
 
     if arm.get("enable_motion") is not False:
         raise CalibrationGateError(

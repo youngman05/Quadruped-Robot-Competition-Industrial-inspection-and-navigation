@@ -17,35 +17,26 @@ class MissionDepthPolicyTests(unittest.TestCase):
         self.assertIsNone(policy.waypoint_succeeded("pos2b_lower_right"))
         self.assertIsNone(policy.before_waypoint("grab_area_approach"))
         self.assertIsNone(policy.waypoint_succeeded("grab_area_approach"))
-        self.assertEqual(
-            policy.waypoint_succeeded("placement_A_approach"),
-            DepthMode.MANIPULATION,
-        )
-        self.assertEqual(
-            policy.before_waypoint("grab_area_approach"),
-            DepthMode.DISABLED,
-        )
+        self.assertIsNone(policy.waypoint_succeeded("placement_A_approach"))
         self.assertIsNone(policy.waypoint_succeeded("grab_area_approach"))
-        self.assertEqual(
-            policy.waypoint_succeeded("placement_B_approach"),
-            DepthMode.MANIPULATION,
-        )
+        self.assertIsNone(policy.waypoint_succeeded("placement_B_approach"))
 
-    def test_manipulation_cannot_start_before_inspection_exit(self):
+    def test_depth_never_reenables_after_obstacle_cross(self):
         policy = MissionDepthPolicy()
         policy.mission_start()
         policy.waypoint_succeeded("obstacle_cross_target")
-        with self.assertRaises(DepthContractError):
-            policy.before_waypoint("grab_area_approach")
+        self.assertIsNone(policy.before_waypoint("grab_area_approach"))
+        self.assertIsNone(policy.waypoint_succeeded("pos2b_lower_right"))
+        self.assertIsNone(policy.waypoint_succeeded("grab_area_approach"))
+        self.assertIsNone(policy.waypoint_succeeded("placement_A_approach"))
 
-    def test_placement_depth_cannot_start_before_pickup_arrival(self):
+    def test_placement_waypoint_does_not_change_depth(self):
         policy = MissionDepthPolicy()
         policy.mission_start()
         policy.waypoint_succeeded("obstacle_cross_target")
         policy.waypoint_succeeded("pos2b_lower_right")
-        policy.before_waypoint("grab_area_approach")
-        with self.assertRaises(DepthContractError):
-            policy.waypoint_succeeded("placement_A_approach")
+        self.assertIsNone(policy.before_waypoint("grab_area_approach"))
+        self.assertIsNone(policy.waypoint_succeeded("placement_A_approach"))
 
     def test_depth_transition_requires_continuous_stationary_window(self):
         window = StationaryWindow(1.0)

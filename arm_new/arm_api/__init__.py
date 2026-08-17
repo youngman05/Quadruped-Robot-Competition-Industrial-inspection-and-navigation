@@ -9,6 +9,7 @@ IK 和完整服务层会在真正访问对应名字时再加载。
 
 from .buslinker import BusLinkerExecutor, SerialUnavailable
 from .common import (
+    INITIAL_POSITION_SERVOS,
     IKNoSolution,
     MotionStep,
     OriginalIKUnavailable,
@@ -29,6 +30,8 @@ _LAZY_IMPORTS = {
     "PoseConstrainedArmIK": (".planner_new", "PoseConstrainedArmIK"),
     "plan_grab_motion_new": (".planner_new", "plan_grab_motion_new"),
     "plan_place_motion_new": (".planner_new", "plan_place_motion_new"),
+    "plan_lie_down": (".posture", "plan_lie_down"),
+    "plan_stand_up": (".posture", "plan_stand_up"),
     "FrameTransformer": (".transforms", "FrameTransformer"),
     "TransformError": (".transforms", "TransformError"),
     "load_transform_config": (".transforms", "load_transform_config"),
@@ -72,6 +75,7 @@ __all__ = [
     "ArmServiceResult",
     "BusLinkerExecutor",
     "GeneratedFaceGraspPose",
+    "INITIAL_POSITION_SERVOS",
     "IKNoSolution",
     "LocalGeometricArmIK",
     "MotionStep",
@@ -94,6 +98,8 @@ __all__ = [
     "plan_grab_motion",
     "plan_grab_motion_new",
     "plan_place_motion_new",
+    "plan_lie_down",
+    "plan_stand_up",
     "pulse_to_angle",
     "steps_to_commands",
     "transform_point",

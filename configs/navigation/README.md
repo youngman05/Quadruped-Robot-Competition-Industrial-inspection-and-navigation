@@ -222,22 +222,19 @@ The legacy `depth_publisher` is not part of this chain because it opens the
 D455 again and would contend with the RealSense owner inside the cuVSLAM
 container.
 
-Mission modes follow three route milestones:
+Mission modes follow two route milestones:
 
 - `AVOIDANCE`: before mission motion through `obstacle_cross_target`.
-- `DISABLED`: after `obstacle_cross_target` through the inspection route.
-- `MANIPULATION`: after `pos2b_lower_right`, before `grab_area_approach`, and
-  through grasp and placement.
+- `DISABLED`: after `obstacle_cross_target`, permanently for the rest of the
+  mission.
 - `BOOTING` and `FAULT`: fail-closed modes that publish zero velocity.
 
-Every transition requires a stopped robot and a matching request ID from the
-Docker controller. Enabling a mode also requires fresh depth, PointCloud2,
-optical TF, and a local costmap update after the current mode's first cloud
-before non-zero velocity is released. Controller process IDs, monotonic ages,
-file mtimes, frame sequence numbers, and CRC32 prevent persisted or torn shared
-files from satisfying a new mission.
-Entering `DISABLED` still requires an explicit healthy ACK; disappearance of
-frames is not treated as success.
+Enabling `AVOIDANCE` at mission start still requires the staged readiness
+checks so the robot does not move before depth/PointCloud2/TF/costmap are fresh.
+After `obstacle_cross_target` succeeds, TaskManager directly publishes a
+one-shot `DISABLED` request, closes its depth status subscriptions, and never
+requests a depth mode again. It no longer waits for the Docker controller ACK
+or host odom recovery for this close.
 
 The Docker relay defaults to `consumer_only`. This leaves the validated
 infrared/IMU/cuVSLAM owner untouched and disables relay/downstream work.

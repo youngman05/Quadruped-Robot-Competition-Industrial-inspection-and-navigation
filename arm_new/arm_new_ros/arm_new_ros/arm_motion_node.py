@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # coding: utf-8
 
-"""Production ROS 2 service node for ArmPi grasping and fixed placement.
+"""Production ROS 2 service node for ArmPi manipulation and fixed postures.
 
 The task manager owns perception and target selection.  This node accepts an
 already locked target in ``arm_base_link`` coordinates, plans the corresponding
@@ -44,7 +44,13 @@ _DEFAULT_ARM_NEW_ROOT = _find_arm_new_root()
 if str(_DEFAULT_ARM_NEW_ROOT) not in sys.path:
     sys.path.insert(0, str(_DEFAULT_ARM_NEW_ROOT))
 
-from arm_api import ArmGrabConfig, ArmGrabPlannerNew, BusLinkerExecutor  # noqa: E402
+from arm_api import (  # noqa: E402
+    ArmGrabConfig,
+    ArmGrabPlannerNew,
+    BusLinkerExecutor,
+    plan_lie_down,
+    plan_stand_up,
+)
 from arm_api.motion_service_core import (  # noqa: E402
     MotionServiceValidationError,
     plan_face_approach_grasp,
@@ -67,11 +73,11 @@ class ArmMotionNode(Node):
         self._baud = int(self.get_parameter("baud").value)
         self._pause_s = float(self.get_parameter("pause_s").value)
         self._scan_first = bool(self.get_parameter("scan_first").value)
-        self._enable_motion = bool(self.get_parameter("enable_motion").value)
-        self._arm_preset = str(self.get_parameter("arm_preset").value).strip()
-        self._max_arm_sequence_sec = max(
-            0.1, float(self.get_parameter("max_arm_sequence_sec").value)
+        self._gripper_ramp_step_pulse = max(
+            1,
+            int(self.get_parameter("gripper_ramp_step_pulse").value),
         )
+        self._enable_motion = bool(self.get_parameter("enable_motion").value)
         self._transform_calibrated = bool(self.get_parameter("transform_calibrated").value)
         self._grasp_reference_configured = bool(
             self.get_parameter("grasp_reference_configured").value
@@ -104,6 +110,7 @@ class ArmMotionNode(Node):
         self._tf_lookup_timeout_s = max(
             0.0, float(self.get_parameter("tf_lookup_timeout_s").value)
         )
+
         planner_config = ArmGrabConfig(
             open_gripper=int(self.get_parameter("gripper_open_pulse").value),
             grasp_open_gripper=int(
@@ -128,6 +135,9 @@ class ArmMotionNode(Node):
         self._place_actions_pub = self.create_publisher(
             String, str(self.get_parameter("place_actions_topic").value), 10
         )
+        self._posture_actions_pub = self.create_publisher(
+            String, str(self.get_parameter("posture_actions_topic").value), 10
+        )
         self._status_pub = self.create_publisher(
             String, str(self.get_parameter("status_topic").value), 10
         )
@@ -146,13 +156,23 @@ class ArmMotionNode(Node):
             "/arm/preflight",
             self._srv_preflight,
         )
+        self._stand_up_service = self.create_service(
+            Trigger,
+            "/arm/stand_up",
+            self._srv_stand_up,
+        )
+        self._lie_down_service = self.create_service(
+            Trigger,
+            "/arm/lie_down",
+            self._srv_lie_down,
+        )
 
         self.get_logger().info(
             "arm_motion_node ready: services=/arm/execute_grasp_fixed, "
-            "/arm/execute_place_fixed, /arm/preflight; motion_enabled={} "
-            "preset={} transform_calibrated={}".format(
+            "/arm/execute_place_fixed, /arm/stand_up, /arm/lie_down, "
+            "/arm/preflight; motion_enabled={} "
+            "transform_calibrated={}".format(
                 self._enable_motion,
-                self._arm_preset,
                 self._transform_calibrated,
             )
         )
@@ -160,6 +180,7 @@ class ArmMotionNode(Node):
     def _declare_parameters(self) -> None:
         self.declare_parameter("grasp_actions_topic", "/arm/grasp_actions")
         self.declare_parameter("place_actions_topic", "/arm/place_actions")
+        self.declare_parameter("posture_actions_topic", "/arm/posture_actions")
         self.declare_parameter("status_topic", "/arm/status")
 
         self.declare_parameter("port", "/dev/ttyACM0")
@@ -167,14 +188,12 @@ class ArmMotionNode(Node):
         self.declare_parameter("pause_s", 0.2)
         self.declare_parameter("scan_first", True)
         self.declare_parameter("enable_motion", False)
-        self.declare_parameter("arm_preset", "unconfigured")
-        self.declare_parameter("max_arm_sequence_sec", 20.0)
         self.declare_parameter("transform_calibrated", False)
 
         self.declare_parameter("tf_parent_frame", "base_link")
         self.declare_parameter("tf_child_frame", "arm_base_link")
         self.declare_parameter("tf_lookup_timeout_s", 1.0)
-        self.declare_parameter("require_tf_in_preflight", False)
+        self.declare_parameter("require_tf_in_preflight", True)
 
         self.declare_parameter("grasp_reference_configured", False)
         self.declare_parameter("grasp_reference_arm_base", [0.42, 0.00])
@@ -182,9 +201,10 @@ class ArmMotionNode(Node):
         self.declare_parameter("grasp_z_min_m", 0.15)
         self.declare_parameter("grasp_z_max_m", 0.25)
         self.declare_parameter("grasp_rotation_deg", 0.0)
-        self.declare_parameter("grasp_open_gripper_pulse", 400)
+        self.declare_parameter("grasp_open_gripper_pulse", 900)
         self.declare_parameter("gripper_open_pulse", 400)
-        self.declare_parameter("gripper_close_pulse", 256)
+        self.declare_parameter("gripper_close_pulse", 10)
+        self.declare_parameter("gripper_ramp_step_pulse", 100)
         self.declare_parameter("grasp_pre_distance", 0.05)
         self.declare_parameter("grasp_lift_height", 0.08)
         self.declare_parameter("grasp_duration_scale", 2.0)
@@ -199,6 +219,10 @@ class ArmMotionNode(Node):
         self.declare_parameter("place_descent_duration_ms", 800)
         self.declare_parameter("place_duration_scale", 1.0)
         self.declare_parameter("place_include_home", False)
+
+        self.declare_parameter("posture_default_duration_ms", 1200)
+        self.declare_parameter("posture_servo4_duration_ms", 1500)
+        self.declare_parameter("posture_servo6_duration_ms", 1000)
 
     def _srv_execute_grasp_fixed(
         self,
@@ -229,6 +253,28 @@ class ArmMotionNode(Node):
         response: Trigger.Response,
     ) -> Trigger.Response:
         return self._finish_service(response, "preflight", self._run_preflight)
+
+    def _srv_stand_up(
+        self,
+        _request: Trigger.Request,
+        response: Trigger.Response,
+    ) -> Trigger.Response:
+        return self._finish_service(
+            response,
+            "stand_up",
+            lambda: self._execute_posture("stand_up"),
+        )
+
+    def _srv_lie_down(
+        self,
+        _request: Trigger.Request,
+        response: Trigger.Response,
+    ) -> Trigger.Response:
+        return self._finish_service(
+            response,
+            "lie_down",
+            lambda: self._execute_posture("lie_down"),
+        )
 
     def _finish_service(self, response, action: str, operation):
         if not self._busy_lock.acquire(blocking=False):
@@ -292,6 +338,23 @@ class ArmMotionNode(Node):
                 "lift_point": list(pose.lift_point),
             },
         )
+        payload["gripper_ramp"] = {
+            "step": "close_gripper",
+            "max_step_pulse": self._gripper_ramp_step_pulse,
+            "start": "runtime_servo_id1_feedback",
+            "target_pulse": int(self.get_parameter("gripper_close_pulse").value),
+        }
+        payload["gripper_ramps"] = [
+            {
+                "step": "pre_grasp_open_and_rotate",
+                "max_step_pulse": self._gripper_ramp_step_pulse,
+                "start": "runtime_servo_id1_feedback",
+                "target_pulse": int(
+                    self.get_parameter("grasp_open_gripper_pulse").value
+                ),
+            },
+            dict(payload["gripper_ramp"]),
+        ]
         self._publish_json(self._grasp_actions_pub, payload)
         return self._execute_or_plan(payload, steps)
 
@@ -317,23 +380,41 @@ class ArmMotionNode(Node):
             steps,
             reference_grasp_arm_api=target_api,
         )
+        payload["gripper_ramp"] = {
+            "step": "open_gripper",
+            "max_step_pulse": self._gripper_ramp_step_pulse,
+            "start": "runtime_servo_id1_feedback",
+            "target_pulse": int(self.get_parameter("gripper_open_pulse").value),
+        }
+        payload["gripper_ramps"] = [dict(payload["gripper_ramp"])]
         self._publish_json(self._place_actions_pub, payload)
         return self._execute_or_plan(payload, steps)
 
+    def _execute_posture(self, action: str) -> Dict[str, Any]:
+        planner = {
+            "stand_up": plan_stand_up,
+            "lie_down": plan_lie_down,
+        }.get(action)
+        if planner is None:
+            raise MotionServiceValidationError("unsupported posture action: {}".format(action))
+
+        steps = planner(
+            default_duration_ms=int(
+                self.get_parameter("posture_default_duration_ms").value
+            ),
+            servo4_duration_ms=int(
+                self.get_parameter("posture_servo4_duration_ms").value
+            ),
+            servo6_duration_ms=int(
+                self.get_parameter("posture_servo6_duration_ms").value
+            ),
+        )
+        payload = self._action_payload(action, steps)
+        payload["gripper_preserved"] = True
+        self._publish_json(self._posture_actions_pub, payload)
+        return self._execute_or_plan(payload, steps)
+
     def _execute_or_plan(self, payload: Dict[str, Any], steps: Sequence[Any]) -> Dict[str, Any]:
-        estimated_sequence_sec = self._estimated_sequence_sec(steps)
-        payload["estimated_sequence_sec"] = estimated_sequence_sec
-        payload["max_arm_sequence_sec"] = self._max_arm_sequence_sec
-        if estimated_sequence_sec > self._max_arm_sequence_sec:
-            payload["ok"] = False
-            payload["state"] = "rejected"
-            payload["message"] = (
-                "planned sequence {:.3f}s exceeds max_arm_sequence_sec {:.3f}s".format(
-                    estimated_sequence_sec,
-                    self._max_arm_sequence_sec,
-                )
-            )
-            return payload
         blocked_reason = self._motion_block_reason()
         if blocked_reason:
             payload["ok"] = False
@@ -351,23 +432,22 @@ class ArmMotionNode(Node):
         issues: List[str] = []
         checks: Dict[str, Any] = {
             "motion_enabled": self._enable_motion,
-            "arm_preset": self._arm_preset,
-            "max_arm_sequence_sec": self._max_arm_sequence_sec,
             "transform_calibrated": self._transform_calibrated,
             "grasp_reference_configured": self._grasp_reference_configured,
             "place_target_configured": self._place_target_configured,
             "tf_parent_frame": self._tf_parent_frame,
             "tf_child_frame": self._tf_child_frame,
             "servo_ids": [],
+            "servo_positions": {},
         }
-        blocked_reason = self._configuration_block_reason()
+        blocked_reason = self._motion_block_reason()
         if blocked_reason:
             issues.append(blocked_reason)
         if not self._grasp_reference_configured:
             issues.append("grasp_reference_arm_base is not marked calibrated")
 
         try:
-            grasp_target = validate_grasp_target(
+            validate_grasp_target(
                 (
                     float(self._grasp_reference[0]),
                     float(self._grasp_reference[1]),
@@ -378,25 +458,12 @@ class ArmMotionNode(Node):
                 self._grasp_z_min_m,
                 self._grasp_z_max_m,
             )
-            _, _, grasp_steps = plan_face_approach_grasp(
-                self._planner,
-                grasp_target,
-                rotation_deg=float(self.get_parameter("grasp_rotation_deg").value),
-                pre_distance_m=float(self.get_parameter("grasp_pre_distance").value),
-                lift_height_m=float(self.get_parameter("grasp_lift_height").value),
-                duration_scale=float(self.get_parameter("grasp_duration_scale").value),
-            )
-            checks["grasp_estimated_sequence_sec"] = self._estimated_sequence_sec(
-                grasp_steps
-            )
-            if checks["grasp_estimated_sequence_sec"] > self._max_arm_sequence_sec:
-                issues.append("fixed grasp plan exceeds max_arm_sequence_sec")
         except Exception as exc:
             issues.append("invalid grasp configuration: {}".format(exc))
 
         try:
             if self._place_target_configured:
-                _, place_steps = plan_fixed_place(
+                plan_fixed_place(
                     self._planner,
                     self._place_reference_grasp_arm,
                     grasp_lift_height_m=float(self.get_parameter("grasp_lift_height").value),
@@ -405,15 +472,31 @@ class ArmMotionNode(Node):
                     descent_duration_ms=int(self.get_parameter("place_descent_duration_ms").value),
                     duration_scale=float(self.get_parameter("place_duration_scale").value),
                 )
-                checks["place_estimated_sequence_sec"] = self._estimated_sequence_sec(
-                    place_steps
-                )
-                if checks["place_estimated_sequence_sec"] > self._max_arm_sequence_sec:
-                    issues.append("fixed place plan exceeds max_arm_sequence_sec")
             else:
                 issues.append("place_reference_grasp_arm is not marked configured")
         except Exception as exc:
             issues.append("fixed placement plan failed: {}".format(exc))
+
+        try:
+            posture_kwargs = {
+                "default_duration_ms": int(
+                    self.get_parameter("posture_default_duration_ms").value
+                ),
+                "servo4_duration_ms": int(
+                    self.get_parameter("posture_servo4_duration_ms").value
+                ),
+                "servo6_duration_ms": int(
+                    self.get_parameter("posture_servo6_duration_ms").value
+                ),
+            }
+            stand_steps = plan_stand_up(**posture_kwargs)
+            lie_steps = plan_lie_down(**posture_kwargs)
+            checks["posture_steps"] = {
+                "stand_up": len(stand_steps),
+                "lie_down": len(lie_steps),
+            }
+        except Exception as exc:
+            issues.append("posture plan failed: {}".format(exc))
 
         if self._require_tf_in_preflight:
             try:
@@ -428,15 +511,13 @@ class ArmMotionNode(Node):
                 checks["tf_available"] = False
                 issues.append("required TF is unavailable: {}".format(exc))
 
-        if self._enable_motion:
-            try:
-                executor = BusLinkerExecutor(self._port, self._baud)
-                with executor:
-                    checks["servo_ids"] = executor.require_servos_online()
-            except Exception as exc:
-                issues.append("servo preflight failed: {}".format(exc))
-        else:
-            checks["servo_scan_skipped"] = True
+        try:
+            executor = BusLinkerExecutor(self._port, self._baud)
+            with executor:
+                checks["servo_ids"] = executor.require_servos_online()
+                checks["servo_positions"] = executor.read_positions()
+        except Exception as exc:
+            issues.append("servo preflight failed: {}".format(exc))
 
         return {
             "ok": not issues,
@@ -446,27 +527,16 @@ class ArmMotionNode(Node):
             "checks": checks,
         }
 
-    def _configuration_block_reason(self) -> str:
-        reasons = []
-        if self._arm_preset != "competition_v1":
-            reasons.append("arm_preset must be competition_v1")
-        if not self._grasp_reference_configured:
-            reasons.append("grasp_reference_configured is false")
-        if not self._place_target_configured:
-            reasons.append("place_target_configured is false")
-        if self._grasp_include_home:
-            reasons.append("grasp_include_home must be false")
-        if self._place_include_home:
-            reasons.append("place_include_home must be false")
-        return "; ".join(reasons)
-
     def _motion_block_reason(self) -> str:
         reasons = []
         if not self._enable_motion:
             reasons.append("enable_motion is false")
-        configuration_reason = self._configuration_block_reason()
-        if configuration_reason:
-            reasons.append(configuration_reason)
+        if not self._transform_calibrated:
+            reasons.append("transform_calibrated is false")
+        if self._grasp_include_home:
+            reasons.append("grasp_include_home must be false")
+        if self._place_include_home:
+            reasons.append("place_include_home must be false")
         return "; ".join(reasons)
 
     def _execute_steps(self, steps: List[Any]) -> None:
@@ -477,13 +547,8 @@ class ArmMotionNode(Node):
                 dry_run=False,
                 scan_first=self._scan_first,
                 pause_s=self._pause_s,
+                gripper_ramp_step_pulse=self._gripper_ramp_step_pulse,
             )
-
-    def _estimated_sequence_sec(self, steps: Sequence[Any]) -> float:
-        return sum(
-            max(0.0, float(step.duration_ms) / 1000.0) + self._pause_s
-            for step in steps
-        )
 
     def _action_payload(
         self,
@@ -499,7 +564,6 @@ class ArmMotionNode(Node):
             "action": action,
             "state": "planned",
             "motion_enabled": self._enable_motion,
-            "arm_preset": self._arm_preset,
             "transform_calibrated": self._transform_calibrated,
             "num_steps": len(steps),
             "steps": [step.to_command() for step in steps],
@@ -521,7 +585,6 @@ class ArmMotionNode(Node):
             "state": "error",
             "message": message,
             "motion_enabled": self._enable_motion,
-            "arm_preset": self._arm_preset,
             "transform_calibrated": self._transform_calibrated,
         }
         if error_type:

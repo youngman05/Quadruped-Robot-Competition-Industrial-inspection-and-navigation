@@ -1,6 +1,6 @@
 # L6 抓放运行手册
 
-本手册只覆盖抓放路线的正式部署、无动作 preflight、无运动 ROS 启动检查和现场最小验证。当前策略以比赛得分为优先：`competition_v1` 固定抓放预设是主路径，AprilTag I2 抓取精对齐和 J1 视觉放置只是可选增强。仓库默认配置保持 fail-closed；未经现场明确授权不得运行 `scripts/start_l6_pick_place.sh`，不得下发导航或机械臂运动命令。
+本手册只覆盖抓放路线的正式部署、无动作 preflight、无运动 ROS 启动检查和现场最小验证。当前策略以比赛得分为优先：`competition_v1` 固定抓放预设是主路径，AprilTag I2 抓取精对齐是可选增强；J1 视觉放置已停用，放置阶段固定使用 J0 预设。仓库默认配置保持 fail-closed；未经现场明确授权不得运行 `scripts/start_l6_pick_place.sh`，不得下发导航或机械臂运动命令。
 
 ## 当前结论
 
@@ -9,13 +9,13 @@
 | 统一镜像无相机 verifier | PASS | 镜像 `sha256:aafbc91a7e7169fe3b6b87f7dd1caf639fbc0ff3c9fbfef6150b1b8b09fa5966` 已在 `--runtime nvidia --network none` 下通过 `pip/apriltag/nms/warmup/synthetic_udp`，并通过无相机 AprilTag 节点启动烟测 |
 | 固定抓放预设 | 待现场验证 | TaskManager 和机械臂 YAML 必须同时选择 `competition_v1`，并提供已验证的固定抓取、固定放置、夹爪脉冲和动作时序 |
 | I2 AprilTag 抓取精对齐 | 比赛预设默认开启 | 使用原 `static_extrinsics.yaml`、100 mm Tag 和原 ID0/ID1 示教位姿；失败时回退固定抓取预设 |
-| J1 视觉放置 | 当前关闭 | 未确认 `place_target_distance_m`，继续使用 J0 固定位置和固定放置预设 |
+| J1 视觉放置 | 已停用 | 放置阶段不再使用 J1 视觉对齐或 yaw 对齐，固定使用 J0 预设 |
 | 机械臂真实抓持反馈 | 不具备 | 服务 success 只表示动作序列无异常完成，不证明已经抓住、仍持有或成功放下物体 |
 | 完整 L6 | 待现场监督 | 当前交付只完成到无运动启动与图/参数/服务检查，不发送导航或机械臂动作 |
 
 ## 比赛运行策略
 
-- 感知、I2/J1 对齐或抓放结果失败时，记录对应 outcome 为 `uncertain`，按固定预设或下一任务继续比赛。
+- 感知、I2 对齐或抓放结果失败时，记录对应 outcome 为 `uncertain`，按固定预设或下一任务继续比赛。
 - 第四次仪表识别/播报后立即冻结两个不同任务：2 个异常直接使用；1 个按 `abnormal_zone_fallback_order` 补 1 个；0 个取配置前两个；3-4 个按异常投票置信度取前两个。
 - 抓放模式固定加载 `waypoints_real.yaml/full_interleaved`，TaskManager 动态发送 `grab -> zone_1 -> grab -> zone_2`，不会顺序执行路线文件中的全部放置区。
 - 未收到真实抓持反馈时，不把 ROS 服务 success 记为物理抓取成功；它只表示 `motion sequence completed`。
@@ -69,10 +69,10 @@ enable_motion: false
 - 不再要求审批人与操作者不同、正式审批 manifest、完整标定证据包或所有配置文件哈希。
 - 固定预设不使用实时坐标变换时，完整相机内外参和精确 `base_link -> arm_base_link` TF 匹配不是硬门禁。
 
-两个实际抓取 Tag ID 始终必须填写且必须不同。第一轮优先选择尚未使用且当前可见的 Tag，第二轮排除第一轮已经锁定的 Tag。关闭 I2 时不需要填写 I2 目标表；启用对应增强功能时，再补齐其参数：
+两个实际抓取 Tag ID 始终必须填写且必须不同。第一轮优先选择尚未使用且当前可见的 Tag，第二轮排除第一轮已经锁定的 Tag。关闭 I2 时不需要填写 I2 目标表；启用 I2 增强功能时，再补齐其参数：
 
 - `enable_pick_i2_alignment: true`：当前比赛预设使用 100 mm Tag，并为 ID0/ID1 复用原示教目标 `[0.806210719,0.018127014,3.109325721]`。Host bridge 必须读取 `configs/transforms/static_extrinsics.yaml`，不得改用导航外参。
-- `enable_place_vision_alignment: true`：需要 J1 使用的 RGB-D/安装参数和 `place_target_distance_m`。
+- `enable_place_vision_alignment` 必须保持 `false`；J1 放置对齐已停用，不再校验 RGB-D/安装参数或 `place_target_distance_m`。
 
 ## 无动作 Preflight
 
@@ -87,7 +87,7 @@ bash scripts/preflight_l6_pick_place.sh
 - 强制设置 `ARM_MOTION_AUTHORIZED=false`；
 - 校验 exact source commit、tracked-clean 状态和 formal install 来源；
 - 校验两份 YAML 都选择 `competition_v1`、固定抓放参数完整且动作时序一致；
-- 仅在启用 I2/J1 时校验对应的可选视觉参数；
+- 仅在启用 I2 时校验对应的可选视觉参数；J1 放置对齐不参与校验。
 - 校验模型 hash、不可变 image ID 和七类 Host 协议；
 - 使用唯一容器名执行有超时的 `--runtime nvidia --network none` verifier；
 - 在相机、cuVSLAM、Nav2、机械臂服务和 Lite3 motion-mode 准备之前退出，并清理 verifier 容器。
@@ -121,7 +121,7 @@ ss -lunp | grep -E ':(19002|19003|19004)\b' || true
 1. 在清空工作区、最低速度和人工监督下，验证固定抓取目标、固定放置参考、夹爪开合脉冲、下探/抬升距离与动作持续时间。
 2. 确认最慢一次完整动作不超过 `max_arm_sequence_sec`，并实测请求发出后底盘在保护时长内保持静止。
 3. 填写两个实际 pickup Tag ID；只有计划启用 I2 时，才额外验证 AprilTag 尺寸、I2 目标和失败回退。
-4. 只有计划启用 J1 时，才验证视觉放置参数、目标距离和 J0 失败回退。
+4. 放置阶段固定使用 J0 预设，不验证 J1 视觉放置参数。
 5. 分别记录服务返回、实际观察结果和 `uncertain` outcome；不得用服务 success 代替真实抓持证据。
 
 ## 停机边界

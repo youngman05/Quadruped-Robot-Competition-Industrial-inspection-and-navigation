@@ -25,7 +25,6 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 
 import rclpy
@@ -54,13 +53,6 @@ from nodes.decision.pick_alignment_core import (
     PickConfig,
     PickOneExecutor,
     parse_fiducial_frame,
-)
-from nodes.decision.placement_alignment_core import (
-    PlaceConfig,
-    PlaceOneExecutor,
-    PlacementObservationBuilder,
-    PlacementObservationConfig,
-    extract_letters_from_detections,
 )
 from nodes.navigation.navigation_client import (
     NavigationClient,
@@ -136,23 +128,6 @@ class YoloDetection:
     green_bars: List[Dict[str, Any]] = field(default_factory=list)
 
 
-class _YoloLetterProvider:
-    def __init__(self, node: "TaskManagerNode") -> None:
-        self._node = node
-
-    def detect(self, _image) -> Any:
-        if not self._node._manipulation_packet_is_fresh(
-            self._node._latest_yolo_received_monotonic
-        ):
-            return SimpleNamespace(letters=[])
-        letters = extract_letters_from_detections(
-            self._node._latest_yolo_packet,
-            expected_model_id=self._node._manipulation_model_id,
-            expected_class_schema=self._node._manipulation_class_schema,
-        )
-        return SimpleNamespace(letters=letters)
-
-
 class _PickRuntimeAdapter:
     def __init__(self, node: "TaskManagerNode") -> None:
         self._node = node
@@ -180,34 +155,6 @@ class _PickRuntimeAdapter:
 
     @staticmethod
     def grasp_result() -> Optional[bool]:
-        return None
-
-
-class _PlaceRuntimeAdapter:
-    def __init__(self, node: "TaskManagerNode") -> None:
-        self._node = node
-
-    @staticmethod
-    def now() -> float:
-        return time.monotonic()
-
-    def stop(self) -> None:
-        self._node._publish_precision_zero()
-
-    def command(self, axis: str, speed: float) -> None:
-        self._node._publish_precision_command(axis, speed)
-
-    def current_observation(self):
-        if self._node._placement_observer is None:
-            return None
-        return self._node._placement_observer.observe()
-
-    @staticmethod
-    def start_place() -> bool:
-        return False
-
-    @staticmethod
-    def place_result() -> Optional[bool]:
         return None
 
 
@@ -381,9 +328,6 @@ class TaskManagerNode(Node):
         self._enable_pick_i2_alignment = bool(
             self.get_parameter("enable_pick_i2_alignment").value
         )
-        self._enable_place_vision_alignment = bool(
-            self.get_parameter("enable_place_vision_alignment").value
-        )
         self._manipulation_frames_dir = Path(
             str(self.get_parameter("manipulation_frames_dir").value)
         )
@@ -420,8 +364,6 @@ class TaskManagerNode(Node):
             self._pick_red_tag_ids,
             self._pick_i2_targets,
             self._grasp_target_arm_base,
-            self._place_target_distance_m,
-            self._placement_observation_kwargs,
         ) = self._load_manipulation_calibration()
         inspection_start_index = int(
             self.get_parameter("inspection_start_index").value
@@ -538,8 +480,6 @@ class TaskManagerNode(Node):
         self._placement_arrived = False
         self._place_alignment_complete = False
         self._pick_executor: Optional[PickOneExecutor] = None
-        self._place_executor: Optional[PlaceOneExecutor] = None
-        self._placement_observer: Optional[PlacementObservationBuilder] = None
         self._precision_zero_until = 0.0
         self._grasp_future = None
         self._place_future = None
@@ -557,12 +497,7 @@ class TaskManagerNode(Node):
         self._depth_pending_request_id = ""
         self._depth_pending_started = 0.0
         self._depth_pending_odom_baseline = 0.0
-        self._obstacle_depth_mode = None
         self._obstacle_depth_transition_complete = False
-        self._grab_navigation_depth_mode = None
-        self._grab_navigation_depth_transition_complete = False
-        self._placement_depth_mode = None
-        self._placement_depth_transition_complete = False
         self._depth_recorded_waypoints = set()
         self._mission_start_nav_ready = False
         self._mission_start_cone_layers_ready = (
@@ -716,11 +651,9 @@ class TaskManagerNode(Node):
         Tuple[int, ...],
         Dict[int, I2Target],
         Tuple[float, float, float],
-        float,
-        Dict[str, Any],
     ]:
         if not self._enable_manipulation:
-            return (), {}, (0.0, 0.0, 0.0), 0.0, {}
+            return (), {}, (0.0, 0.0, 0.0)
         if self._manipulation_preset != "competition_v1":
             raise ValueError(
                 "enable_manipulation requires manipulation_preset=competition_v1"
@@ -781,35 +714,7 @@ class TaskManagerNode(Node):
         grasp_target = tuple(float(value) for value in grasp_values)
         if not all(math.isfinite(value) for value in grasp_target) or grasp_target[2] <= 0.0:
             raise ValueError("grasp_target_arm_base must be finite with positive z")
-        place_distance = float(self.get_parameter("place_target_distance_m").value)
-        if not math.isfinite(place_distance):
-            raise ValueError("place_target_distance_m must be finite")
-
-        placement_kwargs: Dict[str, Any] = {}
-        if self._enable_place_vision_alignment:
-            if place_distance <= 0.0:
-                raise ValueError(
-                    "place_target_distance_m must be positive for visual alignment"
-                )
-            color_width = int(self.get_parameter("placement_color_width_px").value)
-            color_height = int(self.get_parameter("placement_color_height_px").value)
-            camera_pitch_deg = float(
-                self.get_parameter("placement_camera_pitch_deg").value
-            )
-            box_width = float(self.get_parameter("placement_box_width_m").value)
-            if color_width <= 0 or color_height <= 0:
-                raise ValueError("placement color dimensions must be positive")
-            if not math.isfinite(camera_pitch_deg):
-                raise ValueError("placement_camera_pitch_deg must be finite")
-            if not math.isfinite(box_width) or box_width <= 0.0:
-                raise ValueError("placement_box_width_m must be positive")
-            placement_kwargs = {
-                "color_width": color_width,
-                "color_height": color_height,
-                "camera_pitch_rad": math.radians(camera_pitch_deg),
-                "box_width_m": box_width,
-            }
-        return tag_ids, targets, grasp_target, place_distance, placement_kwargs
+        return tag_ids, targets, grasp_target
 
     def _publish_precision_zero(self) -> None:
         if self._precision_pub is not None:
@@ -847,8 +752,6 @@ class TaskManagerNode(Node):
 
     def _cancel_manipulation(self, cancel_services: bool = False) -> None:
         self._pick_executor = None
-        self._place_executor = None
-        self._placement_observer = None
         if cancel_services:
             for future in (self._grasp_future, self._place_future):
                 if future is not None and not future.done():
@@ -985,17 +888,7 @@ class TaskManagerNode(Node):
         self._pass_obstacle_waypoint_timeout.reset()
 
         if waypoint == "obstacle_cross_target" and not self._obstacle_depth_transition_complete:
-            if self._obstacle_depth_mode is None:
-                self._obstacle_depth_mode = (
-                    self._depth_policy.waypoint_succeeded(waypoint)
-                    if self._depth_policy is not None
-                    else None
-                )
-            if not self._ensure_depth_mode(
-                self._obstacle_depth_mode,
-                "after_success:obstacle_cross_target",
-            ):
-                return
+            self._disable_depth_after_obstacle()
             self._obstacle_depth_transition_complete = True
 
         self._clear_navigation_retry(retry_key)
@@ -1012,6 +905,21 @@ class TaskManagerNode(Node):
         self._switch_to_phase2_map()
         del self._obstacle_route_index
         self._advance_to_next_phase()
+
+    def _disable_depth_after_obstacle(self) -> None:
+        """Disable depth immediately after the cone-avoidance area.
+
+        This is a one-shot fire-and-forget close: TaskManager stops consuming
+        depth status, no later milestone may re-enable depth, and it does not
+        wait for the Docker controller acknowledgement or host odom recovery.
+        """
+        if self._depth_policy is not None:
+            self._depth_policy.waypoint_succeeded("obstacle_cross_target")
+        if self._depth_mode_client is not None:
+            self._depth_mode_client.direct_disable()
+        self.get_logger().info(
+            "depth disabled after obstacle crossing; depth subscriptions closed"
+        )
 
     def _tick_inspect_gauges(self, elapsed: float) -> None:
         """Navigate, verify stop, call WHZ asynchronously, and store one result."""
@@ -1320,20 +1228,6 @@ class TaskManagerNode(Node):
             return
         current_zone = self._abnormal_zones[self._abnormal_attempted]
 
-        if not self._grab_navigation_depth_transition_complete:
-            if self._grab_navigation_depth_mode is None:
-                self._grab_navigation_depth_mode = (
-                    self._depth_policy.before_waypoint("grab_area_approach")
-                    if self._depth_policy is not None
-                    else None
-                )
-            if not self._ensure_depth_mode(
-                self._grab_navigation_depth_mode,
-                "before:grab_area_approach",
-            ):
-                return
-            self._grab_navigation_depth_transition_complete = True
-
         if not self._pick_arrived:
             retry_key = "find_red_bar:grab_area_approach"
             if not self._navigation_retry_ready(retry_key):
@@ -1533,66 +1427,14 @@ class TaskManagerNode(Node):
             self._placement_arrived = True
             self._request_precision_release()
 
-        if (
-            self._enable_place_vision_alignment
-            and not self._placement_depth_transition_complete
-        ):
-            if self._placement_depth_mode is None:
-                self._placement_depth_mode = (
-                    self._depth_policy.waypoint_succeeded(placement_waypoint)
-                    if self._depth_policy is not None
-                    else None
-                )
-                self._depth_recorded_waypoints.add(placement_waypoint)
-            if not self._ensure_depth_mode(
-                self._placement_depth_mode,
-                "after_success:%s" % placement_waypoint,
-                fail_soft=True,
-            ):
-                return
-            self._placement_depth_transition_complete = True
-
         if not self._place_alignment_complete:
-            if not self._enable_place_vision_alignment:
-                self.get_logger().warn(
-                    "%s区视觉精对齐已关闭，使用J0固定放置预设" % current_zone
-                )
-                self._place_alignment_complete = True
-                self._place_request_started = time.monotonic()
-                self._request_precision_release()
-            elif self._place_executor is None:
-                self._placement_observer = PlacementObservationBuilder(
-                    PlacementObservationConfig(
-                        frames_dir=self._manipulation_frames_dir,
-                        target_letter=current_zone,
-                        max_frame_age_s=self._manipulation_perception_timeout_sec,
-                        **self._placement_observation_kwargs,
-                    ),
-                    _YoloLetterProvider(self),
-                )
-                self._place_executor = PlaceOneExecutor(
-                    _PlaceRuntimeAdapter(self),
-                    PlaceConfig(
-                        target_letter=current_zone,
-                        target_distance_m=self._place_target_distance_m,
-                        stop_after_stage="aligned",
-                    ),
-                )
-                self._place_executor.start()
-            if self._enable_place_vision_alignment:
-                result = self._place_executor.tick()
-                if result is None:
-                    return
-                if not result.success or not result.alignment_success:
-                    self.get_logger().warn(
-                        "%s区视觉精对齐失败，降级到J0固定放置: %s"
-                        % (current_zone, result.reason)
-                    )
-                self._place_alignment_complete = True
-                self._place_executor = None
-                self._placement_observer = None
-                self._place_request_started = time.monotonic()
-                self._request_precision_release()
+            self.get_logger().info(
+                "placement %s: using fixed J0 preset (J1 visual alignment disabled)"
+                % current_zone
+            )
+            self._place_alignment_complete = True
+            self._place_request_started = time.monotonic()
+            self._request_precision_release()
 
         if self._place_uncertain_reason:
             if not self._arm_motion_guard_elapsed():
@@ -1814,7 +1656,6 @@ class TaskManagerNode(Node):
         self,
         mode,
         milestone: str,
-        fail_soft: bool = False,
     ) -> bool:
         if mode is None or self._depth_mode_client is None:
             return True
@@ -1884,9 +1725,6 @@ class TaskManagerNode(Node):
                 self._depth_pending_milestone,
                 reason,
             )
-            if fail_soft:
-                self._disable_place_vision_alignment(message)
-                return True
             self._abort(message)
             return False
         if readiness.mode == DepthMode.FAULT:
@@ -1894,26 +1732,10 @@ class TaskManagerNode(Node):
                 self._depth_pending_milestone,
                 readiness.reason,
             )
-            if fail_soft:
-                self._disable_place_vision_alignment(message)
-                return True
             self._abort(message)
             return False
         self._depth_mode_client.republish_active_request(mode)
         return False
-
-    def _disable_place_vision_alignment(self, reason: str) -> None:
-        self._enable_place_vision_alignment = False
-        self._depth_pending_mode = None
-        self._depth_pending_milestone = ""
-        self._depth_pending_request_id = ""
-        self._depth_pending_started = 0.0
-        self._depth_pending_odom_baseline = 0.0
-        self._depth_transition_stationary.reset()
-        self.get_logger().warn(
-            "J1深度感知链不可用，保留RGB AprilTag/I2并降级到J0固定放置: %s"
-            % reason
-        )
 
     def _host_odom_ready_after_depth_transition(self, mode) -> bool:
         if (
@@ -1946,8 +1768,6 @@ class TaskManagerNode(Node):
         if phase == Phase.FIND_RED_BAR:
             self._pick_arrived = False
             self._pick_executor = None
-            self._grab_navigation_depth_mode = None
-            self._grab_navigation_depth_transition_complete = False
             self._grasp_future = None
             self._grasp_request_started = 0.0
             self._grasp_uncertain_reason = ""
@@ -1962,8 +1782,6 @@ class TaskManagerNode(Node):
             self._placement_arrival_time = None
             self._placement_arrived = False
             self._place_alignment_complete = False
-            self._placement_depth_mode = None
-            self._placement_depth_transition_complete = False
             self._place_future = None
             self._place_request_started = 0.0
             self._place_uncertain_reason = ""

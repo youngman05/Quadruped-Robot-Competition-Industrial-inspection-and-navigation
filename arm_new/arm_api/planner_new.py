@@ -13,7 +13,7 @@ from __future__ import print_function
 
 import math
 
-from .common import IKNoSolution, MotionStep, clamp
+from .common import INITIAL_POSITION_SERVOS, IKNoSolution, MotionStep, clamp
 from .planner import (
     ArmGrabConfig,
     LocalGeometricArmIK,
@@ -789,7 +789,7 @@ class ArmGrabPlannerNew(object):
             "home_from_sorting_py",
             None,
             1200,
-            ((1, 200), (2, 500), (3, 80), (4, 825), (5, 625), (6, 500)),
+            INITIAL_POSITION_SERVOS,
         )
 
 

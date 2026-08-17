@@ -8,9 +8,11 @@ task_manager_node:
     manipulation_class_schema: competition-ad-yellow-red-green-v1
     abnormal_zone_fallback_order: [A, B, C, D]
 
-    # Optional J1 enhancements. Disabled or failed alignment falls back to the
+    # Optional I2 enhancement. Disabled or failed alignment falls back to the
     # coarse waypoint plus fixed arm preset.
     enable_pick_i2_alignment: false
+    # J1 placement alignment is deprecated and ignored; placement always uses
+    # the fixed J0 preset.
     enable_place_vision_alignment: false
     # The competition override must provide exactly two actual pickup Tag IDs.
     # They remain configured even when I2 alignment is temporarily disabled.
@@ -20,8 +22,8 @@ task_manager_node:
     grasp_target_arm_base: []
     place_target_distance_m: 0.0
 
-    # Lightweight J1 placement profile. These are consulted only when visual
-    # placement alignment is enabled; otherwise J0 fixed placement is used.
+    # Legacy J1 placement profile values are retained only for launch-parameter
+    # compatibility. task_manager ignores them.
     placement_color_width_px: 640
     placement_color_height_px: 360
     placement_camera_pitch_deg: 30.0

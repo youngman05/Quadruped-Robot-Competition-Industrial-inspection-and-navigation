@@ -18,7 +18,7 @@ from __future__ import print_function
 
 import math
 
-from .common import IKNoSolution, MotionStep, clamp
+from .common import INITIAL_POSITION_SERVOS, IKNoSolution, MotionStep, clamp
 
 
 class ArmGrabConfig(object):
@@ -34,8 +34,8 @@ class ArmGrabConfig(object):
         approach_z=0.02,
         lift_z=0.045,
         open_gripper=400,
-        grasp_open_gripper=400,
-        close_gripper=256,
+        grasp_open_gripper=900,
+        close_gripper=10,
         include_retreat=False,
         retreat_z=0.04,
         link_l1=0.0610,
@@ -47,7 +47,7 @@ class ArmGrabConfig(object):
         gripper_rotation_sign=-1.0,
         approach_steps=8,
         approach_step_duration_ms=150,
-        safe_servos=((3, 80), (4, 825), (5, 625), (6, 500)),
+        safe_servos=((3, 256), (4, 755), (5, 636), (6, 519)),
         shoulder_near_distance=0.12,
         shoulder_far_distance=0.20,
         shoulder_near_deg=75.0,
@@ -76,8 +76,8 @@ class ArmGrabConfig(object):
         self.approach_z = float(approach_z)
         self.lift_z = float(lift_z)
         self.open_gripper = int(open_gripper)
-        # ID1 uses smaller pulses for a wider jaw opening.  Keep release at
-        # the established pulse, while grasp preparation can fully open it.
+        # Grasp preparation and placement release use separate calibrated
+        # ID1 targets so each phase can be tuned independently.
         self.grasp_open_gripper = int(grasp_open_gripper)
         self.close_gripper = int(close_gripper)
         self.include_retreat = bool(include_retreat)
@@ -650,7 +650,7 @@ class ArmGrabPlanner(object):
                     "home_from_sorting_py",
                     None,
                     1200,
-                    ((1, 200), (2, 500), (3, 80), (4, 825), (5, 625), (6, 500)),
+                INITIAL_POSITION_SERVOS,
                 )
             )
         return steps
@@ -723,7 +723,7 @@ class ArmGrabPlanner(object):
                     "home_from_sorting_py",
                     None,
                     1200,
-                    ((1, 200), (2, 500), (3, 80), (4, 825), (5, 625), (6, 500)),
+                INITIAL_POSITION_SERVOS,
                 )
             )
         return steps

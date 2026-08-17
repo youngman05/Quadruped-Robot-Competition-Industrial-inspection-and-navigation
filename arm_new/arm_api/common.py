@@ -4,6 +4,16 @@
 """公共数据结构和换算函数。"""
 
 
+INITIAL_POSITION_SERVOS = (
+    (1, 502),
+    (2, 504),
+    (3, 256),
+    (4, 755),
+    (5, 636),
+    (6, 220),
+)
+
+
 class OriginalIKUnavailable(RuntimeError):
     """原 ArmPi IK 包不可用。"""
 
